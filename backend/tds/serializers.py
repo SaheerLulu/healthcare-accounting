@@ -1,0 +1,57 @@
+from rest_framework import serializers
+from .models import TDSDeduction, TDSChallan, TDSRateConfig
+
+
+class TDSRateConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TDSRateConfig
+        fields = [
+            'id', 'section', 'deductee_type', 'rate', 'threshold',
+            'fy_start', 'fy_end', 'is_active',
+        ]
+
+
+class TDSDeductionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TDSDeduction
+        fields = [
+            'id', 'deductee_name', 'deductee_pan', 'section',
+            'nature_of_payment', 'transaction_date', 'gross_amount',
+            'tds_rate', 'tds_amount', 'deductee_type', 'source_type',
+            'source_id', 'status', 'challan_no', 'challan_date',
+            'bsr_code', 'location_id', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class TDSChallanSerializer(serializers.ModelSerializer):
+    deductions = TDSDeductionSerializer(many=True, read_only=True)
+    deduction_ids = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=TDSDeduction.objects.all(),
+        source='deductions', write_only=True, required=False,
+    )
+
+    class Meta:
+        model = TDSChallan
+        fields = [
+            'id', 'challan_no', 'bsr_code', 'deposit_date', 'period',
+            'section', 'total_tds_amount', 'deductions', 'deduction_ids',
+            'created_at',
+        ]
+        read_only_fields = ['created_at']
+
+    def create(self, validated_data):
+        deductions = validated_data.pop('deductions', [])
+        challan = TDSChallan.objects.create(**validated_data)
+        if deductions:
+            challan.deductions.set(deductions)
+        return challan
+
+    def update(self, instance, validated_data):
+        deductions = validated_data.pop('deductions', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        if deductions is not None:
+            instance.deductions.set(deductions)
+        return instance

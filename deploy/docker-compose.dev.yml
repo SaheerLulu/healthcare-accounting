@@ -1,0 +1,53 @@
+# ============================================================
+# DEV environment – docker-compose
+# Domain: devaccounting.seefmed.com
+# Run:  docker compose -f deploy/docker-compose.dev.yml --env-file deploy/envs/.env.dev up -d --build
+# ============================================================
+
+services:
+  # ---- Django backend (dev) ----
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: accounting-dev-backend
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             gunicorn accounting_project.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 900 --reload"
+    volumes:
+      - dev-static:/app/staticfiles
+    expose:
+      - "8000"
+    environment:
+      - DJANGO_ENV=${DJANGO_ENV:-development}
+      - DJANGO_SETTINGS_MODULE=accounting_project.settings
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key-change-me}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-*}
+      - DATABASE_URL=${DATABASE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - accounting-dev
+    restart: unless-stopped
+
+  # ---- React frontend (dev) ----
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: accounting-dev-frontend
+    ports:
+      - "${DEV_FRONTEND_PORT:-3003}:3000"
+    depends_on:
+      - backend
+    networks:
+      - accounting-dev
+    restart: unless-stopped
+
+volumes:
+  dev-static:
+
+networks:
+  accounting-dev:
+    driver: bridge

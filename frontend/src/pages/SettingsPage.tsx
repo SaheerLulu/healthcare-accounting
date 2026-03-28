@@ -1,0 +1,232 @@
+import { useEffect, useState } from 'react'
+import { useForm } from 'react-hook-form'
+import { Loader2, Save, RotateCcw } from 'lucide-react'
+import { toast } from 'sonner'
+import {
+  getSettings, updateSettings, type AccountingSettings,
+  getAccountMappings, updateAccountMapping, resetAccountMappings, type AccountMapping,
+  getChartOfAccounts, type Account,
+  getTDSRateConfigs, updateTDSRateConfig, type TDSRateConfig,
+} from '../lib/api'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
+import { Card } from '../components/ui/card'
+import { Button } from '../components/ui/button'
+import { Input } from '../components/ui/input'
+import { Badge } from '../components/ui/badge'
+import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
+
+const FIELD_CONFIG: { key: keyof AccountingSettings; label: string; placeholder: string; type?: string }[] = [
+  { key: 'company_name', label: 'Company Name', placeholder: 'e.g. Biloop Pvt Ltd' },
+  { key: 'gstin', label: 'GSTIN', placeholder: 'e.g. 27AAABC1234D1ZQ' },
+  { key: 'pan', label: 'PAN', placeholder: 'e.g. AAABC1234D' },
+  { key: 'tan', label: 'TAN', placeholder: 'e.g. MUMT12345A' },
+  { key: 'state_code', label: 'State Code', placeholder: 'e.g. 27' },
+  { key: 'financial_year_start', label: 'Financial Year Start', placeholder: 'MM-DD', type: 'text' },
+  { key: 'registered_address', label: 'Registered Address', placeholder: 'Full registered address' },
+]
+
+function CompanyInfoTab() {
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const { register, handleSubmit, reset, formState: { isDirty } } = useForm<AccountingSettings>()
+
+  useEffect(() => {
+    getSettings().then((data) => reset(data)).catch(() => toast.error('Failed to load settings')).finally(() => setLoading(false))
+  }, [reset])
+
+  async function onSubmit(data: AccountingSettings) {
+    setSaving(true)
+    try {
+      const updated = await updateSettings(data)
+      reset(updated)
+      toast.success('Settings saved successfully')
+    } catch { toast.error('Failed to save settings') } finally { setSaving(false) }
+  }
+
+  if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin text-teal-600" /></div>
+
+  return (
+    <Card className="p-6">
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          {FIELD_CONFIG.map(({ key, label, placeholder, type }) => {
+            const isAddress = key === 'registered_address'
+            return (
+              <div key={key} className={isAddress ? 'sm:col-span-2' : ''}>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">{label}</label>
+                {isAddress ? (
+                  <textarea {...register(key)} rows={3} placeholder={placeholder}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none" />
+                ) : (
+                  <Input {...register(key)} type={type || 'text'} placeholder={placeholder} />
+                )}
+              </div>
+            )
+          })}
+        </div>
+        <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+          {isDirty ? <p className="text-xs text-amber-600 font-medium">You have unsaved changes</p> : <p className="text-xs text-slate-400">All changes saved</p>}
+          <Button type="submit" disabled={saving || !isDirty} variant="primary">
+            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            {saving ? 'Saving...' : 'Save Settings'}
+          </Button>
+        </div>
+      </form>
+    </Card>
+  )
+}
+
+function AccountMappingsTab() {
+  const [mappings, setMappings] = useState<AccountMapping[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    Promise.all([getAccountMappings(), getChartOfAccounts()])
+      .then(([m, a]) => { setMappings(m); setAccounts(a) })
+      .catch(() => toast.error('Failed to load mappings'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  async function handleChange(id: number, accountId: number) {
+    try {
+      const updated = await updateAccountMapping(id, { account: accountId })
+      setMappings(mappings.map(m => m.id === id ? updated : m))
+      toast.success('Mapping updated')
+    } catch { toast.error('Failed to update mapping') }
+  }
+
+  async function handleReset() {
+    try {
+      await resetAccountMappings()
+      const m = await getAccountMappings()
+      setMappings(m)
+      toast.success('Mappings reset to defaults')
+    } catch { toast.error('Failed to reset mappings') }
+  }
+
+  if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin text-teal-600" /></div>
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm text-slate-500">Map semantic account keys to your Chart of Accounts.</p>
+        <Button onClick={handleReset} variant="secondary" size="sm">
+          <RotateCcw size={12} /> Reset Defaults
+        </Button>
+      </div>
+      <Card className="overflow-hidden">
+        <Table>
+          <Thead>
+            <Tr className="bg-slate-50">
+              <Th>Key</Th>
+              <Th>Account</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {mappings.map((m) => (
+              <Tr key={m.id}>
+                <Td className="font-mono text-xs text-slate-500">{m.key}</Td>
+                <Td>
+                  <select value={m.account} onChange={(e) => handleChange(m.id, Number(e.target.value))}
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+                    {accounts.map((acc) => (
+                      <option key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</option>
+                    ))}
+                  </select>
+                </Td>
+              </Tr>
+            ))}
+          </Tbody>
+        </Table>
+      </Card>
+    </div>
+  )
+}
+
+function TDSRatesTab() {
+  const [configs, setConfigs] = useState<TDSRateConfig[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    getTDSRateConfigs().then(setConfigs).catch(() => toast.error('Failed to load TDS rates')).finally(() => setLoading(false))
+  }, [])
+
+  async function handleUpdate(id: number, field: string, value: string) {
+    try {
+      const updated = await updateTDSRateConfig(id, { [field]: value })
+      setConfigs(configs.map(c => c.id === id ? updated : c))
+    } catch { toast.error('Failed to update rate') }
+  }
+
+  if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin text-teal-600" /></div>
+
+  return (
+    <Card className="overflow-hidden">
+      <Table>
+        <Thead>
+          <Tr className="bg-slate-50">
+            <Th>Section</Th>
+            <Th>Type</Th>
+            <Th className="text-right">Rate %</Th>
+            <Th className="text-right">Threshold</Th>
+            <Th>FY</Th>
+            <Th className="text-center">Active</Th>
+          </Tr>
+        </Thead>
+        <Tbody>
+          {configs.length === 0 ? (
+            <Tr><Td colSpan={6} className="text-center py-12 text-slate-400 text-sm">No TDS rate configurations. Using fallback rates.</Td></Tr>
+          ) : configs.map((c) => (
+            <Tr key={c.id}>
+              <Td className="font-mono text-xs text-slate-500">{c.section}</Td>
+              <Td className="text-slate-500">{c.deductee_type}</Td>
+              <Td className="text-right">
+                <input type="number" step="0.01" value={c.rate} onChange={(e) => handleUpdate(c.id, 'rate', e.target.value)}
+                  className="w-20 text-right text-xs border border-slate-200 rounded px-2 py-1 font-mono bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-teal-500" />
+              </Td>
+              <Td className="text-right">
+                <input type="number" value={c.threshold} onChange={(e) => handleUpdate(c.id, 'threshold', e.target.value)}
+                  className="w-28 text-right text-xs border border-slate-200 rounded px-2 py-1 font-mono bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-teal-500" />
+              </Td>
+              <Td className="text-xs text-slate-500">{c.fy_start} to {c.fy_end}</Td>
+              <Td className="text-center">
+                <Badge variant={c.is_active ? 'success' : 'default'}>
+                  {c.is_active ? 'Active' : 'Inactive'}
+                </Badge>
+              </Td>
+            </Tr>
+          ))}
+        </Tbody>
+      </Table>
+    </Card>
+  )
+}
+
+export default function SettingsPage() {
+  return (
+    <div className="p-6 max-w-3xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold text-slate-900">Settings</h1>
+        <p className="text-sm text-slate-500 mt-0.5">Company, account mappings, and tax configuration</p>
+      </div>
+
+      <Tabs defaultValue="company">
+        <TabsList>
+          {[
+            { value: 'company', label: 'Company Info' },
+            { value: 'mappings', label: 'Account Mappings' },
+            { value: 'tds-rates', label: 'TDS Rates' },
+          ].map((tab) => (
+            <TabsTrigger key={tab.value} value={tab.value}>
+              {tab.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value="company"><CompanyInfoTab /></TabsContent>
+        <TabsContent value="mappings"><AccountMappingsTab /></TabsContent>
+        <TabsContent value="tds-rates"><TDSRatesTab /></TabsContent>
+      </Tabs>
+    </div>
+  )
+}
