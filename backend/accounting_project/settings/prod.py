@@ -44,3 +44,40 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 # Static files
 # ---------------------------------------------------------------------------
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{asctime} {levelname} {name} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(BASE_DIR / 'logs' / 'accounting.log'),
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 5,
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console', 'file'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'sync': {'handlers': ['console', 'file'], 'level': 'INFO', 'propagate': False},
+        'journals': {'handlers': ['console', 'file'], 'level': 'INFO', 'propagate': False},
+        'gst_returns': {'handlers': ['console', 'file'], 'level': 'INFO', 'propagate': False},
+        'tds': {'handlers': ['console', 'file'], 'level': 'INFO', 'propagate': False},
+    },
+}

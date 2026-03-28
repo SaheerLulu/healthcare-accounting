@@ -59,8 +59,14 @@ jobs:
               cp "${REPO_DIR}/deploy/envs/.env.dev.example" "$ENV_FILE"
               sed -i "s|DJANGO_SECRET_KEY=.*|DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}|" "$ENV_FILE"
               if [ -n "${{ secrets.POSTGRES_PASSWORD }}" ]; then
-                sed -i "s|PASSWORD|${{ secrets.POSTGRES_PASSWORD }}|g" "$ENV_FILE"
+                sed -i "s|postgres://healthcare:[^@]*@|postgres://healthcare:${{ secrets.POSTGRES_PASSWORD }}@|" "$ENV_FILE"
               fi
+            fi
+
+            # Ensure PostgreSQL is available (shared with inventory app)
+            if ! command -v psql &> /dev/null; then
+              echo "WARNING: PostgreSQL not installed. It should be set up by the inventory app."
+              echo "If this is a fresh server, deploy the inventory app first."
             fi
 
             # Build and deploy
@@ -71,7 +77,7 @@ jobs:
             docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --remove-orphans || true
             docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
 
-            # Update Nginx config for accounting
+            # Update Nginx configs for accounting (both dev and prod sites)
             echo "Updating Nginx..."
             if sudo bash -c '
               if [ -f /etc/letsencrypt/live/devaccounting.seefmed.com/fullchain.pem ]; then
@@ -79,7 +85,13 @@ jobs:
               else
                 cp /opt/accounting/repo/deploy/nginx/dev.bootstrap.conf /etc/nginx/sites-available/devaccounting.conf
               fi
+              if [ -f /etc/letsencrypt/live/accounting.biloop.ai/fullchain.pem ]; then
+                cp /opt/accounting/repo/deploy/nginx/prod.conf /etc/nginx/sites-available/accounting.conf
+              else
+                cp /opt/accounting/repo/deploy/nginx/prod.bootstrap.conf /etc/nginx/sites-available/accounting.conf
+              fi
               ln -sf /etc/nginx/sites-available/devaccounting.conf /etc/nginx/sites-enabled/
+              ln -sf /etc/nginx/sites-available/accounting.conf /etc/nginx/sites-enabled/
               nginx -t
               systemctl reload nginx
             ' 2>&1; then
