@@ -4,6 +4,8 @@
 # Run:  docker compose -f deploy/docker-compose.prod.yml --env-file deploy/envs/.env.prod up -d --build
 # ============================================================
 
+name: accounting-prod
+
 services:
   # ---- Django backend (prod) ----
   backend:

@@ -56,12 +56,14 @@ git checkout "$BRANCH"
 git pull origin "$BRANCH"
 
 # ---- Build and deploy ----
+PROJECT_NAME="accounting-${ENV}"
+
 echo "[3/5] Building containers..."
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build --no-cache
+docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build --no-cache
 
 echo "[4/5] Stopping old containers and starting new..."
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --remove-orphans || true
-docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
+docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --remove-orphans || true
+docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
 
 # ---- Update Nginx configs ----
 echo "[5/5] Updating Nginx configuration..."
@@ -84,18 +86,18 @@ echo ""
 echo "Waiting for containers to be healthy..."
 sleep 10
 
-if docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps | grep -q "Up"; then
+if docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps | grep -q "Up"; then
     echo ""
     echo "========================================="
     echo "  Deployment successful! ($ENV)"
     echo "========================================="
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
+    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
 else
     echo ""
     echo "========================================="
     echo "  WARNING: Some containers may not be running"
     echo "========================================="
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=50
+    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
+    docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=50
     exit 1
 fi

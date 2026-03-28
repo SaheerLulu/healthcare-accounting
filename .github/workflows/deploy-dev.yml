@@ -70,12 +70,14 @@ jobs:
             fi
 
             # Build and deploy
+            PROJECT_NAME="accounting-dev"
+
             echo "Building containers..."
-            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build
+            docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build
 
             echo "Starting containers..."
-            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --remove-orphans || true
-            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
+            docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --remove-orphans || true
+            docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
 
             # Update Nginx configs for accounting (both dev and prod sites)
             echo "Updating Nginx..."
@@ -103,9 +105,9 @@ jobs:
             # Health check
             sleep 15
             echo "Container status:"
-            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps || true
+            docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps || true
             echo "Container logs (last 30 lines):"
-            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=30 || true
+            docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs --tail=30 || true
 
             echo "=== Accounting DEV Deployment completed at $(date -u) ==="
 
