@@ -79,28 +79,15 @@ jobs:
             docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down --remove-orphans || true
             docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
 
-            # Update Nginx configs for accounting (both dev and prod sites)
+            # Update Nginx config for dev accounting site
             echo "Updating Nginx..."
-            if sudo bash -c '
-              if [ -f /etc/letsencrypt/live/devaccounting.seefmed.com/fullchain.pem ]; then
-                cp /opt/accounting/repo/deploy/nginx/dev.conf /etc/nginx/sites-available/devaccounting.conf
-              else
-                cp /opt/accounting/repo/deploy/nginx/dev.bootstrap.conf /etc/nginx/sites-available/devaccounting.conf
-              fi
-              if [ -f /etc/letsencrypt/live/accounting.biloop.ai/fullchain.pem ]; then
-                cp /opt/accounting/repo/deploy/nginx/prod.conf /etc/nginx/sites-available/accounting.conf
-              else
-                cp /opt/accounting/repo/deploy/nginx/prod.bootstrap.conf /etc/nginx/sites-available/accounting.conf
-              fi
-              ln -sf /etc/nginx/sites-available/devaccounting.conf /etc/nginx/sites-enabled/
-              ln -sf /etc/nginx/sites-available/accounting.conf /etc/nginx/sites-enabled/
-              nginx -t
-              systemctl reload nginx
-            ' 2>&1; then
-              echo "Nginx reloaded."
+            if [ -f /etc/letsencrypt/live/devaccounting.seefmed.com/fullchain.pem ]; then
+              sudo cp /opt/accounting/repo/deploy/nginx/dev.conf /etc/nginx/sites-available/devaccounting.conf
             else
-              echo "WARNING: Nginx update failed."
+              sudo cp /opt/accounting/repo/deploy/nginx/dev.bootstrap.conf /etc/nginx/sites-available/devaccounting.conf
             fi
+            sudo ln -sf /etc/nginx/sites-available/devaccounting.conf /etc/nginx/sites-enabled/
+            sudo nginx -t && sudo systemctl reload nginx || echo "WARNING: Nginx reload failed"
 
             # Health check
             sleep 15
