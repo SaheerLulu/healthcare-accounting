@@ -72,7 +72,7 @@ if [ -f /etc/letsencrypt/live/devaccounting.seefmed.com/fullchain.pem ]; then
 else
     sudo cp "${REPO_DIR}/deploy/nginx/dev.bootstrap.conf" /etc/nginx/sites-available/devaccounting.conf
 fi
-if [ -f /etc/letsencrypt/live/accounting.biloop.ai/fullchain.pem ]; then
+if [ -f /etc/letsencrypt/live/accounting.seefmed.com/fullchain.pem ]; then
     sudo cp "${REPO_DIR}/deploy/nginx/prod.conf" /etc/nginx/sites-available/accounting.conf
 else
     sudo cp "${REPO_DIR}/deploy/nginx/prod.bootstrap.conf" /etc/nginx/sites-available/accounting.conf

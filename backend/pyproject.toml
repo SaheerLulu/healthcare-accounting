@@ -1,7 +1,7 @@
 [project]
 name = "accounting"
 version = "0.1.0"
-description = "Biloop Accounting Application"
+description = "Seefmed Accounting Application"
 requires-python = ">=3.11"
 dependencies = [
     "django>=5.0",

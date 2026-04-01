@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     'reports',
     'sync',
     'audit',
+    'payroll',
 ]
 
 MIDDLEWARE = [

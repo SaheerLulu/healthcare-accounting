@@ -19,7 +19,7 @@ from .serializers import (
 )
 from .mixins import get_active_location
 from audit.utils import log_action
-from inventory_reader.models import LocationRO, UserLocationAssignmentRO, UserProfileRO
+from inventory_reader.models import LocationRO, UserLocationAssignmentRO, UserProfileRO, SupplierRO, CustomerRO
 
 
 class AccountingSettingsView(RetrieveUpdateAPIView):
@@ -136,6 +136,18 @@ class UserLocationsView(APIView):
             ]
 
         return Response({'locations': result, 'can_see_all': can_see_all})
+
+
+class SuppliersListView(APIView):
+    def get(self, request):
+        suppliers = SupplierRO.objects.all().order_by('company_name').values('id', 'company_name')
+        return Response([{'id': s['id'], 'name': s['company_name']} for s in suppliers])
+
+
+class CustomersListView(APIView):
+    def get(self, request):
+        customers = CustomerRO.objects.all().order_by('customer_name').values('id', 'customer_name')
+        return Response([{'id': c['id'], 'name': c['customer_name']} for c in customers])
 
 
 class DashboardView(APIView):

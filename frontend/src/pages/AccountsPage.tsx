@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Plus, ChevronRight, ChevronDown, Loader2 } from 'lucide-react'
+import { Plus, ChevronRight, ChevronDown, Loader2, Pencil, Trash2, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getAccountTree,
   getChartOfAccounts,
   createAccount,
+  updateAccount,
+  deleteAccount,
   type Account,
 } from '../lib/api'
 import { cn } from '../lib/utils'
@@ -35,16 +37,20 @@ const ACCOUNT_TYPE_VARIANT: Record<string, 'info' | 'error' | 'purple' | 'succes
 function AccountRow({
   account,
   depth,
+  onEdit,
+  onDelete,
 }: {
   account: Account
   depth: number
+  onEdit: (account: Account) => void
+  onDelete: (account: Account) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const hasChildren = account.children && account.children.length > 0
 
   return (
     <>
-      <Tr className="last:border-0">
+      <Tr className="last:border-0 group">
         <Td>
           <div className="flex items-center gap-1" style={{ paddingLeft: depth * 20 }}>
             {hasChildren ? (
@@ -75,9 +81,19 @@ function AccountRow({
             account.is_leaf ? 'bg-emerald-400' : 'bg-slate-400'
           )} />
         </Td>
+        <Td>
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button onClick={() => onEdit(account)} className="p-1 text-slate-400 hover:text-teal-600" title="Edit">
+              <Pencil size={14} />
+            </button>
+            <button onClick={() => onDelete(account)} className="p-1 text-slate-400 hover:text-red-500" title="Delete">
+              <Trash2 size={14} />
+            </button>
+          </div>
+        </Td>
       </Tr>
       {expanded && hasChildren && account.children!.map((child) => (
-        <AccountRow key={child.id} account={child} depth={depth + 1} />
+        <AccountRow key={child.id} account={child} depth={depth + 1} onEdit={onEdit} onDelete={onDelete} />
       ))}
     </>
   )
@@ -97,6 +113,12 @@ export default function AccountsPage() {
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [search, setSearch] = useState('')
+  const [typeFilter, setTypeFilter] = useState('')
+  const [editAccount, setEditAccount] = useState<Account | null>(null)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editForm, setEditForm] = useState<AccountForm>({ account_code: '', account_name: '', account_type: 'ASSET', account_subtype: '', parent: '' })
+  const [deleteConfirm, setDeleteConfirm] = useState<Account | null>(null)
   const [form, setForm] = useState<AccountForm>({
     account_code: '',
     account_name: '',
@@ -121,6 +143,77 @@ export default function AccountsPage() {
   useEffect(() => { load() }, [])
 
   const subtypes = ACCOUNT_SUBTYPES[form.account_type] || []
+  const editSubtypes = ACCOUNT_SUBTYPES[editForm.account_type] || []
+
+  function handleEdit(acc: Account) {
+    setEditAccount(acc)
+    setEditForm({
+      account_code: acc.account_code,
+      account_name: acc.account_name,
+      account_type: acc.account_type,
+      account_subtype: acc.account_subtype || '',
+      parent: acc.parent ? String(acc.parent) : '',
+    })
+    setEditOpen(true)
+  }
+
+  async function handleEditSave(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editAccount) return
+    setSaving(true)
+    try {
+      await updateAccount(editAccount.id, {
+        account_code: editForm.account_code,
+        account_name: editForm.account_name,
+        account_type: editForm.account_type,
+        account_subtype: editForm.account_subtype,
+        parent: editForm.parent ? Number(editForm.parent) : null,
+      })
+      toast.success('Account updated')
+      setEditOpen(false)
+      setEditAccount(null)
+      load()
+    } catch {
+      toast.error('Failed to update account')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete(acc: Account) {
+    setDeleteConfirm(acc)
+  }
+
+  async function confirmDelete() {
+    if (!deleteConfirm) return
+    try {
+      await deleteAccount(deleteConfirm.id)
+      toast.success('Account deleted')
+      setDeleteConfirm(null)
+      load()
+    } catch {
+      toast.error('Cannot delete account — it may have journal entries')
+      setDeleteConfirm(null)
+    }
+  }
+
+  function filterTree(nodes: Account[]): Account[] {
+    const lowerSearch = search.toLowerCase()
+    return nodes.reduce<Account[]>((acc, node) => {
+      const matchesSearch = !search ||
+        node.account_name.toLowerCase().includes(lowerSearch) ||
+        node.account_code.toLowerCase().includes(lowerSearch)
+      const matchesType = !typeFilter || node.account_type === typeFilter
+      const filteredChildren = node.children ? filterTree(node.children) : []
+
+      if ((matchesSearch && matchesType) || filteredChildren.length > 0) {
+        acc.push({ ...node, children: filteredChildren.length > 0 ? filteredChildren : node.children })
+      }
+      return acc
+    }, [])
+  }
+
+  const filteredAccounts = (search || typeFilter) ? filterTree(accounts) : accounts
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -243,6 +336,25 @@ export default function AccountsPage() {
         </Dialog>
       </div>
 
+      {/* Search & Filter */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <div className="relative flex-1 max-w-sm">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name or code..."
+            className="pl-9 py-1.5" />
+        </div>
+        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+          className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 capitalize">
+          <option value="">All Types</option>
+          {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        {(search || typeFilter) && (
+          <button onClick={() => { setSearch(''); setTypeFilter('') }}
+            className="text-xs text-slate-500 hover:text-slate-900 underline">Clear</button>
+        )}
+      </div>
+
       <Card className="overflow-hidden">
         <Table>
           <Thead>
@@ -252,29 +364,97 @@ export default function AccountsPage() {
               <Th>Type</Th>
               <Th>Subtype</Th>
               <Th>Active</Th>
+              <Th className="w-20" />
             </Tr>
           </Thead>
           <Tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="text-center py-12 text-slate-400">
+                <td colSpan={6} className="text-center py-12 text-slate-400">
                   <Loader2 size={24} className="animate-spin inline text-teal-600" />
                 </td>
               </tr>
-            ) : accounts.length === 0 ? (
+            ) : filteredAccounts.length === 0 ? (
               <tr>
-                <td colSpan={5} className="text-center py-12 text-slate-400 text-sm">
+                <td colSpan={6} className="text-center py-12 text-slate-400 text-sm">
                   No accounts found
                 </td>
               </tr>
             ) : (
-              accounts.map((acc) => (
-                <AccountRow key={acc.id} account={acc} depth={0} />
+              filteredAccounts.map((acc) => (
+                <AccountRow key={acc.id} account={acc} depth={0} onEdit={handleEdit} onDelete={handleDelete} />
               ))
             )}
           </Tbody>
         </Table>
       </Card>
+
+      {/* Edit Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Account</DialogTitle></DialogHeader>
+          <form onSubmit={handleEditSave} className="flex flex-col gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Account Code *</label>
+              <Input required value={editForm.account_code} onChange={(e) => setEditForm({ ...editForm, account_code: e.target.value })} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Account Name *</label>
+              <Input required value={editForm.account_name} onChange={(e) => setEditForm({ ...editForm, account_name: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Account Type *</label>
+                <select required value={editForm.account_type}
+                  onChange={(e) => setEditForm({ ...editForm, account_type: e.target.value, account_subtype: '' })}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 capitalize">
+                  {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1.5">Subtype</label>
+                <select value={editForm.account_subtype}
+                  onChange={(e) => setEditForm({ ...editForm, account_subtype: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+                  <option value="">-- None --</option>
+                  {editSubtypes.map((st) => <option key={st} value={st}>{st.replace(/_/g, ' ')}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Parent Account</label>
+              <select value={editForm.parent} onChange={(e) => setEditForm({ ...editForm, parent: e.target.value })}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+                <option value="">-- No Parent --</option>
+                {flatAccounts.filter((a) => a.id !== editAccount?.id).map((acc) => (
+                  <option key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-3 justify-end pt-2">
+              <DialogClose asChild><Button type="button" variant="secondary">Cancel</Button></DialogClose>
+              <Button type="submit" disabled={saving}>
+                {saving && <Loader2 size={14} className="animate-spin" />} Update Account
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteConfirm} onOpenChange={(open) => { if (!open) setDeleteConfirm(null) }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Delete Account</DialogTitle></DialogHeader>
+          <p className="text-sm text-slate-600">
+            Are you sure you want to delete <span className="font-semibold">{deleteConfirm?.account_code} - {deleteConfirm?.account_name}</span>?
+            This cannot be undone.
+          </p>
+          <div className="flex gap-3 justify-end pt-4">
+            <Button variant="secondary" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

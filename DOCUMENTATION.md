@@ -1,8 +1,8 @@
-# Biloop Accounting - System Documentation
+# Seefmed Accounting - System Documentation
 
 ## 1. Why This Application Exists
 
-Biloop Accounting is the financial backbone of a multi-location healthcare/pharmacy business in India. The business already operates an inventory management system (Biloop Healthcare Inventory) that handles product catalogs, purchase entries, POS sales, B2B sales, stock movements, and returns across multiple store locations.
+Seefmed Accounting is the financial backbone of a multi-location healthcare/pharmacy business in India. The business already operates an inventory management system (Seefmed Healthcare Inventory) that handles product catalogs, purchase entries, POS sales, B2B sales, stock movements, and returns across multiple store locations.
 
 However, inventory management alone does not answer critical business questions:
 

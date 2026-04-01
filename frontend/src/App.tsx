@@ -19,6 +19,11 @@ import BalanceSheetPage from './pages/reports/BalanceSheetPage'
 import GSTComputationPage from './pages/reports/GSTComputationPage'
 import HSNSummaryPage from './pages/reports/HSNSummaryPage'
 import PartyOutstandingPage from './pages/reports/PartyOutstandingPage'
+import BankBookPage from './pages/reports/BankBookPage'
+import CashBookPage from './pages/reports/CashBookPage'
+import DaybookPage from './pages/reports/DaybookPage'
+import PayrollPage from './pages/PayrollPage'
+import StockSummaryPage from './pages/reports/StockSummaryPage'
 import SyncPage from './pages/SyncPage'
 import SettingsPage from './pages/SettingsPage'
 import AuditLogPage from './pages/AuditLogPage'
@@ -62,6 +67,11 @@ export default function App() {
           <Route path="reports/gst-computation" element={<GSTComputationPage />} />
           <Route path="reports/hsn-summary" element={<HSNSummaryPage />} />
           <Route path="reports/party-outstanding" element={<PartyOutstandingPage />} />
+          <Route path="reports/bank-book" element={<BankBookPage />} />
+          <Route path="reports/cash-book" element={<CashBookPage />} />
+          <Route path="reports/daybook" element={<DaybookPage />} />
+          <Route path="payroll" element={<PayrollPage />} />
+          <Route path="reports/stock-summary" element={<StockSummaryPage />} />
           <Route path="sync" element={<SyncPage />} />
           <Route path="audit" element={<AuditLogPage />} />
           <Route path="settings" element={<SettingsPage />} />

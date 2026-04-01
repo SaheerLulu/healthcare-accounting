@@ -9,6 +9,9 @@ from .models import JournalEntry, JournalEntryLine
 from .serializers import (
     JournalEntrySerializer,
     JournalEntryCreateSerializer,
+    PaymentVoucherSerializer,
+    ReceiptVoucherSerializer,
+    ContraVoucherSerializer,
 )
 from .services import JournalAutoGenerationService
 from audit.utils import log_action
@@ -21,10 +24,12 @@ class JournalEntryFilter(django_filters.FilterSet):
     voucher_type = django_filters.CharFilter(field_name='voucher_type')
     reference_type = django_filters.CharFilter(field_name='reference_type')
     is_posted = django_filters.BooleanFilter(field_name='is_posted')
+    narration = django_filters.CharFilter(field_name='narration', lookup_expr='icontains')
+    entry_no = django_filters.CharFilter(field_name='entry_no', lookup_expr='icontains')
 
     class Meta:
         model = JournalEntry
-        fields = ['date_from', 'date_to', 'voucher_type', 'reference_type', 'is_posted']
+        fields = ['date_from', 'date_to', 'voucher_type', 'reference_type', 'is_posted', 'narration', 'entry_no']
 
 
 class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
@@ -146,3 +151,48 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         )
         serializer = JournalEntrySerializer(reversal, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='payment')
+    def create_payment(self, request):
+        """Create a payment voucher: Debit Payables, Credit Bank/Cash."""
+        ser = PaymentVoucherSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            svc = JournalAutoGenerationService()
+            entry = svc.generate_payment(ser.validated_data)
+            log_action('CREATE', 'JournalEntry', entry.pk, entry.entry_no,
+                       request=request, extra={'voucher_type': 'PAYMENT'})
+            return Response(JournalEntrySerializer(entry, context={'request': request}).data,
+                            status=status.HTTP_201_CREATED)
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'], url_path='receipt')
+    def create_receipt(self, request):
+        """Create a receipt voucher: Debit Bank/Cash, Credit Receivables."""
+        ser = ReceiptVoucherSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            svc = JournalAutoGenerationService()
+            entry = svc.generate_receipt(ser.validated_data)
+            log_action('CREATE', 'JournalEntry', entry.pk, entry.entry_no,
+                       request=request, extra={'voucher_type': 'RECEIPT'})
+            return Response(JournalEntrySerializer(entry, context={'request': request}).data,
+                            status=status.HTTP_201_CREATED)
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'], url_path='contra')
+    def create_contra(self, request):
+        """Create a contra voucher: Transfer between Bank and Cash."""
+        ser = ContraVoucherSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        try:
+            svc = JournalAutoGenerationService()
+            entry = svc.generate_contra(ser.validated_data)
+            log_action('CREATE', 'JournalEntry', entry.pk, entry.entry_no,
+                       request=request, extra={'voucher_type': 'CONTRA'})
+            return Response(JournalEntrySerializer(entry, context={'request': request}).data,
+                            status=status.HTTP_201_CREATED)
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)

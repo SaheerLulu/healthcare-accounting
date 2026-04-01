@@ -40,7 +40,7 @@ export default function LoginPage() {
           <div className="w-12 h-12 rounded-xl bg-teal-600 flex items-center justify-center mb-3">
             <Building2 size={24} className="text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">Biloop Accounting</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Seefmed Accounting</h1>
           <p className="text-sm text-slate-500 mt-1">Sign in to your account</p>
         </div>
 

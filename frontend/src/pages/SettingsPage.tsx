@@ -16,7 +16,7 @@ import { Badge } from '../components/ui/badge'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
 
 const FIELD_CONFIG: { key: keyof AccountingSettings; label: string; placeholder: string; type?: string }[] = [
-  { key: 'company_name', label: 'Company Name', placeholder: 'e.g. Biloop Pvt Ltd' },
+  { key: 'company_name', label: 'Company Name', placeholder: 'e.g. Seefmed Pvt Ltd' },
   { key: 'gstin', label: 'GSTIN', placeholder: 'e.g. 27AAABC1234D1ZQ' },
   { key: 'pan', label: 'PAN', placeholder: 'e.g. AAABC1234D' },
   { key: 'tan', label: 'TAN', placeholder: 'e.g. MUMT12345A' },

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from decimal import Decimal
 from .models import JournalEntry, JournalEntryLine
 
 
@@ -119,3 +120,31 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
         for line_data in lines_data:
             JournalEntryLine.objects.create(entry=entry, **line_data)
         return entry
+
+
+# ─── Voucher Serializers ─────────────────────────────────────────────────────
+
+class PaymentVoucherSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal('0.01'))
+    party_id = serializers.IntegerField(required=False, allow_null=True)
+    payment_mode = serializers.ChoiceField(choices=['bank', 'cash'], default='bank')
+    narration = serializers.CharField(required=False, allow_blank=True, default='Payment')
+    location_id = serializers.IntegerField(required=False, allow_null=True)
+
+
+class ReceiptVoucherSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal('0.01'))
+    party_id = serializers.IntegerField(required=False, allow_null=True)
+    receipt_mode = serializers.ChoiceField(choices=['bank', 'cash'], default='bank')
+    narration = serializers.CharField(required=False, allow_blank=True, default='Receipt')
+    location_id = serializers.IntegerField(required=False, allow_null=True)
+
+
+class ContraVoucherSerializer(serializers.Serializer):
+    date = serializers.DateField()
+    amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal('0.01'))
+    direction = serializers.ChoiceField(choices=['bank_to_cash', 'cash_to_bank'], default='bank_to_cash')
+    narration = serializers.CharField(required=False, allow_blank=True, default='Contra Entry')
+    location_id = serializers.IntegerField(required=False, allow_null=True)

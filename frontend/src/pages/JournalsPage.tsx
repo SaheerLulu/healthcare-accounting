@@ -1,14 +1,20 @@
 import { useEffect, useState } from 'react'
-import { Plus, ChevronDown, ChevronRight, Loader2, Trash2 } from 'lucide-react'
+import { Plus, ChevronDown, ChevronRight, Loader2, Trash2, Banknote, Receipt, ArrowLeftRight } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getJournalEntries,
   getChartOfAccounts,
   createJournalEntry,
   postEntry,
+  getSuppliers,
+  getCustomers,
+  createPaymentVoucher,
+  createReceiptVoucher,
+  createContraVoucher,
   type JournalEntry,
   type JournalLine,
   type Account,
+  type Party,
 } from '../lib/api'
 import { formatDate, cn } from '../lib/utils'
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogClose } from '../components/ui/dialog'
@@ -92,11 +98,230 @@ function JournalRow({ entry, onPost }: { entry: JournalEntry; onPost: (id: numbe
 
 const emptyLine = (): Omit<JournalLine, 'id'> => ({ account: 0, debit: '0', credit: '0', narration: '' })
 
+function PaymentVoucherDialog({ suppliers, onSuccess }: { suppliers: Party[]; onSuccess: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [amount, setAmount] = useState('')
+  const [partyId, setPartyId] = useState<number | ''>('')
+  const [mode, setMode] = useState('bank')
+  const [narration, setNarration] = useState('')
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await createPaymentVoucher({
+        date, amount, party_id: partyId || null, payment_mode: mode, narration,
+      })
+      toast.success('Payment voucher created')
+      setOpen(false)
+      setAmount(''); setPartyId(''); setNarration('')
+      onSuccess()
+    } catch { toast.error('Failed to create payment voucher') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm"><Banknote size={14} /> Payment</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Payment Voucher</DialogTitle></DialogHeader>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Date *</label>
+              <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Amount *</label>
+              <Input type="number" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5">Supplier</label>
+            <select value={partyId} onChange={(e) => setPartyId(e.target.value ? Number(e.target.value) : '')}
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+              <option value="">-- Select Supplier --</option>
+              {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5">Payment Mode</label>
+            <div className="flex gap-4">
+              {['bank', 'cash'].map((m) => (
+                <label key={m} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="radio" name="payment_mode" value={m} checked={mode === m} onChange={() => setMode(m)}
+                    className="accent-teal-600" />
+                  <span className="capitalize">{m}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5">Narration</label>
+            <Input value={narration} onChange={(e) => setNarration(e.target.value)} placeholder="Payment description..." />
+          </div>
+          <div className="flex gap-3 justify-end pt-2">
+            <DialogClose asChild><Button type="button" variant="secondary">Cancel</Button></DialogClose>
+            <Button type="submit" disabled={saving}>{saving && <Loader2 size={14} className="animate-spin" />} Save Payment</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ReceiptVoucherDialog({ customers, onSuccess }: { customers: Party[]; onSuccess: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [amount, setAmount] = useState('')
+  const [partyId, setPartyId] = useState<number | ''>('')
+  const [mode, setMode] = useState('bank')
+  const [narration, setNarration] = useState('')
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await createReceiptVoucher({
+        date, amount, party_id: partyId || null, receipt_mode: mode, narration,
+      })
+      toast.success('Receipt voucher created')
+      setOpen(false)
+      setAmount(''); setPartyId(''); setNarration('')
+      onSuccess()
+    } catch { toast.error('Failed to create receipt voucher') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm"><Receipt size={14} /> Receipt</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Receipt Voucher</DialogTitle></DialogHeader>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Date *</label>
+              <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Amount *</label>
+              <Input type="number" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5">Customer</label>
+            <select value={partyId} onChange={(e) => setPartyId(e.target.value ? Number(e.target.value) : '')}
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+              <option value="">-- Select Customer --</option>
+              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5">Receipt Mode</label>
+            <div className="flex gap-4">
+              {['bank', 'cash'].map((m) => (
+                <label key={m} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="radio" name="receipt_mode" value={m} checked={mode === m} onChange={() => setMode(m)}
+                    className="accent-teal-600" />
+                  <span className="capitalize">{m}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5">Narration</label>
+            <Input value={narration} onChange={(e) => setNarration(e.target.value)} placeholder="Receipt description..." />
+          </div>
+          <div className="flex gap-3 justify-end pt-2">
+            <DialogClose asChild><Button type="button" variant="secondary">Cancel</Button></DialogClose>
+            <Button type="submit" disabled={saving}>{saving && <Loader2 size={14} className="animate-spin" />} Save Receipt</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ContraVoucherDialog({ onSuccess }: { onSuccess: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [amount, setAmount] = useState('')
+  const [direction, setDirection] = useState('bank_to_cash')
+  const [narration, setNarration] = useState('')
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await createContraVoucher({ date, amount, direction, narration })
+      toast.success('Contra voucher created')
+      setOpen(false)
+      setAmount(''); setNarration('')
+      onSuccess()
+    } catch { toast.error('Failed to create contra voucher') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm"><ArrowLeftRight size={14} /> Contra</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Contra Voucher</DialogTitle></DialogHeader>
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Date *</label>
+              <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1.5">Amount *</label>
+              <Input type="number" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5">Direction</label>
+            <div className="flex gap-4">
+              {[{ value: 'bank_to_cash', label: 'Bank → Cash' }, { value: 'cash_to_bank', label: 'Cash → Bank' }].map((d) => (
+                <label key={d.value} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="radio" name="direction" value={d.value} checked={direction === d.value} onChange={() => setDirection(d.value)}
+                    className="accent-teal-600" />
+                  {d.label}
+                </label>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1.5">Narration</label>
+            <Input value={narration} onChange={(e) => setNarration(e.target.value)} placeholder="Contra description..." />
+          </div>
+          <div className="flex gap-3 justify-end pt-2">
+            <DialogClose asChild><Button type="button" variant="secondary">Cancel</Button></DialogClose>
+            <Button type="submit" disabled={saving}>{saving && <Loader2 size={14} className="animate-spin" />} Save Contra</Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export default function JournalsPage() {
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [suppliers, setSuppliers] = useState<Party[]>([])
+  const [customers, setCustomers] = useState<Party[]>([])
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -104,6 +329,8 @@ export default function JournalsPage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [voucherType, setVoucherType] = useState('')
+  const [searchNarration, setSearchNarration] = useState('')
+  const [searchEntryNo, setSearchEntryNo] = useState('')
 
   // Form state
   const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0])
@@ -117,6 +344,8 @@ export default function JournalsPage() {
     if (dateFrom) params.date_from = dateFrom
     if (dateTo) params.date_to = dateTo
     if (voucherType) params.voucher_type = voucherType
+    if (searchNarration) params.narration = searchNarration
+    if (searchEntryNo) params.entry_no = searchEntryNo
     try {
       const res = await getJournalEntries(params)
       setEntries(res.results)
@@ -128,10 +357,12 @@ export default function JournalsPage() {
     }
   }
 
-  useEffect(() => { load() }, [dateFrom, dateTo, voucherType])
+  useEffect(() => { load() }, [dateFrom, dateTo, voucherType, searchNarration, searchEntryNo])
 
   useEffect(() => {
     getChartOfAccounts().then(setAccounts).catch(() => {})
+    getSuppliers().then(setSuppliers).catch(() => {})
+    getCustomers().then(setCustomers).catch(() => {})
   }, [])
 
   async function handlePost(id: number) {
@@ -184,7 +415,11 @@ export default function JournalsPage() {
           <h1 className="text-xl font-bold text-slate-900">Journal Entries</h1>
           <p className="text-sm text-slate-500 mt-0.5">{total} entries</p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
+        <div className="flex items-center gap-2">
+          <PaymentVoucherDialog suppliers={suppliers} onSuccess={load} />
+          <ReceiptVoucherDialog customers={customers} onSuccess={load} />
+          <ContraVoucherDialog onSuccess={load} />
+          <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button>
               <Plus size={16} /> Manual Entry
@@ -302,6 +537,7 @@ export default function JournalsPage() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Filters */}
@@ -321,8 +557,12 @@ export default function JournalsPage() {
           <option value="">All Types</option>
           {VOUCHER_TYPES.map((t) => <option key={t} value={t}>{voucherLabel(t)}</option>)}
         </select>
-        {(dateFrom || dateTo || voucherType) && (
-          <button onClick={() => { setDateFrom(''); setDateTo(''); setVoucherType('') }}
+        <Input value={searchNarration} onChange={(e) => setSearchNarration(e.target.value)}
+          placeholder="Search narration..." className="px-2.5 py-1.5 w-44" />
+        <Input value={searchEntryNo} onChange={(e) => setSearchEntryNo(e.target.value)}
+          placeholder="Entry no..." className="px-2.5 py-1.5 w-36" />
+        {(dateFrom || dateTo || voucherType || searchNarration || searchEntryNo) && (
+          <button onClick={() => { setDateFrom(''); setDateTo(''); setVoucherType(''); setSearchNarration(''); setSearchEntryNo('') }}
             className="text-xs text-slate-500 hover:text-slate-900 underline">Clear filters</button>
         )}
       </div>

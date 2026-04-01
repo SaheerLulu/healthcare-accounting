@@ -463,6 +463,151 @@ class PayablesAgingView(APIView):
         })
 
 
+def _build_book_response(account_subtype, request):
+    """Shared logic for Bank Book and Cash Book — filtered ledger views."""
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
+    account_code = request.query_params.get('account_code')
+    location = get_active_location(request)
+
+    accounts = ChartOfAccount.objects.filter(account_subtype=account_subtype).order_by('account_code')
+    if account_code:
+        accounts = accounts.filter(account_code=account_code)
+
+    if not accounts.exists():
+        return Response({'accounts': [], 'summary': {'total_debit': '0.00', 'total_credit': '0.00'}})
+
+    result_accounts = []
+    grand_debit = Decimal('0.00')
+    grand_credit = Decimal('0.00')
+
+    for account in accounts:
+        base_qs = JournalEntryLine.objects.filter(
+            account=account, entry__is_posted=True
+        ).select_related('entry')
+        if location:
+            base_qs = base_qs.filter(entry__location_id=location.id)
+
+        # Opening balance
+        if start_date:
+            opening_agg = base_qs.filter(entry__date__lt=start_date).aggregate(
+                dr=Sum('debit'), cr=Sum('credit')
+            )
+            opening_balance = (opening_agg['dr'] or Decimal('0.00')) - (opening_agg['cr'] or Decimal('0.00'))
+        else:
+            opening_balance = Decimal('0.00')
+
+        lines_qs = base_qs.order_by('entry__date', 'entry__id')
+        if start_date:
+            lines_qs = lines_qs.filter(entry__date__gte=start_date)
+        if end_date:
+            lines_qs = lines_qs.filter(entry__date__lte=end_date)
+
+        running_balance = opening_balance
+        transactions = []
+        for line in lines_qs:
+            running_balance += line.debit - line.credit
+            transactions.append({
+                'date': line.entry.date,
+                'entry_no': line.entry.entry_no,
+                'narration': line.entry.narration or line.narration,
+                'voucher_type': line.entry.voucher_type,
+                'debit': str(line.debit),
+                'credit': str(line.credit),
+                'balance': str(running_balance),
+            })
+            grand_debit += line.debit
+            grand_credit += line.credit
+
+        result_accounts.append({
+            'account_code': account.account_code,
+            'account_name': account.account_name,
+            'opening_balance': str(opening_balance),
+            'transactions': transactions,
+            'closing_balance': str(running_balance),
+        })
+
+    return Response({
+        'accounts': result_accounts,
+        'summary': {
+            'total_debit': str(grand_debit),
+            'total_credit': str(grand_credit),
+        },
+    })
+
+
+class BankBookView(APIView):
+    def get(self, request):
+        return _build_book_response('Bank', request)
+
+
+class CashBookView(APIView):
+    def get(self, request):
+        return _build_book_response('Cash', request)
+
+
+class DaybookView(APIView):
+    def get(self, request):
+        target_date = request.query_params.get('date')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        location = get_active_location(request)
+
+        if target_date:
+            start_date = target_date
+            end_date = target_date
+        elif not start_date:
+            start_date = date.today().isoformat()
+            end_date = end_date or start_date
+
+        entries_qs = JournalEntry.objects.filter(
+            is_posted=True,
+            date__range=[start_date, end_date],
+        ).prefetch_related('lines__account').order_by('date', 'created_at')
+
+        if location:
+            entries_qs = entries_qs.filter(location_id=location.id)
+
+        grouped = defaultdict(list)
+        total_debit = Decimal('0.00')
+        total_credit = Decimal('0.00')
+        total_entries = 0
+
+        for entry in entries_qs:
+            entry_lines = []
+            for line in entry.lines.all():
+                entry_lines.append({
+                    'account_code': line.account.account_code,
+                    'account_name': line.account.account_name,
+                    'debit': str(line.debit),
+                    'credit': str(line.credit),
+                })
+                total_debit += line.debit
+                total_credit += line.credit
+
+            grouped[str(entry.date)].append({
+                'id': entry.id,
+                'entry_no': entry.entry_no,
+                'voucher_type': entry.voucher_type,
+                'narration': entry.narration,
+                'lines': entry_lines,
+            })
+            total_entries += 1
+
+        days = [{'date': d, 'entries': entries} for d, entries in sorted(grouped.items())]
+
+        return Response({
+            'start_date': start_date,
+            'end_date': end_date,
+            'days': days,
+            'summary': {
+                'total_entries': total_entries,
+                'total_debit': str(total_debit),
+                'total_credit': str(total_credit),
+            },
+        })
+
+
 class GSTComputationView(APIView):
     """Phase 5C: GST computation worksheet with ITC utilization order."""
     def get(self, request):
@@ -679,4 +824,140 @@ class PartyOutstandingView(APIView):
             'as_of_date': as_of_date,
             'rows': rows,
             'total_outstanding': str(sum(Decimal(r['closing_balance']) for r in rows)),
+        })
+
+
+class StockMovementSummaryView(APIView):
+    """Product-wise stock movement summary."""
+    def get(self, request):
+        from inventory_reader.models import StockMovementRO, ProductRO
+
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        location = get_active_location(request)
+
+        movements = StockMovementRO.objects.select_related('product').all()
+        if location:
+            movements = movements.filter(location_id=location.id)
+
+        # Split into before-period and in-period
+        if start_date:
+            opening_movements = movements.filter(created_at__date__lt=start_date)
+            period_movements = movements.filter(created_at__date__gte=start_date)
+        else:
+            opening_movements = StockMovementRO.objects.none()
+            period_movements = movements
+
+        if end_date:
+            period_movements = period_movements.filter(created_at__date__lte=end_date)
+
+        # Compute opening balances
+        opening_data = defaultdict(int)
+        for mv in opening_movements:
+            if mv.movement_type in ('purchase', 'purchase_return_in', 'adjustment_in'):
+                opening_data[mv.product_id] += mv.quantity
+            else:
+                opening_data[mv.product_id] -= mv.quantity
+
+        # Compute period movements
+        product_data = defaultdict(lambda: {'in': 0, 'out': 0})
+        for mv in period_movements:
+            if mv.movement_type in ('purchase', 'purchase_return_in', 'adjustment_in'):
+                product_data[mv.product_id]['in'] += mv.quantity
+            else:
+                product_data[mv.product_id]['out'] += mv.quantity
+
+        # Collect all product IDs
+        all_pids = set(opening_data.keys()) | set(product_data.keys())
+        products = {p.id: p for p in ProductRO.objects.filter(id__in=all_pids)}
+
+        rows = []
+        for pid in sorted(all_pids):
+            product = products.get(pid)
+            opening = opening_data.get(pid, 0)
+            inward = product_data[pid]['in']
+            outward = product_data[pid]['out']
+            closing = opening + inward - outward
+
+            rows.append({
+                'product_id': pid,
+                'product_name': product.name if product else f'Product #{pid}',
+                'hsn_code': product.pharma_hsn_code if product else '',
+                'opening_qty': opening,
+                'inward_qty': inward,
+                'outward_qty': outward,
+                'closing_qty': closing,
+            })
+
+        rows.sort(key=lambda x: x['product_name'])
+
+        return Response({
+            'start_date': start_date,
+            'end_date': end_date,
+            'rows': rows,
+            'total_products': len(rows),
+        })
+
+
+class StockValuationView(APIView):
+    """Product-wise stock valuation using weighted average cost."""
+    def get(self, request):
+        from inventory_reader.models import StockMovementRO, ProductRO, PurchaseOrderLineRO
+
+        as_of_date = request.query_params.get('date', date.today().isoformat())
+        location = get_active_location(request)
+
+        # Get closing quantities
+        movements = StockMovementRO.objects.filter(created_at__date__lte=as_of_date)
+        if location:
+            movements = movements.filter(location_id=location.id)
+
+        qty_data = defaultdict(int)
+        for mv in movements:
+            if mv.movement_type in ('purchase', 'purchase_return_in', 'adjustment_in'):
+                qty_data[mv.product_id] += mv.quantity
+            else:
+                qty_data[mv.product_id] -= mv.quantity
+
+        # Get weighted average purchase rate per product
+        po_lines = PurchaseOrderLineRO.objects.filter(
+            purchase_order__state__in=['confirmed', 'done', 'approved']
+        ).values('product_id').annotate(
+            total_qty=Sum('quantity'),
+            total_value=Sum(F('quantity') * F('purchase_rate')),
+        )
+
+        avg_rates = {}
+        for line in po_lines:
+            if line['total_qty'] and line['total_qty'] > 0:
+                avg_rates[line['product_id']] = Decimal(str(line['total_value'])) / Decimal(str(line['total_qty']))
+
+        all_pids = [pid for pid, qty in qty_data.items() if qty > 0]
+        products = {p.id: p for p in ProductRO.objects.filter(id__in=all_pids)}
+
+        rows = []
+        total_value = Decimal('0.00')
+        for pid in all_pids:
+            product = products.get(pid)
+            qty = qty_data[pid]
+            rate = avg_rates.get(pid, Decimal('0.00')).quantize(Decimal('0.01'))
+            value = (Decimal(str(qty)) * rate).quantize(Decimal('0.01'))
+            total_value += value
+
+            rows.append({
+                'product_id': pid,
+                'product_name': product.name if product else f'Product #{pid}',
+                'hsn_code': product.pharma_hsn_code if product else '',
+                'closing_qty': qty,
+                'avg_rate': str(rate),
+                'value': str(value),
+            })
+
+        rows.sort(key=lambda x: x['product_name'])
+
+        return Response({
+            'as_of_date': as_of_date,
+            'rows': rows,
+            'total_products': len(rows),
+            'total_value': str(total_value),
         })

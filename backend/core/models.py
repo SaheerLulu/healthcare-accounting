@@ -128,6 +128,11 @@ class AccountMapping(models.Model):
         ('ROUND_OFF', 'Round Off'),
         ('RCM_LIABILITY', 'RCM GST Liability'),
         ('BANK', 'Bank'),
+        ('SALARY_EXPENSE', 'Salary Expense'),
+        ('PF_PAYABLE', 'PF Payable'),
+        ('ESI_PAYABLE', 'ESI Payable'),
+        ('PT_PAYABLE', 'Professional Tax Payable'),
+        ('NET_SALARY_PAYABLE', 'Net Salary Payable'),
     ]
 
     # Default mapping from key to account_code for data migration
@@ -152,6 +157,11 @@ class AccountMapping(models.Model):
         'ROUND_OFF': '6100',
         'RCM_LIABILITY': '2160',
         'BANK': '1120',
+        'SALARY_EXPENSE': '5400',
+        'PF_PAYABLE': '2170',
+        'ESI_PAYABLE': '2180',
+        'PT_PAYABLE': '2190',
+        'NET_SALARY_PAYABLE': '2200',
     }
 
     key = models.CharField(max_length=30, unique=True, choices=KEY_CHOICES)

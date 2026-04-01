@@ -11,4 +11,6 @@ urlpatterns = [
     path('settings/', views.AccountingSettingsView.as_view(), name='accounting-settings'),
     path('dashboard/', views.DashboardView.as_view(), name='dashboard'),
     path('user-locations/', views.UserLocationsView.as_view(), name='user-locations'),
+    path('suppliers/', views.SuppliersListView.as_view(), name='suppliers-list'),
+    path('customers/', views.CustomersListView.as_view(), name='customers-list'),
 ]

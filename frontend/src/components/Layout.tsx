@@ -50,6 +50,7 @@ const navItems: NavItem[] = [
     ],
   },
   { label: 'TDS', to: '/tds', icon: <FileBarChart size={16} />, separator: 'Tax' },
+  { label: 'Payroll', to: '/payroll', icon: <Receipt size={16} /> },
   {
     label: 'Reports',
     separator: 'Reports',
@@ -61,6 +62,10 @@ const navItems: NavItem[] = [
       { label: 'GST Computation', to: '/reports/gst-computation' },
       { label: 'HSN Summary', to: '/reports/hsn-summary' },
       { label: 'Party Outstanding', to: '/reports/party-outstanding' },
+      { label: 'Bank Book', to: '/reports/bank-book' },
+      { label: 'Cash Book', to: '/reports/cash-book' },
+      { label: 'Daybook', to: '/reports/daybook' },
+      { label: 'Stock Summary', to: '/reports/stock-summary' },
     ],
   },
   { label: 'Sync', to: '/sync', icon: <RefreshCw size={16} /> },
@@ -219,7 +224,7 @@ export default function Layout() {
             <Building2 size={14} className="text-white" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-white leading-none">Biloop</p>
+            <p className="text-sm font-semibold text-white leading-none">Seefmed</p>
             <p className="text-xs text-slate-400 leading-none mt-0.5">Accounting</p>
           </div>
         </div>

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Biloop Accounting — a full-stack accounting application for a healthcare/pharmacy business with Indian GST/TDS compliance and multi-location support. It syncs data from a shared inventory system and generates double-entry journal entries automatically.
+Seefmed Accounting — a full-stack accounting application for a healthcare/pharmacy business with Indian GST/TDS compliance and multi-location support. It syncs data from a shared inventory system and generates double-entry journal entries automatically.
 
 ## Development Commands
 

@@ -202,6 +202,44 @@ export async function reverseEntry(id: number) {
   return res.data as JournalEntry
 }
 
+// ─── Voucher Shortcuts ──────────────────────────────────────────────────────
+
+export interface Party {
+  id: number
+  name: string
+}
+
+export async function getSuppliers() {
+  const res = await api.get('/accounts/suppliers/')
+  return res.data as Party[]
+}
+
+export async function getCustomers() {
+  const res = await api.get('/accounts/customers/')
+  return res.data as Party[]
+}
+
+export async function createPaymentVoucher(data: {
+  date: string; amount: string; party_id?: number | null; payment_mode: string; narration?: string; location_id?: number | null
+}) {
+  const res = await api.post('/journals/entries/payment/', data)
+  return res.data as JournalEntry
+}
+
+export async function createReceiptVoucher(data: {
+  date: string; amount: string; party_id?: number | null; receipt_mode: string; narration?: string; location_id?: number | null
+}) {
+  const res = await api.post('/journals/entries/receipt/', data)
+  return res.data as JournalEntry
+}
+
+export async function createContraVoucher(data: {
+  date: string; amount: string; direction: string; narration?: string; location_id?: number | null
+}) {
+  const res = await api.post('/journals/entries/contra/', data)
+  return res.data as JournalEntry
+}
+
 // ─── GST ─────────────────────────────────────────────────────────────────────
 
 export interface GSTR1Entry {
@@ -597,6 +635,170 @@ export async function getPayablesAging(params?: Record<string, string>) {
   return res.data as { rows: PayablesAgingRow[]; total_outstanding: string }
 }
 
+// ─── Payroll ────────────────────────────────────────────────────────────────
+
+export interface Employee {
+  id: number
+  employee_code: string
+  name: string
+  pan: string
+  bank_account_no: string
+  bank_ifsc: string
+  date_of_joining: string
+  date_of_leaving: string | null
+  is_active: boolean
+  location_id: number | null
+}
+
+export interface SalaryStructureData {
+  id: number
+  employee: number
+  employee_name: string
+  basic_salary: string
+  hra: string
+  conveyance: string
+  medical: string
+  special_allowance: string
+  pf_employee_pct: string
+  pf_employer_pct: string
+  esi_employee_pct: string
+  esi_employer_pct: string
+  professional_tax: string
+  gross_salary: string
+  effective_from: string
+  is_active: boolean
+}
+
+export interface PayrollRunData {
+  id: number
+  period: string
+  employee: number
+  employee_name: string
+  employee_code: string
+  gross_salary: string
+  basic: string
+  hra: string
+  net_salary: string
+  pf_employee: string
+  pf_employer: string
+  esi_employee: string
+  esi_employer: string
+  professional_tax: string
+  tds: string
+  status: string
+  journal_entry_no: string | null
+  location_id: number | null
+}
+
+export async function getEmployees() {
+  const res = await api.get('/payroll/employees/')
+  return res.data as Employee[]
+}
+
+export async function createEmployee(data: Partial<Employee>) {
+  const res = await api.post('/payroll/employees/', data)
+  return res.data as Employee
+}
+
+export async function updateEmployee(id: number, data: Partial<Employee>) {
+  const res = await api.patch(`/payroll/employees/${id}/`, data)
+  return res.data as Employee
+}
+
+export async function deleteEmployee(id: number) {
+  await api.delete(`/payroll/employees/${id}/`)
+}
+
+export async function getSalaryStructures(params?: Record<string, string>) {
+  const res = await api.get('/payroll/salary-structures/', { params })
+  return res.data as SalaryStructureData[]
+}
+
+export async function createSalaryStructure(data: Partial<SalaryStructureData>) {
+  const res = await api.post('/payroll/salary-structures/', data)
+  return res.data as SalaryStructureData
+}
+
+export async function updateSalaryStructure(id: number, data: Partial<SalaryStructureData>) {
+  const res = await api.patch(`/payroll/salary-structures/${id}/`, data)
+  return res.data as SalaryStructureData
+}
+
+export async function getPayrollRuns(params?: Record<string, string>) {
+  const res = await api.get('/payroll/runs/', { params })
+  return res.data as { results: PayrollRunData[]; count: number }
+}
+
+export async function processPayroll(period: string, locationId?: number | null) {
+  const res = await api.post('/payroll/runs/process/', { period, location_id: locationId })
+  return res.data as { detail: string; runs: PayrollRunData[] }
+}
+
+export async function markPayrollPaid(id: number) {
+  const res = await api.post(`/payroll/runs/${id}/mark-paid/`)
+  return res.data as PayrollRunData
+}
+
+// ─── Books ──────────────────────────────────────────────────────────────────
+
+export interface BookTransaction {
+  date: string
+  entry_no: string
+  narration: string
+  voucher_type: string
+  debit: string
+  credit: string
+  balance: string
+}
+
+export interface BookAccount {
+  account_code: string
+  account_name: string
+  opening_balance: string
+  transactions: BookTransaction[]
+  closing_balance: string
+}
+
+export interface BookResponse {
+  accounts: BookAccount[]
+  summary: { total_debit: string; total_credit: string }
+}
+
+export async function getBankBook(params?: Record<string, string>) {
+  const res = await api.get('/reports/bank-book/', { params })
+  return res.data as BookResponse
+}
+
+export async function getCashBook(params?: Record<string, string>) {
+  const res = await api.get('/reports/cash-book/', { params })
+  return res.data as BookResponse
+}
+
+export interface DaybookEntry {
+  id: number
+  entry_no: string
+  voucher_type: string
+  narration: string
+  lines: { account_code: string; account_name: string; debit: string; credit: string }[]
+}
+
+export interface DaybookDay {
+  date: string
+  entries: DaybookEntry[]
+}
+
+export interface DaybookResponse {
+  start_date: string
+  end_date: string
+  days: DaybookDay[]
+  summary: { total_entries: number; total_debit: string; total_credit: string }
+}
+
+export async function getDaybook(params?: Record<string, string>) {
+  const res = await api.get('/reports/daybook/', { params })
+  return res.data as DaybookResponse
+}
+
 // ─── Sync ─────────────────────────────────────────────────────────────────────
 
 export interface SyncLog {
@@ -692,6 +894,37 @@ export interface AuditLogParams {
 export async function getAuditLogs(params: AuditLogParams = {}) {
   const res = await api.get('/audit/', { params })
   return res.data as { count: number; next: string | null; previous: string | null; results: AuditLog[] }
+}
+
+// ─── Stock / Inventory ──────────────────────────────────────────────────────
+
+export interface StockMovementRow {
+  product_id: number
+  product_name: string
+  hsn_code: string
+  opening_qty: number
+  inward_qty: number
+  outward_qty: number
+  closing_qty: number
+}
+
+export interface StockValuationRow {
+  product_id: number
+  product_name: string
+  hsn_code: string
+  closing_qty: number
+  avg_rate: string
+  value: string
+}
+
+export async function getStockMovement(params?: Record<string, string>) {
+  const res = await api.get('/reports/stock-movement/', { params })
+  return res.data as { start_date: string; end_date: string; rows: StockMovementRow[]; total_products: number }
+}
+
+export async function getStockValuation(params?: Record<string, string>) {
+  const res = await api.get('/reports/stock-valuation/', { params })
+  return res.data as { as_of_date: string; rows: StockValuationRow[]; total_products: number; total_value: string }
 }
 
 export default api

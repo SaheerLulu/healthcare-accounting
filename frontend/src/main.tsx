@@ -6,7 +6,7 @@ import App from './App.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ThemeProvider attribute="class" defaultTheme="light" storageKey="biloop-theme">
+    <ThemeProvider attribute="class" defaultTheme="light" storageKey="seefmed-theme">
       <App />
     </ThemeProvider>
   </StrictMode>,
