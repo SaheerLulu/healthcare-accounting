@@ -1,11 +1,16 @@
 import * as React from 'react'
 import { cn } from '../../lib/utils'
 
+/**
+ * Card — matches the parent Biloop design language:
+ *   bg-[var(--color-card-bg)] rounded-xl card-shadow
+ * Default padding p-6; override with className when a custom inset is needed.
+ */
 const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn('card-shadow', className)}
+      className={cn('rounded-xl p-6 card-shadow', className)}
       {...props}
     />
   )
@@ -16,7 +21,8 @@ const CardHeader = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDiv
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn('px-5 py-4 border-b border-slate-200', className)}
+      className={cn('-mx-6 -mt-6 mb-6 px-6 py-4 border-b', className)}
+      style={{ borderColor: 'var(--color-card-border)' }}
       {...props}
     />
   )
@@ -27,7 +33,7 @@ const CardContent = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDi
   ({ className, ...props }, ref) => (
     <div
       ref={ref}
-      className={cn('p-5', className)}
+      className={cn('', className)}
       {...props}
     />
   )

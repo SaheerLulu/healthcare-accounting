@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import { getDashboard, type DashboardData } from '../lib/api'
 import { formatCurrency } from '../lib/utils'
-import { Card, CardContent } from '../components/ui/card'
+import { Card } from '../components/ui/card'
 
 interface KPICardProps {
   title: string
@@ -32,16 +32,20 @@ interface KPICardProps {
 
 function KPICard({ title, value, icon, color, bg }: KPICardProps) {
   return (
-    <Card className="flex items-center gap-4">
-      <CardContent className="flex items-center gap-4 w-full">
+    <Card className="card-hover">
+      <div className="flex items-center gap-4">
         <div className={`w-11 h-11 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
           <span className={color}>{icon}</span>
         </div>
         <div>
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">{title}</p>
-          <p className="text-xl font-bold text-slate-900 mt-0.5">{value}</p>
+          <p className="text-xs font-medium uppercase tracking-wide" style={{ color: 'var(--color-text-secondary)' }}>
+            {title}
+          </p>
+          <p className="text-2xl font-bold mt-0.5" style={{ color: 'var(--color-text-primary)' }}>
+            {value}
+          </p>
         </div>
-      </CardContent>
+      </div>
     </Card>
   )
 }
@@ -78,14 +82,16 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-xl font-bold text-slate-900">Dashboard</h1>
-        <p className="text-sm text-slate-500 mt-0.5">Current Financial Year Overview</p>
+    <div className="max-w-7xl mx-auto space-y-6">
+      <div>
+        <h1 style={{ color: 'var(--color-text-primary)' }}>Dashboard</h1>
+        <p className="mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>
+          Current Financial Year Overview
+        </p>
       </div>
 
       {/* KPI Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <KPICard
           title="Total Revenue"
           value={formatCurrency(data.total_revenue)}
@@ -132,15 +138,15 @@ export default function DashboardPage() {
 
       {/* Chart */}
       <Card>
-        <CardContent>
-          <h2 className="text-sm font-semibold text-slate-900 mb-4">
-            Monthly Revenue vs Expenses
-          </h2>
-          {(data.monthly_data ?? []).length === 0 ? (
-            <div className="flex items-center justify-center h-64 text-slate-400 text-sm">
-              No monthly data available
-            </div>
-          ) : (
+        <h3 className="mb-4">Monthly Revenue vs Expenses</h3>
+        {(data.monthly_data ?? []).length === 0 ? (
+          <div
+            className="flex items-center justify-center h-64 text-sm"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            No monthly data available
+          </div>
+        ) : (
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={data.monthly_data ?? []} margin={{ top: 0, right: 0, left: 10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
@@ -169,8 +175,7 @@ export default function DashboardPage() {
                 <Bar dataKey="expenses" name="Expenses" fill="#f43f5e" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          )}
-        </CardContent>
+        )}
       </Card>
     </div>
   )

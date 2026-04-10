@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
-import { Building2, Loader2 } from 'lucide-react'
+import { Calculator, Loader2 } from 'lucide-react'
 import { login } from '../lib/api'
 import { Card } from '../components/ui/card'
 import { Input } from '../components/ui/input'
@@ -33,22 +33,35 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
+    <div
+      className="min-h-screen flex items-center justify-center p-4"
+      style={{ backgroundColor: 'var(--color-grey-bg)' }}
+    >
+      <div className="w-full max-w-sm animate-fade-in">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-12 h-12 rounded-xl bg-teal-600 flex items-center justify-center mb-3">
-            <Building2 size={24} className="text-white" />
+          <div
+            className="w-12 h-12 rounded-xl flex items-center justify-center mb-3"
+            style={{ backgroundColor: 'var(--color-teal)' }}
+          >
+            <Calculator size={24} className="text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">Seefmed Accounting</h1>
-          <p className="text-sm text-slate-500 mt-1">Sign in to your account</p>
+          <h1 className="text-2xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
+            Seefmed Accounting
+          </h1>
+          <p className="text-sm mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+            Sign in to your account
+          </p>
         </div>
 
         {/* Card */}
-        <Card className="p-6">
+        <Card>
           <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
             <div>
-              <label className="block text-sm font-medium text-slate-500 mb-1.5">
+              <label
+                className="block text-sm font-medium mb-1.5"
+                style={{ color: 'var(--color-text-secondary)' }}
+              >
                 Username
               </label>
               <Input
@@ -63,7 +76,10 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-500 mb-1.5">
+              <label
+                className="block text-sm font-medium mb-1.5"
+                style={{ color: 'var(--color-text-secondary)' }}
+              >
                 Password
               </label>
               <Input

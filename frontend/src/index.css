@@ -1,58 +1,161 @@
 @import "tailwindcss";
 
-/* ─── Base Styles ─── */
+/* ============================================================
+   Seefmed Biloop — shared design language with parent inventory
+   app. Keep in sync with healthcare-inventory-management/src/styles/globals.css
+   ============================================================ */
+
+/* Theme Colors (light) */
+:root {
+  --color-teal: #0F9D9A;
+  --color-teal-dark: #0D8784;
+  --color-blue: #2F80ED;
+  --color-blue-dark: #1D6FDB;
+  --color-grey-bg: #F2F2F2;
+  --color-grey-light: #F8F9FA;
+  --color-slate: #37474F;
+  --color-slate-light: #546E7A;
+  --color-red: #EB5757;
+  --color-green: #27AE60;
+  --color-orange: #F2994A;
+  --color-yellow: #F2C94C;
+  --color-card-bg: #ffffff;
+  --color-card-border: #e5e7eb;
+  --color-dropdown-bg: #ffffff;
+  --color-input-bg: #ffffff;
+  --color-input-border: #d1d5db;
+  --color-hover-bg: #f3f4f6;
+  --color-text-primary: #37474F;
+  --color-text-secondary: #6b7280;
+  --color-text-muted: #9ca3af;
+  --color-table-stripe: #F8F9FA;
+  --color-table-hover: rgba(15, 157, 154, 0.06);
+  --color-scrollbar-track: #f1f1f1;
+  --color-scrollbar-thumb: #b0c4c3;
+  --color-scrollbar-thumb-hover: #8aaba9;
+  --color-shadow-sm: rgba(0, 0, 0, 0.04);
+  --color-shadow-md: rgba(0, 0, 0, 0.06);
+  --color-shadow-lg: rgba(0, 0, 0, 0.08);
+  --color-nav-bg: rgba(255, 255, 255, 0.8);
+  --color-nav-border: rgba(229, 231, 235, 0.6);
+}
+
+/* Theme Colors (dark) */
+.dark {
+  --color-teal: #14B8B5;
+  --color-teal-dark: #0F9D9A;
+  --color-blue: #60A5FA;
+  --color-blue-dark: #3B82F6;
+  --color-grey-bg: #0f172a;
+  --color-grey-light: #1e293b;
+  --color-slate: #e2e8f0;
+  --color-slate-light: #94a3b8;
+  --color-red: #f87171;
+  --color-green: #4ade80;
+  --color-orange: #fb923c;
+  --color-yellow: #fbbf24;
+  --color-card-bg: #1e293b;
+  --color-card-border: #334155;
+  --color-dropdown-bg: #1e293b;
+  --color-input-bg: #0f172a;
+  --color-input-border: #475569;
+  --color-hover-bg: #334155;
+  --color-text-primary: #e2e8f0;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+  --color-table-stripe: #1e293b;
+  --color-table-hover: rgba(20, 184, 181, 0.08);
+  --color-scrollbar-track: #1e293b;
+  --color-scrollbar-thumb: #475569;
+  --color-scrollbar-thumb-hover: #64748b;
+  --color-shadow-sm: rgba(0, 0, 0, 0.2);
+  --color-shadow-md: rgba(0, 0, 0, 0.3);
+  --color-shadow-lg: rgba(0, 0, 0, 0.4);
+  --color-nav-bg: rgba(15, 23, 42, 0.85);
+  --color-nav-border: rgba(51, 65, 85, 0.6);
+}
+
+/* Typography */
 body {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background-color: #F8FAFC;
-  color: #0F172A;
+  font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: var(--color-text-primary);
+  background: var(--color-grey-bg);
+  transition: background-color 200ms ease, color 200ms ease;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-::selection {
-  background-color: #0F9D9A;
-  color: white;
+h1 { font-size: 1.75rem; font-weight: 600; line-height: 2.125rem; color: var(--color-text-primary); }
+h2 { font-size: 1.375rem; font-weight: 600; line-height: 1.75rem; color: var(--color-text-primary); }
+h3 { font-size: 1.125rem; font-weight: 600; line-height: 1.5rem; color: var(--color-text-primary); }
+p  { font-size: 0.875rem; line-height: 1.25rem; }
+
+/* Interactive element transitions */
+button, a, input, select, textarea, [role="button"] {
+  transition: background-color 150ms ease, border-color 150ms ease,
+              color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
 }
 
-/* ─── Utility Classes ─── */
+/* Button press feedback */
+button:active:not(:disabled), [role="button"]:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Text selection */
+::selection { background-color: rgba(15, 157, 154, 0.3); color: #1a2e2e; }
+.dark ::selection { background-color: rgba(20, 184, 181, 0.35); color: #e2e8f0; }
+
+/* Custom scrollbar — teal-tinted */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--color-scrollbar-track); }
+::-webkit-scrollbar-thumb { background: var(--color-scrollbar-thumb); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-scrollbar-thumb-hover); }
+
+/* Table styles — striped + teal accent on hover */
+.table-striped tbody tr:nth-child(even) { background-color: var(--color-table-stripe); }
+.table-striped tbody tr:hover {
+  background-color: var(--color-table-hover);
+  box-shadow: inset 3px 0 0 var(--color-teal);
+}
+.table-striped tbody tr { transition: background-color 150ms ease, box-shadow 150ms ease; }
+
+/* Card shadows */
 .card-shadow {
-  background-color: #FFFFFF;
-  border: 1px solid #E2E8F0;
-  border-radius: 1rem;
-  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  background-color: var(--color-card-bg);
+  border: 1px solid var(--color-card-border);
+  box-shadow: 0 1px 2px var(--color-shadow-sm), 0 2px 8px var(--color-shadow-md);
+}
+.card-shadow-lg {
+  background-color: var(--color-card-bg);
+  border: 1px solid var(--color-card-border);
+  box-shadow: 0 4px 12px var(--color-shadow-lg), 0 1px 3px var(--color-shadow-sm);
 }
 
-/* ─── Animations ─── */
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+/* Card hover lift */
+.card-hover { transition: transform 200ms ease, box-shadow 200ms ease; }
+.card-hover:hover {
+  transform: translateY(-2px) scale(1.005);
+  box-shadow: 0 8px 25px var(--color-shadow-lg), 0 2px 6px var(--color-shadow-sm);
 }
 
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(8px); }
+/* Dropdown animation */
+.dropdown-animate { animation: dropdownIn 150ms ease-out; }
+@keyframes dropdownIn {
+  from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.2s ease-out;
-}
+/* Keyframe animations */
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 
-.animate-slide-up {
-  animation: slideUp 0.3s ease-out;
-}
-
-/* ─── Custom Scrollbar ─── */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: #E2E8F0;
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #CBD5E1;
+.animate-fadeIn { animation: fadeIn 300ms ease-out both; }
+.animate-slideUp { animation: slideUp 400ms ease-out both; }
+.animate-fade-in { animation: fadeIn 300ms ease-out both; }
+.animate-slide-up { animation: slideUp 400ms ease-out both; }
+.animate-shimmer {
+  background: linear-gradient(90deg, var(--color-grey-light) 25%, var(--color-grey-bg) 50%, var(--color-grey-light) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
 }
