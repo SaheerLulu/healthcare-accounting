@@ -52,6 +52,10 @@ INSTALLED_APPS = [
     'sync',
     'audit',
     'payroll',
+    'parties',
+    'bills',
+    'banking',
+    'expenses',
 ]
 
 MIDDLEWARE = [
@@ -91,7 +95,7 @@ WSGI_APPLICATION = 'accounting_project.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': '/home/sahee/biloop/healthcare-inventory-management/backend/db.sqlite3',
+        'NAME': '/home/saheer/biloop/healthcare/healthcare/backend/db.sqlite3',
     }
 }
 

@@ -67,9 +67,20 @@ export interface Account {
   account_type: string
   account_subtype: string
   parent: number | null
+  parent_code?: string | null
+  parent_name?: string | null
   is_leaf: boolean
+  is_active: boolean
   description: string
+  documents_count?: number
   children?: Account[]
+}
+
+export interface AccountCounts {
+  total: number
+  active: number
+  inactive: number
+  by_type: Record<string, number>
 }
 
 export async function getChartOfAccounts(params?: Record<string, string>) {
@@ -99,6 +110,16 @@ export async function updateAccount(id: number, data: Partial<Account>) {
 
 export async function deleteAccount(id: number) {
   await api.delete(`/accounts/chart-of-accounts/${id}/`)
+}
+
+export async function getAccountCounts() {
+  const res = await api.get('/accounts/chart-of-accounts/counts/')
+  return res.data as AccountCounts
+}
+
+export async function toggleAccountActive(id: number) {
+  const res = await api.post(`/accounts/chart-of-accounts/${id}/toggle-active/`)
+  return res.data as Account
 }
 
 // ─── Account Mappings ────────────────────────────────────────────────────────
@@ -202,6 +223,22 @@ export async function reverseEntry(id: number) {
   return res.data as JournalEntry
 }
 
+export async function updateJournalEntry(id: number, data: {
+  date?: string
+  narration?: string
+  voucher_type?: string
+  reference_type?: string
+  reference_id?: number | null
+  lines?: JournalLine[]
+}) {
+  const res = await api.put(`/journals/entries/${id}/`, data)
+  return res.data as JournalEntry
+}
+
+export async function deleteJournalEntry(id: number) {
+  await api.delete(`/journals/entries/${id}/`)
+}
+
 // ─── Voucher Shortcuts ──────────────────────────────────────────────────────
 
 export interface Party {
@@ -238,6 +275,900 @@ export async function createContraVoucher(data: {
 }) {
   const res = await api.post('/journals/entries/contra/', data)
   return res.data as JournalEntry
+}
+
+// ─── Parties (Suppliers / Customers) ───────────────────────────────────────
+
+export type PartyType = 'Supplier' | 'Customer'
+
+export interface PartyListRow {
+  id: number
+  name: string
+  gst_no: string
+  phone: string
+  email: string
+  city: string
+  state: string
+  status: string
+  customer_type?: string
+  outstanding: string
+  invoice_count: number
+  last_transaction_date: string | null
+  opening_balance: string
+  opening_balance_as_of: string | null
+}
+
+export interface PartySummary {
+  total_invoices: string
+  total_settled: string
+  outstanding: string
+  invoice_count: number
+  last_transaction_date: string | null
+  opening_balance: string
+  opening_balance_as_of: string | null
+}
+
+export interface SupplierDetail {
+  id: number
+  name: string
+  gst_no: string
+  contact_person: string
+  phone: string
+  email: string
+  address: string
+  city: string
+  state: string
+  pincode: string
+  payment_terms: string
+  credit_days: number
+  status: string
+  location_id: number | null
+  created_at: string | null
+  summary: PartySummary
+}
+
+export interface CustomerDetail {
+  id: number
+  name: string
+  customer_code: string
+  gst_no: string
+  phone: string
+  email: string
+  address: string
+  city: string
+  state: string
+  pincode: string
+  payment_terms: string
+  credit_days: number
+  credit_limit: string
+  customer_type: string
+  status: string
+  location_id: number | null
+  created_at: string | null
+  summary: PartySummary
+}
+
+export interface PartyTransaction {
+  entry_id: number
+  date: string
+  entry_no: string
+  voucher_type: string
+  reference_type: string
+  reference_id: number | null
+  narration: string
+  debit: string
+  credit: string
+  amount: string
+}
+
+export interface PartyStatementRow {
+  date: string
+  entry_no: string
+  voucher_type: string
+  reference_type: string
+  reference_id: number | null
+  narration: string
+  debit: string
+  credit: string
+  balance: string
+}
+
+export interface PartyStatement {
+  party_type: PartyType
+  party_id: number
+  start_date: string | null
+  end_date: string | null
+  opening_balance: string
+  stored_opening_balance: string
+  opening_balance_as_of: string | null
+  closing_balance: string
+  rows: PartyStatementRow[]
+}
+
+export interface PartyOpeningBalance {
+  id: number
+  party_type: PartyType
+  party_id: number
+  amount: string
+  as_of_date: string
+  narration: string
+  created_at: string
+  updated_at: string
+  created_by: number | null
+  created_by_username: string | null
+}
+
+export interface PartyCommunication {
+  id: number
+  party_type: PartyType
+  party_id: number
+  channel: 'email' | 'phone' | 'whatsapp' | 'note'
+  direction: 'out' | 'in'
+  subject: string
+  body: string
+  contact: string
+  communicated_at: string
+  created_at: string
+  created_by: number | null
+  created_by_username: string | null
+}
+
+const partyBase = (t: PartyType) => (t === 'Supplier' ? 'suppliers' : 'customers')
+
+export async function getPartiesList(party_type: PartyType, params?: { search?: string }) {
+  const res = await api.get(`/parties/${partyBase(party_type)}/`, { params })
+  return res.data as { rows: PartyListRow[]; count: number }
+}
+
+export async function getSupplierDetail(id: number) {
+  const res = await api.get(`/parties/suppliers/${id}/`)
+  return res.data as SupplierDetail
+}
+
+export async function getCustomerDetail(id: number) {
+  const res = await api.get(`/parties/customers/${id}/`)
+  return res.data as CustomerDetail
+}
+
+export async function getPartyTransactions(party_type: PartyType, id: number, params?: Record<string, string>) {
+  const res = await api.get(`/parties/${partyBase(party_type)}/${id}/transactions/`, { params })
+  return res.data as { rows: PartyTransaction[]; count: number }
+}
+
+export async function getPartyStatement(party_type: PartyType, id: number, params?: Record<string, string>) {
+  const res = await api.get(`/parties/${partyBase(party_type)}/${id}/statement/`, { params })
+  return res.data as PartyStatement
+}
+
+export async function getPartyCommunications(party_type: PartyType, id: number, params?: Record<string, string>) {
+  const res = await api.get(`/parties/${partyBase(party_type)}/${id}/communications/`, { params })
+  return res.data as { rows: PartyCommunication[]; count: number }
+}
+
+export async function createPartyCommunication(party_type: PartyType, id: number, data: {
+  channel: PartyCommunication['channel']
+  direction: PartyCommunication['direction']
+  subject: string
+  body?: string
+  contact?: string
+  communicated_at: string
+}) {
+  const res = await api.post(`/parties/${partyBase(party_type)}/${id}/communications/`, data)
+  return res.data as PartyCommunication
+}
+
+export async function deletePartyCommunication(commId: number) {
+  await api.delete(`/parties/communications/${commId}/`)
+}
+
+export async function getPartyOpeningBalance(party_type: PartyType, id: number) {
+  const res = await api.get(`/parties/${partyBase(party_type)}/${id}/opening-balance/`)
+  return res.data as PartyOpeningBalance | null
+}
+
+export async function upsertPartyOpeningBalance(party_type: PartyType, id: number, data: {
+  amount: string
+  as_of_date: string
+  narration?: string
+}) {
+  const res = await api.put(`/parties/${partyBase(party_type)}/${id}/opening-balance/`, data)
+  return res.data as PartyOpeningBalance
+}
+
+export async function deletePartyOpeningBalance(party_type: PartyType, id: number) {
+  await api.delete(`/parties/${partyBase(party_type)}/${id}/opening-balance/`)
+}
+
+// ─── Bills ──────────────────────────────────────────────────────────────────
+
+export type BillStatus = 'draft' | 'open' | 'partially_paid' | 'paid' | 'cancelled'
+
+export interface BillLine {
+  id?: number
+  account: number
+  account_code?: string
+  account_name?: string
+  description: string
+  amount: string
+}
+
+export interface BillPayment {
+  id: number
+  bill: number
+  date: string
+  amount: string
+  mode: 'bank' | 'cash'
+  reference: string
+  notes: string
+  journal_entry: number | null
+  journal_entry_no: string | null
+  created_at: string
+  created_by: number | null
+  created_by_name: string | null
+}
+
+export interface BillAttachment {
+  id: number
+  bill: number
+  file_url: string
+  original_name: string
+  content_type: string
+  size: number
+  uploaded_at: string
+  uploaded_by: number | null
+  uploaded_by_name: string | null
+}
+
+export interface Bill {
+  id: number
+  bill_no: string
+  bill_date: string
+  due_date: string | null
+  vendor_id: number | null
+  vendor_name: string
+  subtotal: string
+  tax_cgst: string
+  tax_sgst: string
+  tax_igst: string
+  total_amount: string
+  amount_paid: string
+  balance_due: string
+  status: BillStatus
+  notes: string
+  location_id: number | null
+  journal_entry: number | null
+  journal_entry_no: string | null
+  lines: BillLine[]
+  payments: BillPayment[]
+  attachments: BillAttachment[]
+  created_at: string
+  updated_at: string
+  created_by: number | null
+  created_by_name: string | null
+}
+
+export interface BillCounts {
+  total: number
+  by_status: Partial<Record<BillStatus, number>>
+  overdue: number
+  outstanding: string
+}
+
+export interface BillWritePayload {
+  bill_no: string
+  bill_date: string
+  due_date?: string | null
+  vendor_id?: number | null
+  vendor_name: string
+  subtotal: string
+  tax_cgst?: string
+  tax_sgst?: string
+  tax_igst?: string
+  total_amount: string
+  notes?: string
+  location_id?: number | null
+  lines: { account: number; description: string; amount: string }[]
+}
+
+export async function getBills(params?: Record<string, string>) {
+  const res = await api.get('/bills/bills/', { params })
+  // Pagination wraps the list when DEFAULT pagination is on; otherwise it's an array.
+  if (Array.isArray(res.data)) return { results: res.data as Bill[], count: res.data.length }
+  return res.data as { results: Bill[]; count: number }
+}
+
+export async function getBill(id: number) {
+  const res = await api.get(`/bills/bills/${id}/`)
+  return res.data as Bill
+}
+
+export async function createBill(payload: BillWritePayload) {
+  const res = await api.post('/bills/bills/', payload)
+  return res.data as Bill
+}
+
+export async function updateBill(id: number, payload: Partial<BillWritePayload>) {
+  const res = await api.put(`/bills/bills/${id}/`, payload)
+  return res.data as Bill
+}
+
+export async function deleteBill(id: number) {
+  await api.delete(`/bills/bills/${id}/`)
+}
+
+export async function approveBill(id: number) {
+  const res = await api.post(`/bills/bills/${id}/approve/`)
+  return res.data as Bill
+}
+
+export async function cancelBill(id: number) {
+  const res = await api.post(`/bills/bills/${id}/cancel/`)
+  return res.data as Bill
+}
+
+export async function recordBillPayment(id: number, payload: {
+  date: string
+  amount: string
+  mode: 'bank' | 'cash'
+  reference?: string
+  notes?: string
+}) {
+  const res = await api.post(`/bills/bills/${id}/payments/`, payload)
+  return res.data as Bill
+}
+
+export async function deleteBillPayment(paymentId: number) {
+  await api.delete(`/bills/payments/${paymentId}/`)
+}
+
+export async function uploadBillAttachment(billId: number, file: File) {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await api.post(`/bills/bills/${billId}/attachments/`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return res.data as BillAttachment
+}
+
+export async function deleteBillAttachment(attachmentId: number) {
+  await api.delete(`/bills/attachments/${attachmentId}/`)
+}
+
+export async function getBillCounts() {
+  const res = await api.get('/bills/bills/counts/')
+  return res.data as BillCounts
+}
+
+// ─── Expenses ───────────────────────────────────────────────────────────────
+
+export type ExpenseStatus = 'draft' | 'recorded'
+
+export interface ExpenseItem {
+  id?: number
+  account: number
+  account_code?: string
+  account_name?: string
+  description: string
+  amount: string
+}
+
+export interface ExpenseAttachmentRow {
+  id: number
+  expense: number
+  file_url: string
+  original_name: string
+  content_type: string
+  size: number
+  uploaded_at: string
+  uploaded_by: number | null
+  uploaded_by_name: string | null
+}
+
+export interface Expense {
+  id: number
+  expense_date: string
+  paid_through_account: number
+  paid_through_code: string
+  paid_through_name: string
+  vendor_name: string
+  vendor_id: number | null
+  reference: string
+  subtotal: string
+  tax_cgst: string
+  tax_sgst: string
+  tax_igst: string
+  total_amount: string
+  notes: string
+  status: ExpenseStatus
+  journal_entry: number | null
+  journal_entry_no: string | null
+  location_id: number | null
+  items: ExpenseItem[]
+  attachments: ExpenseAttachmentRow[]
+  is_itemized: boolean
+  created_at: string
+  updated_at: string
+  created_by: number | null
+  created_by_name: string | null
+}
+
+export interface ExpenseWritePayload {
+  expense_date: string
+  paid_through_account: number
+  vendor_name?: string
+  vendor_id?: number | null
+  reference?: string
+  subtotal: string
+  tax_cgst?: string
+  tax_sgst?: string
+  tax_igst?: string
+  total_amount: string
+  notes?: string
+  location_id?: number | null
+  items: { account: number; description: string; amount: string }[]
+}
+
+export interface ExpenseCounts {
+  total: number
+  by_status: Partial<Record<ExpenseStatus, number>>
+  total_amount: string
+}
+
+export async function getExpenses(params?: Record<string, string>) {
+  const res = await api.get('/expenses/expenses/', { params })
+  if (Array.isArray(res.data)) return { results: res.data as Expense[], count: res.data.length }
+  return res.data as { results: Expense[]; count: number }
+}
+
+export async function getExpense(id: number) {
+  const res = await api.get(`/expenses/expenses/${id}/`)
+  return res.data as Expense
+}
+
+export async function createExpense(payload: ExpenseWritePayload) {
+  const res = await api.post('/expenses/expenses/', payload)
+  return res.data as Expense
+}
+
+export async function updateExpense(id: number, payload: Partial<ExpenseWritePayload>) {
+  const res = await api.put(`/expenses/expenses/${id}/`, payload)
+  return res.data as Expense
+}
+
+export async function deleteExpense(id: number) {
+  await api.delete(`/expenses/expenses/${id}/`)
+}
+
+export async function recordExpense(id: number) {
+  const res = await api.post(`/expenses/expenses/${id}/record/`)
+  return res.data as Expense
+}
+
+export async function reverseExpense(id: number) {
+  const res = await api.post(`/expenses/expenses/${id}/reverse/`)
+  return res.data as Expense
+}
+
+export async function getExpenseCounts() {
+  const res = await api.get('/expenses/expenses/counts/')
+  return res.data as ExpenseCounts
+}
+
+export async function uploadExpenseAttachment(expenseId: number, file: File) {
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await api.post(`/expenses/expenses/${expenseId}/attachments/`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return res.data as ExpenseAttachmentRow
+}
+
+export async function deleteExpenseAttachment(attachmentId: number) {
+  await api.delete(`/expenses/attachments/${attachmentId}/`)
+}
+
+// ─── Recurring Journals ─────────────────────────────────────────────────────
+
+export interface RecurringJournalLine {
+  id?: number
+  account: number
+  account_code?: string
+  account_name?: string
+  debit: string
+  credit: string
+  narration: string
+  party_type: 'Customer' | 'Supplier' | 'None'
+  party_id: number | null
+}
+
+export interface GeneratedJournalStub {
+  id: number
+  entry_no: string
+  date: string
+  is_posted: boolean
+}
+
+export interface RecurringJournal {
+  id: number
+  profile_name: string
+  voucher_type: string
+  voucher_type_display: string
+  narration_template: string
+  location_id: number | null
+  frequency: RecurringFrequency
+  start_date: string
+  end_date: string | null
+  next_run_date: string
+  last_run_date: string | null
+  auto_post: boolean
+  status: RecurringStatus
+  last_error: string
+  lines: RecurringJournalLine[]
+  total_debit: string
+  total_credit: string
+  is_balanced: boolean
+  generated_count: number
+  generated_recent: GeneratedJournalStub[]
+  created_at: string
+  updated_at: string
+  created_by: number | null
+  created_by_name: string | null
+}
+
+export interface RecurringJournalWritePayload {
+  profile_name: string
+  voucher_type: string
+  narration_template?: string
+  location_id?: number | null
+  frequency: RecurringFrequency
+  start_date: string
+  end_date?: string | null
+  next_run_date?: string
+  auto_post?: boolean
+  lines: {
+    account: number
+    debit: string
+    credit: string
+    narration?: string
+    party_type?: 'Customer' | 'Supplier' | 'None'
+    party_id?: number | null
+  }[]
+}
+
+export async function getRecurringJournals(params?: Record<string, string>) {
+  const res = await api.get('/journals/recurring/', { params })
+  if (Array.isArray(res.data)) return { results: res.data as RecurringJournal[], count: res.data.length }
+  return res.data as { results: RecurringJournal[]; count: number }
+}
+
+export async function getRecurringJournal(id: number) {
+  const res = await api.get(`/journals/recurring/${id}/`)
+  return res.data as RecurringJournal
+}
+
+export async function createRecurringJournal(payload: RecurringJournalWritePayload) {
+  const res = await api.post('/journals/recurring/', payload)
+  return res.data as RecurringJournal
+}
+
+export async function updateRecurringJournal(id: number, payload: Partial<RecurringJournalWritePayload>) {
+  const res = await api.put(`/journals/recurring/${id}/`, payload)
+  return res.data as RecurringJournal
+}
+
+export async function deleteRecurringJournal(id: number) {
+  await api.delete(`/journals/recurring/${id}/`)
+}
+
+export async function pauseRecurringJournal(id: number) {
+  const res = await api.post(`/journals/recurring/${id}/pause/`)
+  return res.data as RecurringJournal
+}
+
+export async function resumeRecurringJournal(id: number) {
+  const res = await api.post(`/journals/recurring/${id}/resume/`)
+  return res.data as RecurringJournal
+}
+
+export async function stopRecurringJournal(id: number) {
+  const res = await api.post(`/journals/recurring/${id}/stop/`)
+  return res.data as RecurringJournal
+}
+
+export async function generateRecurringJournalNow(id: number) {
+  const res = await api.post(`/journals/recurring/${id}/generate-now/`)
+  return res.data as { entry_id: number; entry_no: string; recurring: RecurringJournal }
+}
+
+export async function runDueRecurringJournals() {
+  const res = await api.post('/journals/recurring/run-due/')
+  return res.data as {
+    created: number
+    today: string
+    created_details: { recurring_id: number; entry_id: number; entry_no: string }[]
+    errors: { recurring_id: number; error: string }[]
+  }
+}
+
+// ─── Recurring Bills ────────────────────────────────────────────────────────
+
+export type RecurringFrequency = 'daily' | 'weekly' | 'monthly' | 'quarterly' | 'yearly'
+export type RecurringStatus = 'active' | 'paused' | 'stopped'
+
+export interface RecurringBillItem {
+  id?: number
+  account: number
+  account_code?: string
+  account_name?: string
+  description: string
+  amount: string
+}
+
+export interface GeneratedBillStub {
+  id: number
+  bill_no: string
+  bill_date: string
+  total_amount: string
+  status: string
+}
+
+export interface RecurringBill {
+  id: number
+  profile_name: string
+  vendor_id: number | null
+  vendor_name: string
+  subtotal: string
+  tax_cgst: string
+  tax_sgst: string
+  tax_igst: string
+  total_amount: string
+  notes: string
+  location_id: number | null
+  frequency: RecurringFrequency
+  start_date: string
+  end_date: string | null
+  next_run_date: string
+  last_run_date: string | null
+  due_days: number
+  auto_approve: boolean
+  bill_no_pattern: string
+  status: RecurringStatus
+  last_error: string
+  items: RecurringBillItem[]
+  generated_count: number
+  generated_recent: GeneratedBillStub[]
+  created_at: string
+  updated_at: string
+  created_by: number | null
+  created_by_name: string | null
+}
+
+export interface RecurringBillWritePayload {
+  profile_name: string
+  vendor_id?: number | null
+  vendor_name: string
+  subtotal: string
+  tax_cgst?: string
+  tax_sgst?: string
+  tax_igst?: string
+  total_amount: string
+  notes?: string
+  location_id?: number | null
+  frequency: RecurringFrequency
+  start_date: string
+  end_date?: string | null
+  next_run_date?: string
+  due_days?: number
+  auto_approve?: boolean
+  bill_no_pattern?: string
+  items: { account: number; description: string; amount: string }[]
+}
+
+export async function getRecurringBills(params?: Record<string, string>) {
+  const res = await api.get('/bills/recurring/', { params })
+  if (Array.isArray(res.data)) return { results: res.data as RecurringBill[], count: res.data.length }
+  return res.data as { results: RecurringBill[]; count: number }
+}
+
+export async function getRecurringBill(id: number) {
+  const res = await api.get(`/bills/recurring/${id}/`)
+  return res.data as RecurringBill
+}
+
+export async function createRecurringBill(payload: RecurringBillWritePayload) {
+  const res = await api.post('/bills/recurring/', payload)
+  return res.data as RecurringBill
+}
+
+export async function updateRecurringBill(id: number, payload: Partial<RecurringBillWritePayload>) {
+  const res = await api.put(`/bills/recurring/${id}/`, payload)
+  return res.data as RecurringBill
+}
+
+export async function deleteRecurringBill(id: number) {
+  await api.delete(`/bills/recurring/${id}/`)
+}
+
+export async function pauseRecurringBill(id: number) {
+  const res = await api.post(`/bills/recurring/${id}/pause/`)
+  return res.data as RecurringBill
+}
+
+export async function resumeRecurringBill(id: number) {
+  const res = await api.post(`/bills/recurring/${id}/resume/`)
+  return res.data as RecurringBill
+}
+
+export async function stopRecurringBill(id: number) {
+  const res = await api.post(`/bills/recurring/${id}/stop/`)
+  return res.data as RecurringBill
+}
+
+export async function generateRecurringBillNow(id: number) {
+  const res = await api.post(`/bills/recurring/${id}/generate-now/`)
+  return res.data as { bill_id: number; bill_no: string; recurring: RecurringBill }
+}
+
+export async function runDueRecurringBills() {
+  const res = await api.post('/bills/recurring/run-due/')
+  return res.data as {
+    created: number
+    today: string
+    created_details: { recurring_id: number; bill_id: number }[]
+    errors: { recurring_id: number; error: string }[]
+  }
+}
+
+// ─── Banking ────────────────────────────────────────────────────────────────
+
+export interface BankAccount {
+  id: number
+  name: string
+  account_type: 'bank' | 'credit_card' | 'cash'
+  bank_name: string
+  account_number: string
+  ifsc: string
+  currency: string
+  chart_account: number
+  chart_account_code: string
+  chart_account_name: string
+  opening_balance: string
+  opening_date: string | null
+  is_active: boolean
+  notes: string
+  location_id: number | null
+  book_balance: string
+  statement_balance: string
+  unmatched_count: number
+  created_at: string
+  updated_at: string
+}
+
+export type BankTxnStatus = 'unmatched' | 'matched' | 'excluded'
+
+export interface BankTransaction {
+  id: number
+  bank_account: number
+  bank_account_name: string
+  date: string
+  value_date: string | null
+  description: string
+  reference: string
+  amount: string
+  abs_amount: string
+  direction: 'in' | 'out'
+  running_balance: string | null
+  status: BankTxnStatus
+  source: 'imported' | 'manual'
+  matched_journal_entry: number | null
+  matched_entry_no: string | null
+  matched_entry_voucher: string | null
+  matched_entry_narration: string | null
+  notes: string
+  imported_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MatchSuggestion {
+  entry_id: number
+  entry_no: string
+  date: string
+  voucher_type: string
+  narration: string
+  amount: string
+  days_off: number
+}
+
+export async function getBankAccounts(params?: Record<string, string>) {
+  const res = await api.get('/banking/accounts/', { params })
+  return res.data as BankAccount[]
+}
+
+export async function getBankAccount(id: number) {
+  const res = await api.get(`/banking/accounts/${id}/`)
+  return res.data as BankAccount
+}
+
+export async function createBankAccount(data: Partial<BankAccount>) {
+  const res = await api.post('/banking/accounts/', data)
+  return res.data as BankAccount
+}
+
+export async function updateBankAccount(id: number, data: Partial<BankAccount>) {
+  const res = await api.patch(`/banking/accounts/${id}/`, data)
+  return res.data as BankAccount
+}
+
+export async function deleteBankAccount(id: number) {
+  await api.delete(`/banking/accounts/${id}/`)
+}
+
+export async function getBankTransactions(params?: Record<string, string>) {
+  const res = await api.get('/banking/transactions/', { params })
+  if (Array.isArray(res.data)) return { results: res.data as BankTransaction[], count: res.data.length }
+  return res.data as { results: BankTransaction[]; count: number }
+}
+
+export async function createBankTransaction(data: {
+  bank_account: number
+  date: string
+  description: string
+  reference?: string
+  amount: string
+  notes?: string
+}) {
+  const res = await api.post('/banking/transactions/', data)
+  return res.data as BankTransaction
+}
+
+export async function deleteBankTransaction(id: number) {
+  await api.delete(`/banking/transactions/${id}/`)
+}
+
+export async function importBankCsv(bankAccountId: number, file: File) {
+  const fd = new FormData()
+  fd.append('bank_account', String(bankAccountId))
+  fd.append('file', file)
+  const res = await api.post('/banking/transactions/import/', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return res.data as { imported: number; duplicates: number; errors: string[] }
+}
+
+export async function getBankTxnSuggestions(id: number) {
+  const res = await api.get(`/banking/transactions/${id}/suggestions/`)
+  return res.data as { rows: MatchSuggestion[] }
+}
+
+export async function matchBankTxn(id: number, journalEntryId: number) {
+  const res = await api.post(`/banking/transactions/${id}/match/`, { journal_entry_id: journalEntryId })
+  return res.data as BankTransaction
+}
+
+export async function unmatchBankTxn(id: number) {
+  const res = await api.post(`/banking/transactions/${id}/unmatch/`)
+  return res.data as BankTransaction
+}
+
+export async function excludeBankTxn(id: number) {
+  const res = await api.post(`/banking/transactions/${id}/exclude/`)
+  return res.data as BankTransaction
+}
+
+export async function restoreBankTxn(id: number) {
+  const res = await api.post(`/banking/transactions/${id}/restore/`)
+  return res.data as BankTransaction
+}
+
+export async function categorizeBankTxn(id: number, payload: {
+  account_id: number
+  party_type?: 'Customer' | 'Supplier' | ''
+  party_id?: number | null
+  narration?: string
+}) {
+  const res = await api.post(`/banking/transactions/${id}/categorize/`, payload)
+  return res.data as BankTransaction
 }
 
 // ─── GST ─────────────────────────────────────────────────────────────────────

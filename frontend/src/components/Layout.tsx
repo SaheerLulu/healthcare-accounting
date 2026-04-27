@@ -16,6 +16,8 @@ import {
   Moon,
   Calculator,
   Globe,
+  Users,
+  Landmark,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { cn } from '../lib/utils'
@@ -45,8 +47,27 @@ const menuGroups: MenuGroup[] = [
     items: [
       { id: 'accounts', label: 'Chart of Accounts', to: '/accounts' },
       { id: 'journals', label: 'Journal Entries', to: '/journals' },
+      { id: 'recurring-journals', label: 'Recurring Journals', to: '/journals/recurring' },
+      { id: 'bills', label: 'Bills', to: '/bills' },
+      { id: 'recurring-bills', label: 'Recurring Bills', to: '/bills/recurring' },
+      { id: 'expenses', label: 'Expenses', to: '/expenses' },
       { id: 'receivables', label: 'Receivables', to: '/receivables' },
       { id: 'payables', label: 'Payables', to: '/payables' },
+    ],
+  },
+  {
+    label: 'Parties',
+    icon: Users,
+    items: [
+      { id: 'suppliers', label: 'Suppliers', to: '/parties/suppliers' },
+      { id: 'customers', label: 'Customers', to: '/parties/customers' },
+    ],
+  },
+  {
+    label: 'Banking',
+    icon: Landmark,
+    items: [
+      { id: 'banking', label: 'Bank Accounts', to: '/banking' },
     ],
   },
   {

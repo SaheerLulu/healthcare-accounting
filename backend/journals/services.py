@@ -10,7 +10,7 @@ from inventory_reader.models import (
 )
 from core.models import AccountMapping, AccountingSettings
 from core.gst_utils import compute_tax_split, detect_supply_type, back_calculate_taxable
-from .models import JournalEntry, JournalEntryLine
+from .models import JournalEntry, JournalEntryLine, RecurringJournal, RecurringJournalLine
 
 logger = logging.getLogger('journals')
 
@@ -486,3 +486,118 @@ class JournalAutoGenerationService:
 
         entry.post()
         return entry
+
+
+# ─── Recurring journal entries ──────────────────────────────────────────────
+
+from calendar import monthrange
+
+
+def _add_months(d, n):
+    from datetime import date as date_cls
+    month = d.month - 1 + n
+    year = d.year + month // 12
+    month = month % 12 + 1
+    day = min(d.day, monthrange(year, month)[1])
+    return date_cls(year, month, day)
+
+
+def advance_journal_date(d, frequency):
+    from datetime import timedelta
+    if frequency == 'daily':
+        return d + timedelta(days=1)
+    if frequency == 'weekly':
+        return d + timedelta(days=7)
+    if frequency == 'monthly':
+        return _add_months(d, 1)
+    if frequency == 'quarterly':
+        return _add_months(d, 3)
+    if frequency == 'yearly':
+        return _add_months(d, 12)
+    raise ValueError(f'Unknown frequency: {frequency}')
+
+
+def _format_narration(template, d):
+    if not template:
+        return ''
+    return (template
+            .replace('{YYYY-MM}', d.strftime('%Y-%m'))
+            .replace('{YYYY}', d.strftime('%Y'))
+            .replace('{MM}', d.strftime('%m'))
+            .replace('{DD}', d.strftime('%d'))
+            .replace('{MON}', d.strftime('%b').upper()))
+
+
+@transaction.atomic
+def generate_one_recurring_journal(rj: RecurringJournal, *, user=None) -> JournalEntry:
+    """Create a single JournalEntry from this recurring template at rj.next_run_date."""
+    from django.core.exceptions import ValidationError
+    if rj.status != 'active':
+        raise ValidationError(f'Recurring journal is {rj.status}, not active.')
+    lines = list(rj.lines.all())
+    if not lines:
+        raise ValidationError('Add at least one line to the recurring journal template.')
+    total_dr = sum((l.debit for l in lines), Decimal('0.00'))
+    total_cr = sum((l.credit for l in lines), Decimal('0.00'))
+    if total_dr != total_cr or total_dr == 0:
+        raise ValidationError(f'Template is unbalanced: Dr {total_dr} ≠ Cr {total_cr}.')
+
+    entry_date = rj.next_run_date
+    narration = _format_narration(rj.narration_template, entry_date) or rj.profile_name
+
+    entry = JournalEntry.objects.create(
+        date=entry_date,
+        narration=narration,
+        voucher_type=rj.voucher_type,
+        reference_type='Manual',
+        location_id=rj.location_id,
+        created_by=user,
+    )
+    for tl in lines:
+        JournalEntryLine.objects.create(
+            entry=entry, account=tl.account,
+            debit=tl.debit, credit=tl.credit,
+            narration=tl.narration,
+            party_type=tl.party_type, party_id=tl.party_id,
+        )
+    if rj.auto_post:
+        try:
+            entry.post()
+        except Exception as e:
+            rj.last_error = str(e)
+        else:
+            rj.last_error = ''
+    else:
+        rj.last_error = ''
+
+    rj.last_run_date = entry_date
+    rj.next_run_date = advance_journal_date(entry_date, rj.frequency)
+    if rj.end_date and rj.next_run_date > rj.end_date:
+        rj.status = 'stopped'
+    rj.save()
+    return entry
+
+
+def generate_due_recurring_journals(*, today=None, user=None) -> dict:
+    from datetime import date as date_cls
+    from django.core.exceptions import ValidationError
+    today = today or date_cls.today()
+    created = []
+    errors = []
+    profiles = list(RecurringJournal.objects.filter(status='active', next_run_date__lte=today))
+    for rj in profiles:
+        guard = 0
+        while rj.status == 'active' and rj.next_run_date <= today and guard < 60:
+            try:
+                e = generate_one_recurring_journal(rj, user=user)
+                created.append({'recurring_id': rj.id, 'entry_id': e.id, 'entry_no': e.entry_no})
+            except ValidationError as exc:
+                msg = exc.messages[0] if hasattr(exc, 'messages') else str(exc)
+                errors.append({'recurring_id': rj.id, 'error': msg})
+                rj.last_error = msg
+                rj.status = 'paused'
+                rj.save(update_fields=['last_error', 'status', 'updated_at'])
+                break
+            guard += 1
+    return {'created': len(created), 'created_details': created, 'errors': errors,
+            'today': today.isoformat()}

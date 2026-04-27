@@ -5,15 +5,20 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
-from .models import JournalEntry, JournalEntryLine
+from .models import JournalEntry, JournalEntryLine, RecurringJournal
 from .serializers import (
     JournalEntrySerializer,
     JournalEntryCreateSerializer,
     PaymentVoucherSerializer,
     ReceiptVoucherSerializer,
     ContraVoucherSerializer,
+    RecurringJournalReadSerializer,
+    RecurringJournalWriteSerializer,
 )
-from .services import JournalAutoGenerationService
+from .services import (
+    JournalAutoGenerationService,
+    generate_one_recurring_journal, generate_due_recurring_journals,
+)
 from audit.utils import log_action
 from core.mixins import LocationFilterMixin
 
@@ -51,7 +56,7 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     ordering = ['-date', '-created_at']
 
     def get_serializer_class(self):
-        if self.action == 'create':
+        if self.action in ('create', 'update', 'partial_update'):
             return JournalEntryCreateSerializer
         return JournalEntrySerializer
 
@@ -196,3 +201,97 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
                             status=status.HTTP_201_CREATED)
         except Exception as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class RecurringJournalViewSet(viewsets.ModelViewSet):
+    """Recurring journal-entry templates that auto-generate JEs on a schedule."""
+    queryset = RecurringJournal.objects.prefetch_related('lines__account').select_related('created_by')
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return RecurringJournalWriteSerializer
+        return RecurringJournalReadSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        params = self.request.query_params
+        s = params.get('status')
+        if s:
+            qs = qs.filter(status__in=[x.strip() for x in s.split(',') if x.strip()])
+        if params.get('search'):
+            from django.db.models import Q
+            term = params['search']
+            qs = qs.filter(Q(profile_name__icontains=term) | Q(narration_template__icontains=term))
+        return qs
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        log_action('CREATE', 'RecurringJournal', instance.pk, str(instance), request=self.request)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        log_action('UPDATE', 'RecurringJournal', instance.pk, str(instance), request=self.request)
+
+    def perform_destroy(self, instance):
+        log_action('DELETE', 'RecurringJournal', instance.pk, str(instance), request=self.request)
+        instance.delete()
+
+    @action(detail=False, methods=['get'], url_path='counts')
+    def counts(self, request):
+        from django.db.models import Count
+        qs = self.get_queryset()
+        by_status = {row['status']: row['count']
+                     for row in qs.values('status').annotate(count=Count('id'))}
+        return Response({'total': qs.count(), 'by_status': by_status})
+
+    @action(detail=True, methods=['post'], url_path='generate-now')
+    def generate_now(self, request, pk=None):
+        rj = self.get_object()
+        from django.core.exceptions import ValidationError
+        try:
+            entry = generate_one_recurring_journal(
+                rj, user=request.user if request.user.is_authenticated else None,
+            )
+        except ValidationError as e:
+            return Response({'detail': e.messages[0] if hasattr(e, 'messages') else str(e)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        log_action('CREATE', 'JournalEntry', entry.pk,
+                   f'Generated from recurring journal {rj.id}', request=request)
+        return Response({
+            'entry_id': entry.id, 'entry_no': entry.entry_no,
+            'recurring': RecurringJournalReadSerializer(rj).data,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='pause')
+    def pause(self, request, pk=None):
+        rj = self.get_object()
+        if rj.status == 'active':
+            rj.status = 'paused'
+            rj.save(update_fields=['status', 'updated_at'])
+        return Response(RecurringJournalReadSerializer(rj).data)
+
+    @action(detail=True, methods=['post'], url_path='resume')
+    def resume(self, request, pk=None):
+        rj = self.get_object()
+        if rj.status == 'paused':
+            rj.status = 'active'
+            rj.last_error = ''
+            rj.save(update_fields=['status', 'last_error', 'updated_at'])
+        return Response(RecurringJournalReadSerializer(rj).data)
+
+    @action(detail=True, methods=['post'], url_path='stop')
+    def stop(self, request, pk=None):
+        rj = self.get_object()
+        rj.status = 'stopped'
+        rj.save(update_fields=['status', 'updated_at'])
+        return Response(RecurringJournalReadSerializer(rj).data)
+
+    @action(detail=False, methods=['post'], url_path='run-due')
+    def run_due(self, request):
+        result = generate_due_recurring_journals(
+            user=request.user if request.user.is_authenticated else None,
+        )
+        log_action('CREATE', 'JournalEntry', 'batch',
+                   f"Recurring-journal run: created {result['created']}, errors {len(result['errors'])}",
+                   request=request, extra=result)
+        return Response(result)

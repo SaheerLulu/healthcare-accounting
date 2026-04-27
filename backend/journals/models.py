@@ -94,6 +94,80 @@ class JournalEntry(models.Model):
         return f"{self.entry_no} ({self.date})"
 
 
+class RecurringJournal(models.Model):
+    """Template that auto-generates a JournalEntry on each cycle date.
+
+    Use cases: monthly depreciation, prepaid expense amortization, accruals,
+    standing internal transfers — anything that's a balanced JE you'd otherwise
+    type out manually every period.
+    """
+
+    FREQ_CHOICES = [
+        ('daily', 'Daily'), ('weekly', 'Weekly'),
+        ('monthly', 'Monthly'), ('quarterly', 'Quarterly'),
+        ('yearly', 'Yearly'),
+    ]
+    STATUS_CHOICES = [
+        ('active', 'Active'), ('paused', 'Paused'), ('stopped', 'Stopped'),
+    ]
+
+    profile_name = models.CharField(max_length=120,
+                                    help_text="e.g. 'Monthly depreciation', 'Insurance prepaid'")
+    voucher_type = models.CharField(max_length=20, choices=JournalEntry.VOUCHER_TYPES, default='JOURNAL')
+    narration_template = models.CharField(max_length=500, blank=True,
+        help_text='Tokens: {YYYY-MM}, {YYYY}, {MM}, {MON}, {DD}')
+    location_id = models.PositiveIntegerField(null=True, blank=True)
+
+    frequency = models.CharField(max_length=12, choices=FREQ_CHOICES, default='monthly')
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    next_run_date = models.DateField()
+    last_run_date = models.DateField(null=True, blank=True)
+
+    auto_post = models.BooleanField(default=True,
+        help_text='Auto-post the generated entry. Off = create as draft.')
+
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='active')
+    last_error = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        User, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='recurring_journals_created',
+    )
+
+    class Meta:
+        ordering = ['-status', 'next_run_date']
+        indexes = [models.Index(fields=['status', 'next_run_date'])]
+
+    def __str__(self):
+        return f"{self.profile_name} ({self.get_frequency_display()})"
+
+
+class RecurringJournalLine(models.Model):
+    recurring_journal = models.ForeignKey(RecurringJournal, on_delete=models.CASCADE,
+                                          related_name='lines')
+    account = models.ForeignKey('core.ChartOfAccount', on_delete=models.PROTECT,
+                                related_name='recurring_journal_lines')
+    debit = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    credit = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    narration = models.CharField(max_length=500, blank=True)
+    party_type = models.CharField(max_length=10,
+                                  choices=[('Customer', 'Customer'), ('Supplier', 'Supplier'), ('None', 'None')],
+                                  default='None')
+    party_id = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['id']
+
+    def clean(self):
+        if self.debit < 0 or self.credit < 0:
+            raise ValidationError('Debit and Credit must be non-negative.')
+        if self.debit > 0 and self.credit > 0:
+            raise ValidationError('A line cannot have both debit and credit.')
+
+
 class JournalEntryLine(models.Model):
     PARTY_TYPES = [
         ('Customer', 'Customer'),

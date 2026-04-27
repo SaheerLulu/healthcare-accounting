@@ -205,13 +205,31 @@ function SalaryStructuresTab() {
     e.preventDefault()
     setSaving(true)
     try {
-      const data = { ...form, employee: Number(form.employee) }
+      const numericFields = [
+        'basic_salary', 'hra', 'conveyance', 'medical', 'special_allowance',
+        'pf_employee_pct', 'pf_employer_pct', 'esi_employee_pct', 'esi_employer_pct',
+        'professional_tax',
+      ] as const
+      const data: Record<string, unknown> = { ...form, employee: Number(form.employee) }
+      for (const f of numericFields) {
+        const v = (form as unknown as Record<string, string>)[f]
+        data[f] = v === '' || v == null ? '0' : v
+      }
       if (editId) await updateSalaryStructure(editId, data as unknown as Partial<SalaryStructureData>)
       else await createSalaryStructure(data as unknown as Partial<SalaryStructureData>)
       toast.success(editId ? 'Updated' : 'Created')
       setDialogOpen(false)
       load()
-    } catch { toast.error('Failed to save') }
+    } catch (err) {
+      const e = err as { response?: { data?: Record<string, unknown> } }
+      const data = e.response?.data
+      const msg = data
+        ? Object.entries(data)
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`)
+            .join(' • ')
+        : 'Failed to save'
+      toast.error(msg)
+    }
     finally { setSaving(false) }
   }
 

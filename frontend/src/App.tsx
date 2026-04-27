@@ -6,6 +6,22 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import AccountsPage from './pages/AccountsPage'
 import JournalsPage from './pages/JournalsPage'
+import JournalEditorPage from './pages/journals/JournalEditorPage'
+import JournalDetailPage from './pages/journals/JournalDetailPage'
+import RecurringJournalsListPage from './pages/journals/RecurringJournalsListPage'
+import RecurringJournalEditorPage from './pages/journals/RecurringJournalEditorPage'
+import RecurringJournalDetailPage from './pages/journals/RecurringJournalDetailPage'
+import BillsListPage from './pages/bills/BillsListPage'
+import BillEditorPage from './pages/bills/BillEditorPage'
+import BillDetailPage from './pages/bills/BillDetailPage'
+import RecurringBillsListPage from './pages/bills/RecurringBillsListPage'
+import RecurringBillEditorPage from './pages/bills/RecurringBillEditorPage'
+import RecurringBillDetailPage from './pages/bills/RecurringBillDetailPage'
+import BankingPage from './pages/banking/BankingPage'
+import BankAccountPage from './pages/banking/BankAccountPage'
+import ExpensesListPage from './pages/expenses/ExpensesListPage'
+import ExpenseEditorPage from './pages/expenses/ExpenseEditorPage'
+import ExpenseDetailPage from './pages/expenses/ExpenseDetailPage'
 import ReceivablesPage from './pages/ReceivablesPage'
 import PayablesPage from './pages/PayablesPage'
 import GSTR1Page from './pages/gst/GSTR1Page'
@@ -27,6 +43,9 @@ import StockSummaryPage from './pages/reports/StockSummaryPage'
 import SyncPage from './pages/SyncPage'
 import SettingsPage from './pages/SettingsPage'
 import AuditLogPage from './pages/AuditLogPage'
+import SuppliersListPage from './pages/parties/SuppliersListPage'
+import CustomersListPage from './pages/parties/CustomersListPage'
+import PartyDetailPage from './pages/parties/PartyDetailPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('token')
@@ -54,8 +73,33 @@ export default function App() {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="accounts" element={<AccountsPage />} />
           <Route path="journals" element={<JournalsPage />} />
+          <Route path="journals/new" element={<JournalEditorPage />} />
+          <Route path="journals/recurring" element={<RecurringJournalsListPage />} />
+          <Route path="journals/recurring/new" element={<RecurringJournalEditorPage />} />
+          <Route path="journals/recurring/:id" element={<RecurringJournalDetailPage />} />
+          <Route path="journals/recurring/:id/edit" element={<RecurringJournalEditorPage />} />
+          <Route path="journals/:id" element={<JournalDetailPage />} />
+          <Route path="journals/:id/edit" element={<JournalEditorPage />} />
+          <Route path="bills" element={<BillsListPage />} />
+          <Route path="bills/new" element={<BillEditorPage />} />
+          <Route path="bills/recurring" element={<RecurringBillsListPage />} />
+          <Route path="bills/recurring/new" element={<RecurringBillEditorPage />} />
+          <Route path="bills/recurring/:id" element={<RecurringBillDetailPage />} />
+          <Route path="bills/recurring/:id/edit" element={<RecurringBillEditorPage />} />
+          <Route path="bills/:id" element={<BillDetailPage />} />
+          <Route path="bills/:id/edit" element={<BillEditorPage />} />
+          <Route path="banking" element={<BankingPage />} />
+          <Route path="banking/:id" element={<BankAccountPage />} />
+          <Route path="expenses" element={<ExpensesListPage />} />
+          <Route path="expenses/new" element={<ExpenseEditorPage />} />
+          <Route path="expenses/:id" element={<ExpenseDetailPage />} />
+          <Route path="expenses/:id/edit" element={<ExpenseEditorPage />} />
           <Route path="receivables" element={<ReceivablesPage />} />
           <Route path="payables" element={<PayablesPage />} />
+          <Route path="parties/suppliers" element={<SuppliersListPage />} />
+          <Route path="parties/suppliers/:id" element={<PartyDetailPage partyType="Supplier" />} />
+          <Route path="parties/customers" element={<CustomersListPage />} />
+          <Route path="parties/customers/:id" element={<PartyDetailPage partyType="Customer" />} />
           <Route path="gst/gstr1" element={<GSTR1Page />} />
           <Route path="gst/gstr2b" element={<GSTR2BPage />} />
           <Route path="gst/gstr3b" element={<GSTR3BPage />} />

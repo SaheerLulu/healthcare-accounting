@@ -1,6 +1,8 @@
 """
 URL configuration for the accounting project.
 """
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
 from rest_framework_simplejwt.views import (
@@ -27,4 +29,11 @@ urlpatterns = [
     path('api/sync/', include('sync.urls')),
     path('api/audit/', include('audit.urls')),
     path('api/payroll/', include('payroll.urls')),
+    path('api/parties/', include('parties.urls')),
+    path('api/bills/', include('bills.urls')),
+    path('api/banking/', include('banking.urls')),
+    path('api/expenses/', include('expenses.urls')),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

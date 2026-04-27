@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from decimal import Decimal
-from .models import JournalEntry, JournalEntryLine
+from .models import JournalEntry, JournalEntryLine, RecurringJournal, RecurringJournalLine
 
 
 class JournalEntryLineSerializer(serializers.ModelSerializer):
@@ -121,6 +121,19 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
             JournalEntryLine.objects.create(entry=entry, **line_data)
         return entry
 
+    def update(self, instance, validated_data):
+        if instance.is_posted:
+            raise serializers.ValidationError('Cannot edit a posted journal entry.')
+        lines_data = validated_data.pop('lines', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        if lines_data is not None:
+            instance.lines.all().delete()
+            for line_data in lines_data:
+                JournalEntryLine.objects.create(entry=instance, **line_data)
+        return instance
+
 
 # ─── Voucher Serializers ─────────────────────────────────────────────────────
 
@@ -148,3 +161,144 @@ class ContraVoucherSerializer(serializers.Serializer):
     direction = serializers.ChoiceField(choices=['bank_to_cash', 'cash_to_bank'], default='bank_to_cash')
     narration = serializers.CharField(required=False, allow_blank=True, default='Contra Entry')
     location_id = serializers.IntegerField(required=False, allow_null=True)
+
+
+# ─── Recurring journals ─────────────────────────────────────────────────────
+
+class RecurringJournalLineReadSerializer(serializers.ModelSerializer):
+    account_code = serializers.CharField(source='account.account_code', read_only=True)
+    account_name = serializers.CharField(source='account.account_name', read_only=True)
+
+    class Meta:
+        model = RecurringJournalLine
+        fields = ['id', 'account', 'account_code', 'account_name',
+                  'debit', 'credit', 'narration', 'party_type', 'party_id']
+
+
+class RecurringJournalLineWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RecurringJournalLine
+        fields = ['account', 'debit', 'credit', 'narration', 'party_type', 'party_id']
+
+    def validate(self, data):
+        debit = data.get('debit', 0)
+        credit = data.get('credit', 0)
+        if debit < 0 or credit < 0:
+            raise serializers.ValidationError('Debit/Credit must be non-negative.')
+        if debit > 0 and credit > 0:
+            raise serializers.ValidationError('A line cannot have both debit and credit.')
+        return data
+
+
+class RecurringJournalReadSerializer(serializers.ModelSerializer):
+    lines = RecurringJournalLineReadSerializer(many=True, read_only=True)
+    voucher_type_display = serializers.CharField(source='get_voucher_type_display', read_only=True)
+    generated_count = serializers.SerializerMethodField()
+    generated_recent = serializers.SerializerMethodField()
+    total_debit = serializers.SerializerMethodField()
+    total_credit = serializers.SerializerMethodField()
+    is_balanced = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RecurringJournal
+        fields = [
+            'id', 'profile_name', 'voucher_type', 'voucher_type_display',
+            'narration_template', 'location_id',
+            'frequency', 'start_date', 'end_date', 'next_run_date', 'last_run_date',
+            'auto_post', 'status', 'last_error',
+            'lines', 'total_debit', 'total_credit', 'is_balanced',
+            'generated_count', 'generated_recent',
+            'created_at', 'updated_at', 'created_by', 'created_by_name',
+        ]
+        read_only_fields = [
+            'id', 'voucher_type_display', 'next_run_date', 'last_run_date',
+            'status', 'last_error', 'lines',
+            'total_debit', 'total_credit', 'is_balanced',
+            'generated_count', 'generated_recent',
+            'created_at', 'updated_at', 'created_by', 'created_by_name',
+        ]
+
+    def get_generated_count(self, obj):
+        return JournalEntry.objects.filter(
+            narration__icontains=f'recurring-journal:{obj.id}'
+        ).count()
+
+    def get_generated_recent(self, obj):
+        # Lighter approach: find by voucher_type + date range + narration prefix.
+        # Falls back to scanning recent entries created via this profile.
+        # Since we don't currently embed a recurring_id token in narration,
+        # match by profile_name as a heuristic.
+        qs = JournalEntry.objects.filter(narration__icontains=obj.profile_name) \
+            .order_by('-date', '-id')[:5]
+        return [{
+            'id': e.id, 'entry_no': e.entry_no, 'date': e.date,
+            'is_posted': e.is_posted,
+        } for e in qs]
+
+    def get_total_debit(self, obj):
+        return str(sum((l.debit for l in obj.lines.all()), Decimal('0.00')))
+
+    def get_total_credit(self, obj):
+        return str(sum((l.credit for l in obj.lines.all()), Decimal('0.00')))
+
+    def get_is_balanced(self, obj):
+        dr = sum((l.debit for l in obj.lines.all()), Decimal('0.00'))
+        cr = sum((l.credit for l in obj.lines.all()), Decimal('0.00'))
+        return dr == cr and dr > 0
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return None
+
+
+class RecurringJournalWriteSerializer(serializers.ModelSerializer):
+    lines = RecurringJournalLineWriteSerializer(many=True)
+
+    class Meta:
+        model = RecurringJournal
+        fields = [
+            'id', 'profile_name', 'voucher_type', 'narration_template', 'location_id',
+            'frequency', 'start_date', 'end_date', 'next_run_date',
+            'auto_post', 'lines',
+        ]
+        read_only_fields = ['id']
+        extra_kwargs = {'next_run_date': {'required': False}}
+
+    def validate(self, data):
+        lines = data.get('lines') or []
+        if len(lines) < 2:
+            raise serializers.ValidationError('At least two lines are required.')
+        total_dr = sum(l.get('debit', 0) for l in lines)
+        total_cr = sum(l.get('credit', 0) for l in lines)
+        if total_dr != total_cr or total_dr == 0:
+            raise serializers.ValidationError(
+                f'Template must balance: Dr {total_dr} != Cr {total_cr}.'
+            )
+        if not data.get('next_run_date'):
+            data['next_run_date'] = data['start_date']
+        if data.get('end_date') and data['end_date'] < data['start_date']:
+            raise serializers.ValidationError('End date cannot be before start date.')
+        return data
+
+    def create(self, validated_data):
+        lines = validated_data.pop('lines')
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            validated_data['created_by'] = request.user
+        rj = RecurringJournal.objects.create(**validated_data)
+        for l in lines:
+            RecurringJournalLine.objects.create(recurring_journal=rj, **l)
+        return rj
+
+    def update(self, instance, validated_data):
+        lines = validated_data.pop('lines', None)
+        for k, v in validated_data.items():
+            setattr(instance, k, v)
+        instance.save()
+        if lines is not None:
+            instance.lines.all().delete()
+            for l in lines:
+                RecurringJournalLine.objects.create(recurring_journal=instance, **l)
+        return instance

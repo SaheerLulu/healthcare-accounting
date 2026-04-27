@@ -1,355 +1,80 @@
-import { useEffect, useState } from 'react'
-import { Plus, ChevronDown, ChevronRight, Loader2, Trash2, Banknote, Receipt, ArrowLeftRight } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import {
+  Plus, Loader2, Search, Banknote, Receipt, ArrowLeftRight,
+  X, Calendar,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getJournalEntries,
-  getChartOfAccounts,
-  createJournalEntry,
-  postEntry,
-  getSuppliers,
-  getCustomers,
-  createPaymentVoucher,
-  createReceiptVoucher,
-  createContraVoucher,
-  type JournalEntry,
-  type JournalLine,
-  type Account,
-  type Party,
+  getSuppliers, getCustomers,
+  createPaymentVoucher, createReceiptVoucher, createContraVoucher,
+  type JournalEntry, type Party,
 } from '../lib/api'
-import { formatDate, cn } from '../lib/utils'
-import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogClose } from '../components/ui/dialog'
+import { formatDate, formatCurrency, cn } from '../lib/utils'
+import { useLocation } from '../contexts/LocationContext'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Card } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
+import {
+  Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose, SheetTrigger,
+} from '../components/ui/sheet'
 
-const VOUCHER_TYPES = ['JOURNAL', 'PURCHASE', 'SALE', 'PAYMENT', 'RECEIPT', 'CONTRA', 'CREDIT_NOTE', 'DEBIT_NOTE']
-const voucherLabel = (v: string) => v.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
+const VOUCHER_TYPES = [
+  'JOURNAL', 'PURCHASE', 'SALE', 'PAYMENT', 'RECEIPT',
+  'CONTRA', 'CREDIT_NOTE', 'DEBIT_NOTE',
+] as const
+const voucherLabel = (v: string) =>
+  v.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
 
-function JournalRow({ entry, onPost }: { entry: JournalEntry; onPost: (id: number) => void }) {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <>
-      <Tr
-        className="cursor-pointer"
-        onClick={() => setExpanded((e) => !e)}
-      >
-        <Td>
-          <div className="flex items-center gap-1 text-slate-400">
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </div>
-        </Td>
-        <Td className="text-sm font-mono text-teal-600">{entry.entry_no}</Td>
-        <Td className="text-sm text-slate-500">{formatDate(entry.date)}</Td>
-        <Td className="text-sm text-slate-900 max-w-xs truncate">{entry.narration}</Td>
-        <Td className="text-sm text-slate-500">{voucherLabel(entry.voucher_type)}</Td>
-        <Td className="text-sm text-slate-500">{entry.reference_type || '-'}</Td>
-        <Td>
-          <Badge variant={entry.is_posted ? 'success' : 'warning'}>
-            {entry.is_posted ? 'Posted' : 'Draft'}
-          </Badge>
-        </Td>
-        <Td>
-          {!entry.is_posted && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={(e) => { e.stopPropagation(); onPost(entry.id) }}
-              className="text-xs bg-teal-50 hover:bg-teal-100 text-teal-600"
-            >
-              Post
-            </Button>
-          )}
-        </Td>
-      </Tr>
-      {expanded && (
-        <tr className="bg-slate-50 border-b border-slate-200">
-          <td colSpan={8} className="px-8 py-3">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-slate-500">
-                  <th className="text-left pb-1 font-medium">Account</th>
-                  <th className="text-right pb-1 font-medium">Debit</th>
-                  <th className="text-right pb-1 font-medium">Credit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entry.lines.map((line, i) => (
-                  <tr key={i}>
-                    <td className="py-0.5 text-slate-500">{line.account_name || `Account ${line.account}`}</td>
-                    <td className="py-0.5 text-right font-mono text-slate-900">
-                      {Number(line.debit) > 0 ? `₹${Number(line.debit).toFixed(2)}` : '-'}
-                    </td>
-                    <td className="py-0.5 text-right font-mono text-slate-900">
-                      {Number(line.credit) > 0 ? `₹${Number(line.credit).toFixed(2)}` : '-'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </td>
-        </tr>
-      )}
-    </>
-  )
+const VOUCHER_BG: Record<string, string> = {
+  JOURNAL:     'bg-slate-100 text-slate-700',
+  PURCHASE:    'bg-amber-50 text-amber-700',
+  SALE:        'bg-emerald-50 text-emerald-700',
+  PAYMENT:     'bg-rose-50 text-rose-700',
+  RECEIPT:     'bg-sky-50 text-sky-700',
+  CONTRA:      'bg-violet-50 text-violet-700',
+  CREDIT_NOTE: 'bg-emerald-50 text-emerald-700',
+  DEBIT_NOTE:  'bg-amber-50 text-amber-700',
 }
 
-const emptyLine = (): Omit<JournalLine, 'id'> => ({ account: 0, debit: '0', credit: '0', narration: '' })
-
-function PaymentVoucherDialog({ suppliers, onSuccess }: { suppliers: Party[]; onSuccess: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
-  const [amount, setAmount] = useState('')
-  const [partyId, setPartyId] = useState<number | ''>('')
-  const [mode, setMode] = useState('bank')
-  const [narration, setNarration] = useState('')
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setSaving(true)
-    try {
-      await createPaymentVoucher({
-        date, amount, party_id: partyId || null, payment_mode: mode, narration,
-      })
-      toast.success('Payment voucher created')
-      setOpen(false)
-      setAmount(''); setPartyId(''); setNarration('')
-      onSuccess()
-    } catch { toast.error('Failed to create payment voucher') }
-    finally { setSaving(false) }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="secondary" size="sm"><Banknote size={14} /> Payment</Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Payment Voucher</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1.5">Date *</label>
-              <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1.5">Amount *</label>
-              <Input type="number" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1.5">Supplier</label>
-            <select value={partyId} onChange={(e) => setPartyId(e.target.value ? Number(e.target.value) : '')}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
-              <option value="">-- Select Supplier --</option>
-              {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1.5">Payment Mode</label>
-            <div className="flex gap-4">
-              {['bank', 'cash'].map((m) => (
-                <label key={m} className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="radio" name="payment_mode" value={m} checked={mode === m} onChange={() => setMode(m)}
-                    className="accent-teal-600" />
-                  <span className="capitalize">{m}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1.5">Narration</label>
-            <Input value={narration} onChange={(e) => setNarration(e.target.value)} placeholder="Payment description..." />
-          </div>
-          <div className="flex gap-3 justify-end pt-2">
-            <DialogClose asChild><Button type="button" variant="secondary">Cancel</Button></DialogClose>
-            <Button type="submit" disabled={saving}>{saving && <Loader2 size={14} className="animate-spin" />} Save Payment</Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function ReceiptVoucherDialog({ customers, onSuccess }: { customers: Party[]; onSuccess: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
-  const [amount, setAmount] = useState('')
-  const [partyId, setPartyId] = useState<number | ''>('')
-  const [mode, setMode] = useState('bank')
-  const [narration, setNarration] = useState('')
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setSaving(true)
-    try {
-      await createReceiptVoucher({
-        date, amount, party_id: partyId || null, receipt_mode: mode, narration,
-      })
-      toast.success('Receipt voucher created')
-      setOpen(false)
-      setAmount(''); setPartyId(''); setNarration('')
-      onSuccess()
-    } catch { toast.error('Failed to create receipt voucher') }
-    finally { setSaving(false) }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="secondary" size="sm"><Receipt size={14} /> Receipt</Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Receipt Voucher</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1.5">Date *</label>
-              <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1.5">Amount *</label>
-              <Input type="number" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1.5">Customer</label>
-            <select value={partyId} onChange={(e) => setPartyId(e.target.value ? Number(e.target.value) : '')}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
-              <option value="">-- Select Customer --</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1.5">Receipt Mode</label>
-            <div className="flex gap-4">
-              {['bank', 'cash'].map((m) => (
-                <label key={m} className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="radio" name="receipt_mode" value={m} checked={mode === m} onChange={() => setMode(m)}
-                    className="accent-teal-600" />
-                  <span className="capitalize">{m}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1.5">Narration</label>
-            <Input value={narration} onChange={(e) => setNarration(e.target.value)} placeholder="Receipt description..." />
-          </div>
-          <div className="flex gap-3 justify-end pt-2">
-            <DialogClose asChild><Button type="button" variant="secondary">Cancel</Button></DialogClose>
-            <Button type="submit" disabled={saving}>{saving && <Loader2 size={14} className="animate-spin" />} Save Receipt</Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function ContraVoucherDialog({ onSuccess }: { onSuccess: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
-  const [amount, setAmount] = useState('')
-  const [direction, setDirection] = useState('bank_to_cash')
-  const [narration, setNarration] = useState('')
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setSaving(true)
-    try {
-      await createContraVoucher({ date, amount, direction, narration })
-      toast.success('Contra voucher created')
-      setOpen(false)
-      setAmount(''); setNarration('')
-      onSuccess()
-    } catch { toast.error('Failed to create contra voucher') }
-    finally { setSaving(false) }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="secondary" size="sm"><ArrowLeftRight size={14} /> Contra</Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Contra Voucher</DialogTitle></DialogHeader>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1.5">Date *</label>
-              <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1.5">Amount *</label>
-              <Input type="number" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1.5">Direction</label>
-            <div className="flex gap-4">
-              {[{ value: 'bank_to_cash', label: 'Bank → Cash' }, { value: 'cash_to_bank', label: 'Cash → Bank' }].map((d) => (
-                <label key={d.value} className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="radio" name="direction" value={d.value} checked={direction === d.value} onChange={() => setDirection(d.value)}
-                    className="accent-teal-600" />
-                  {d.label}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-500 mb-1.5">Narration</label>
-            <Input value={narration} onChange={(e) => setNarration(e.target.value)} placeholder="Contra description..." />
-          </div>
-          <div className="flex gap-3 justify-end pt-2">
-            <DialogClose asChild><Button type="button" variant="secondary">Cancel</Button></DialogClose>
-            <Button type="submit" disabled={saving}>{saving && <Loader2 size={14} className="animate-spin" />} Save Contra</Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
+function entryAmount(e: JournalEntry): number {
+  // Sum of one side (debit total = credit total for posted entries)
+  let dr = 0
+  for (const l of e.lines) dr += parseFloat(l.debit) || 0
+  return dr
 }
 
 export default function JournalsPage() {
+  const navigate = useNavigate()
+  const { activeLocationId } = useLocation()
   const [entries, setEntries] = useState<JournalEntry[]>([])
-  const [total, setTotal] = useState(0)
+  const [count, setCount] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [accounts, setAccounts] = useState<Account[]>([])
-  const [suppliers, setSuppliers] = useState<Party[]>([])
-  const [customers, setCustomers] = useState<Party[]>([])
-  const [open, setOpen] = useState(false)
-  const [saving, setSaving] = useState(false)
 
-  // Filters
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'posted'>('all')
+  const [voucherType, setVoucherType] = useState<string>('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [voucherType, setVoucherType] = useState('')
-  const [searchNarration, setSearchNarration] = useState('')
-  const [searchEntryNo, setSearchEntryNo] = useState('')
 
-  // Form state
-  const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0])
-  const [formNarration, setFormNarration] = useState('')
-  const [formVoucher, setFormVoucher] = useState('JOURNAL')
-  const [lines, setLines] = useState<Omit<JournalLine, 'id'>[]>([emptyLine(), emptyLine()])
+  const [suppliers, setSuppliers] = useState<Party[]>([])
+  const [customers, setCustomers] = useState<Party[]>([])
 
   async function load() {
     setLoading(true)
-    const params: Record<string, string> = {}
-    if (dateFrom) params.date_from = dateFrom
-    if (dateTo) params.date_to = dateTo
-    if (voucherType) params.voucher_type = voucherType
-    if (searchNarration) params.narration = searchNarration
-    if (searchEntryNo) params.entry_no = searchEntryNo
     try {
+      const params: Record<string, string> = {}
+      if (search) params.narration = search
+      if (statusFilter !== 'all') params.is_posted = String(statusFilter === 'posted')
+      if (voucherType !== 'all') params.voucher_type = voucherType
+      if (dateFrom) params.date_from = dateFrom
+      if (dateTo) params.date_to = dateTo
       const res = await getJournalEntries(params)
       setEntries(res.results)
-      setTotal(res.count)
+      setCount(res.count)
     } catch {
       toast.error('Failed to load journal entries')
     } finally {
@@ -357,241 +82,444 @@ export default function JournalsPage() {
     }
   }
 
-  useEffect(() => { load() }, [dateFrom, dateTo, voucherType, searchNarration, searchEntryNo])
+  useEffect(() => {
+    const t = setTimeout(load, 250)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, statusFilter, voucherType, dateFrom, dateTo, activeLocationId])
 
   useEffect(() => {
-    getChartOfAccounts().then(setAccounts).catch(() => {})
-    getSuppliers().then(setSuppliers).catch(() => {})
-    getCustomers().then(setCustomers).catch(() => {})
+    Promise.all([getSuppliers(), getCustomers()]).then(([s, c]) => {
+      setSuppliers(s); setCustomers(c)
+    }).catch(() => {/* ignore — quick-add can still use no party */})
   }, [])
 
-  async function handlePost(id: number) {
-    try {
-      await postEntry(id)
-      toast.success('Entry posted')
-      load()
-    } catch {
-      toast.error('Failed to post entry')
+  const totals = useMemo(() => {
+    let amount = 0
+    let drafts = 0
+    let posted = 0
+    for (const e of entries) {
+      amount += entryAmount(e)
+      if (e.is_posted) posted++; else drafts++
     }
-  }
+    return { amount, drafts, posted }
+  }, [entries])
 
-  const totalDebit = lines.reduce((s, l) => s + Number(l.debit || 0), 0)
-  const totalCredit = lines.reduce((s, l) => s + Number(l.credit || 0), 0)
-  const balanced = Math.abs(totalDebit - totalCredit) < 0.01
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault()
-    if (!balanced) { toast.error('Debits must equal credits'); return }
-    setSaving(true)
-    try {
-      await createJournalEntry({
-        date: formDate,
-        narration: formNarration,
-        voucher_type: formVoucher,
-        lines: lines.filter((l) => l.account !== 0) as JournalLine[],
-      })
-      toast.success('Journal entry created')
-      setOpen(false)
-      setLines([emptyLine(), emptyLine()])
-      setFormNarration('')
-      load()
-    } catch {
-      toast.error('Failed to create entry')
-    } finally {
-      setSaving(false)
-    }
+  function clearFilters() {
+    setSearch('')
+    setStatusFilter('all')
+    setVoucherType('all')
+    setDateFrom('')
+    setDateTo('')
   }
-
-  function updateLine(i: number, field: keyof Omit<JournalLine, 'id'>, value: string | number) {
-    const updated = [...lines]
-    updated[i] = { ...updated[i], [field]: value }
-    setLines(updated)
-  }
+  const hasActiveFilters = !!(search || statusFilter !== 'all' || voucherType !== 'all' || dateFrom || dateTo)
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Journal Entries</h1>
-          <p className="text-sm text-slate-500 mt-0.5">{total} entries</p>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {count} entries · {totals.drafts} draft · {totals.posted} posted · Total {formatCurrency(totals.amount)}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <PaymentVoucherDialog suppliers={suppliers} onSuccess={load} />
-          <ReceiptVoucherDialog customers={customers} onSuccess={load} />
-          <ContraVoucherDialog onSuccess={load} />
-          <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus size={16} /> Manual Entry
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Create Manual Entry</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleSave} className="flex flex-col gap-4">
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1.5">Date *</label>
-                  <Input type="date" required value={formDate} onChange={(e) => setFormDate(e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1.5">Voucher Type</label>
-                  <select value={formVoucher} onChange={(e) => setFormVoucher(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 capitalize">
-                    {VOUCHER_TYPES.map((t) => <option key={t} value={t}>{voucherLabel(t)}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1.5">Narration</label>
-                  <Input value={formNarration} onChange={(e) => setFormNarration(e.target.value)}
-                    placeholder="Description..." />
-                </div>
-              </div>
-
-              {/* Lines */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Journal Lines</p>
-                  <button type="button" onClick={() => setLines([...lines, emptyLine()])}
-                    className="text-xs text-teal-600 hover:text-teal-700 font-medium flex items-center gap-1">
-                    <Plus size={12} /> Add Line
-                  </button>
-                </div>
-                <div className="border border-slate-200 rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="text-left py-2 px-3 text-xs font-medium text-slate-500">Account</th>
-                        <th className="text-right py-2 px-3 text-xs font-medium text-slate-500">Debit</th>
-                        <th className="text-right py-2 px-3 text-xs font-medium text-slate-500">Credit</th>
-                        <th className="w-8" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {lines.map((line, i) => (
-                        <tr key={i} className="border-t border-slate-200">
-                          <td className="py-1.5 px-3">
-                            <select
-                              value={line.account}
-                              onChange={(e) => updateLine(i, 'account', Number(e.target.value))}
-                              className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                            >
-                              <option value={0}>-- Select Account --</option>
-                              {accounts.map((acc) => (
-                                <option key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="py-1.5 px-3">
-                            <input
-                              type="number" step="0.01" min="0"
-                              value={line.debit}
-                              onChange={(e) => updateLine(i, 'debit', e.target.value)}
-                              className="w-full text-right text-xs border border-slate-200 rounded px-2 py-1.5 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-teal-500 font-mono"
-                            />
-                          </td>
-                          <td className="py-1.5 px-3">
-                            <input
-                              type="number" step="0.01" min="0"
-                              value={line.credit}
-                              onChange={(e) => updateLine(i, 'credit', e.target.value)}
-                              className="w-full text-right text-xs border border-slate-200 rounded px-2 py-1.5 bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-teal-500 font-mono"
-                            />
-                          </td>
-                          <td className="py-1.5 px-2">
-                            <button type="button" onClick={() => setLines(lines.filter((_, j) => j !== i))}
-                              className="text-slate-400 hover:text-red-500">
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                      <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold">
-                        <td className="py-2 px-3 text-xs font-semibold text-slate-500">Totals</td>
-                        <td className={cn("py-2 px-3 text-right text-xs font-mono font-semibold", balanced ? 'text-emerald-600' : 'text-red-600')}>
-                          {totalDebit.toFixed(2)}
-                        </td>
-                        <td className={cn("py-2 px-3 text-right text-xs font-mono font-semibold", balanced ? 'text-emerald-600' : 'text-red-600')}>
-                          {totalCredit.toFixed(2)}
-                        </td>
-                        <td />
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                {!balanced && (
-                  <p className="mt-1.5 text-xs text-red-600">Debits and credits must balance.</p>
-                )}
-              </div>
-
-              <div className="flex gap-3 justify-end pt-2">
-                <DialogClose asChild>
-                  <Button type="button" variant="secondary">Cancel</Button>
-                </DialogClose>
-                <Button type="submit" disabled={saving || !balanced}>
-                  {saving && <Loader2 size={14} className="animate-spin" />}
-                  Save Entry
-                </Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
+        <div className="flex items-center gap-2 flex-wrap">
+          <PaymentSheet suppliers={suppliers} onSuccess={load} />
+          <ReceiptSheet customers={customers} onSuccess={load} />
+          <ContraSheet onSuccess={load} />
+          <Button onClick={() => navigate('/journals/new')}>
+            <Plus size={16} /> New Journal
+          </Button>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500 font-medium">From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="px-2.5 py-1.5 w-auto" />
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500 font-medium">To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="px-2.5 py-1.5 w-auto" />
+      {/* Status pill bar */}
+      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+        <StatusPill label="All" count={count} active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} />
+        <StatusPill label="Draft" count={totals.drafts} active={statusFilter === 'draft'} dotClassName="bg-amber-400" onClick={() => setStatusFilter('draft')} />
+        <StatusPill label="Posted" count={totals.posted} active={statusFilter === 'posted'} dotClassName="bg-emerald-500" onClick={() => setStatusFilter('posted')} />
+      </div>
+
+      {/* Filters row */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <div className="relative flex-1 min-w-[220px] max-w-md">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search narration…" className="pl-9 py-1.5" />
         </div>
         <select value={voucherType} onChange={(e) => setVoucherType(e.target.value)}
-          className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 capitalize">
-          <option value="">All Types</option>
-          {VOUCHER_TYPES.map((t) => <option key={t} value={t}>{voucherLabel(t)}</option>)}
+          className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+          <option value="all">All voucher types</option>
+          {VOUCHER_TYPES.map((v) => <option key={v} value={v}>{voucherLabel(v)}</option>)}
         </select>
-        <Input value={searchNarration} onChange={(e) => setSearchNarration(e.target.value)}
-          placeholder="Search narration..." className="px-2.5 py-1.5 w-44" />
-        <Input value={searchEntryNo} onChange={(e) => setSearchEntryNo(e.target.value)}
-          placeholder="Entry no..." className="px-2.5 py-1.5 w-36" />
-        {(dateFrom || dateTo || voucherType || searchNarration || searchEntryNo) && (
-          <button onClick={() => { setDateFrom(''); setDateTo(''); setVoucherType(''); setSearchNarration(''); setSearchEntryNo('') }}
-            className="text-xs text-slate-500 hover:text-slate-900 underline">Clear filters</button>
+        <div className="flex items-center gap-1 px-2 py-1 border border-slate-200 rounded-lg bg-white">
+          <Calendar size={13} className="text-slate-400" />
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
+            className="text-xs bg-transparent focus:outline-none" />
+          <span className="text-slate-300 text-xs">→</span>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
+            className="text-xs bg-transparent focus:outline-none" />
+        </div>
+        {hasActiveFilters && (
+          <button onClick={clearFilters} className="text-xs text-slate-500 hover:text-slate-900 inline-flex items-center gap-1">
+            <X size={12} /> Clear
+          </button>
         )}
       </div>
 
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden p-0">
         <Table>
           <Thead>
             <Tr className="bg-slate-50">
-              <Th className="w-8" />
-              <Th>Entry No</Th>
-              <Th>Date</Th>
-              <Th>Narration</Th>
-              <Th>Type</Th>
-              <Th>Reference</Th>
-              <Th>Status</Th>
-              <Th />
+              <Th className="text-left">Date</Th>
+              <Th className="text-left">Journal #</Th>
+              <Th className="text-left">Reference</Th>
+              <Th className="text-left">Voucher</Th>
+              <Th className="text-left">Notes</Th>
+              <Th className="text-right px-3">Amount</Th>
+              <Th className="text-left">Status</Th>
             </Tr>
           </Thead>
           <Tbody>
             {loading ? (
-              <tr><td colSpan={8} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
+              <tr><td colSpan={7} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
             ) : entries.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-12 text-slate-400 text-sm">No journal entries found</td></tr>
-            ) : (
-              entries.map((entry) => <JournalRow key={entry.id} entry={entry} onPost={handlePost} />)
-            )}
+              <tr><td colSpan={7} className="text-center py-12 text-slate-400 text-sm">No journal entries match your filters</td></tr>
+            ) : entries.map((entry) => {
+              const amount = entryAmount(entry)
+              return (
+                <Tr key={entry.id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/journals/${entry.id}`)}>
+                  <Td className="text-sm text-slate-600">{formatDate(entry.date)}</Td>
+                  <Td>
+                    <Link to={`/journals/${entry.id}`} onClick={(e) => e.stopPropagation()}
+                      className="font-mono text-xs text-teal-700 hover:underline">
+                      {entry.entry_no}
+                    </Link>
+                  </Td>
+                  <Td className="text-xs text-slate-500">
+                    {entry.reference_type
+                      ? `${entry.reference_type}${entry.reference_id ? ` #${entry.reference_id}` : ''}`
+                      : '—'}
+                  </Td>
+                  <Td>
+                    <span className={cn('inline-flex px-2 py-0.5 rounded text-xs font-medium', VOUCHER_BG[entry.voucher_type] || 'bg-slate-100 text-slate-600')}>
+                      {voucherLabel(entry.voucher_type)}
+                    </span>
+                  </Td>
+                  <Td className="text-sm text-slate-700 max-w-xs truncate">{entry.narration || '—'}</Td>
+                  <Td className="text-right font-mono px-3">{amount > 0 ? formatCurrency(amount) : '—'}</Td>
+                  <Td>
+                    <Badge variant={entry.is_posted ? 'success' : 'warning'}>
+                      {entry.is_posted ? 'Posted' : 'Draft'}
+                    </Badge>
+                  </Td>
+                </Tr>
+              )
+            })}
           </Tbody>
         </Table>
       </Card>
     </div>
+  )
+}
+
+// ─── Status pill ────────────────────────────────────────────────────────────
+
+function StatusPill({ label, count, active, dotClassName, onClick }: {
+  label: string
+  count: number
+  active: boolean
+  dotClassName?: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors',
+        active
+          ? 'bg-teal-50 border-teal-200 text-teal-700'
+          : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+      )}
+    >
+      {dotClassName && <span className={cn('w-1.5 h-1.5 rounded-full', dotClassName)} />}
+      {label}
+      <span className={cn('text-[10px] tabular-nums', active ? 'text-teal-600' : 'text-slate-400')}>
+        {count}
+      </span>
+    </button>
+  )
+}
+
+// ─── Quick voucher sheets ───────────────────────────────────────────────────
+
+function PaymentSheet({ suppliers, onSuccess }: { suppliers: Party[]; onSuccess: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [amount, setAmount] = useState('')
+  const [partyId, setPartyId] = useState<number | ''>('')
+  const [mode, setMode] = useState('bank')
+  const [narration, setNarration] = useState('')
+
+  function reset() {
+    setAmount(''); setPartyId(''); setNarration(''); setMode('bank')
+    setDate(new Date().toISOString().split('T')[0])
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await createPaymentVoucher({ date, amount, party_id: partyId || null, payment_mode: mode, narration })
+      toast.success('Payment voucher created')
+      setOpen(false)
+      reset()
+      onSuccess()
+    } catch {
+      toast.error('Failed to create payment')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
+      <SheetTrigger asChild>
+        <Button variant="secondary" size="sm"><Banknote size={14} /> Payment</Button>
+      </SheetTrigger>
+      <SheetContent width="md">
+        <form onSubmit={submit} className="flex flex-col h-full">
+          <SheetHeader><SheetTitle>Quick Payment</SheetTitle></SheetHeader>
+          <SheetBody>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Date" required>
+                <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+              </Field>
+              <Field label="Amount" required>
+                <Input type="number" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+              </Field>
+            </div>
+            <div className="mt-3">
+              <Field label="Supplier">
+                <select value={partyId} onChange={(e) => setPartyId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+                  <option value="">— Select supplier —</option>
+                  {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="mt-3">
+              <Field label="Paid from">
+                <div className="flex gap-2">
+                  {['bank', 'cash'].map((m) => (
+                    <label key={m} className={cn(
+                      'flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm',
+                      mode === m
+                        ? 'border-teal-500 bg-teal-50 text-teal-700'
+                        : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                    )}>
+                      <input type="radio" name="payment_mode" value={m} checked={mode === m}
+                        onChange={() => setMode(m)} className="hidden" />
+                      <span className="capitalize">{m}</span>
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            </div>
+            <div className="mt-3">
+              <Field label="Notes">
+                <Input value={narration} onChange={(e) => setNarration(e.target.value)} placeholder="Optional" />
+              </Field>
+            </div>
+          </SheetBody>
+          <SheetFooter>
+            <SheetClose asChild><Button type="button" variant="secondary">Cancel</Button></SheetClose>
+            <Button type="submit" disabled={saving}>{saving && <Loader2 size={14} className="animate-spin" />} Save Payment</Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function ReceiptSheet({ customers, onSuccess }: { customers: Party[]; onSuccess: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [amount, setAmount] = useState('')
+  const [partyId, setPartyId] = useState<number | ''>('')
+  const [mode, setMode] = useState('bank')
+  const [narration, setNarration] = useState('')
+
+  function reset() {
+    setAmount(''); setPartyId(''); setNarration(''); setMode('bank')
+    setDate(new Date().toISOString().split('T')[0])
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await createReceiptVoucher({ date, amount, party_id: partyId || null, receipt_mode: mode, narration })
+      toast.success('Receipt voucher created')
+      setOpen(false); reset(); onSuccess()
+    } catch {
+      toast.error('Failed to create receipt')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
+      <SheetTrigger asChild>
+        <Button variant="secondary" size="sm"><Receipt size={14} /> Receipt</Button>
+      </SheetTrigger>
+      <SheetContent width="md">
+        <form onSubmit={submit} className="flex flex-col h-full">
+          <SheetHeader><SheetTitle>Quick Receipt</SheetTitle></SheetHeader>
+          <SheetBody>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Date" required>
+                <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+              </Field>
+              <Field label="Amount" required>
+                <Input type="number" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+              </Field>
+            </div>
+            <div className="mt-3">
+              <Field label="Customer">
+                <select value={partyId} onChange={(e) => setPartyId(e.target.value ? Number(e.target.value) : '')}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+                  <option value="">— Select customer —</option>
+                  {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="mt-3">
+              <Field label="Received in">
+                <div className="flex gap-2">
+                  {['bank', 'cash'].map((m) => (
+                    <label key={m} className={cn(
+                      'flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm',
+                      mode === m
+                        ? 'border-teal-500 bg-teal-50 text-teal-700'
+                        : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                    )}>
+                      <input type="radio" name="receipt_mode" value={m} checked={mode === m}
+                        onChange={() => setMode(m)} className="hidden" />
+                      <span className="capitalize">{m}</span>
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            </div>
+            <div className="mt-3">
+              <Field label="Notes">
+                <Input value={narration} onChange={(e) => setNarration(e.target.value)} placeholder="Optional" />
+              </Field>
+            </div>
+          </SheetBody>
+          <SheetFooter>
+            <SheetClose asChild><Button type="button" variant="secondary">Cancel</Button></SheetClose>
+            <Button type="submit" disabled={saving}>{saving && <Loader2 size={14} className="animate-spin" />} Save Receipt</Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function ContraSheet({ onSuccess }: { onSuccess: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0])
+  const [amount, setAmount] = useState('')
+  const [direction, setDirection] = useState('bank_to_cash')
+  const [narration, setNarration] = useState('')
+
+  function reset() {
+    setAmount(''); setNarration(''); setDirection('bank_to_cash')
+    setDate(new Date().toISOString().split('T')[0])
+  }
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await createContraVoucher({ date, amount, direction, narration })
+      toast.success('Contra voucher created')
+      setOpen(false); reset(); onSuccess()
+    } catch {
+      toast.error('Failed to create contra')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
+      <SheetTrigger asChild>
+        <Button variant="secondary" size="sm"><ArrowLeftRight size={14} /> Contra</Button>
+      </SheetTrigger>
+      <SheetContent width="md">
+        <form onSubmit={submit} className="flex flex-col h-full">
+          <SheetHeader><SheetTitle>Bank ↔ Cash Transfer</SheetTitle></SheetHeader>
+          <SheetBody>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Date" required>
+                <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+              </Field>
+              <Field label="Amount" required>
+                <Input type="number" step="0.01" min="0.01" required value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+              </Field>
+            </div>
+            <div className="mt-3">
+              <Field label="Direction">
+                <div className="flex gap-2">
+                  {[
+                    { v: 'bank_to_cash', label: 'Bank → Cash' },
+                    { v: 'cash_to_bank', label: 'Cash → Bank' },
+                  ].map((opt) => (
+                    <label key={opt.v} className={cn(
+                      'flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm',
+                      direction === opt.v
+                        ? 'border-teal-500 bg-teal-50 text-teal-700'
+                        : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                    )}>
+                      <input type="radio" name="contra_dir" value={opt.v} checked={direction === opt.v}
+                        onChange={() => setDirection(opt.v)} className="hidden" />
+                      {opt.label}
+                    </label>
+                  ))}
+                </div>
+              </Field>
+            </div>
+            <div className="mt-3">
+              <Field label="Notes">
+                <Input value={narration} onChange={(e) => setNarration(e.target.value)} placeholder="Optional" />
+              </Field>
+            </div>
+          </SheetBody>
+          <SheetFooter>
+            <SheetClose asChild><Button type="button" variant="secondary">Cancel</Button></SheetClose>
+            <Button type="submit" disabled={saving}>{saving && <Loader2 size={14} className="animate-spin" />} Save Contra</Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
+  )
+}
+
+function Field({ label, required, hint, children }: {
+  label: string
+  required?: boolean
+  hint?: string
+  children: React.ReactNode
+}) {
+  return (
+    <label className="block">
+      <span className="block text-xs font-medium text-slate-600 mb-1.5">
+        {label} {required && <span className="text-rose-500">*</span>}
+      </span>
+      {children}
+      {hint && <span className="block text-xs text-slate-400 mt-1">{hint}</span>}
+    </label>
   )
 }

@@ -2,6 +2,7 @@ import calendar
 from datetime import date
 from decimal import Decimal
 
+from django.db import models
 from django.db.models import Sum, Q, Case, When, Value, DecimalField
 from django.db.models.functions import ExtractMonth, ExtractYear
 from rest_framework import status, viewsets
@@ -35,9 +36,34 @@ class AccountingSettingsView(RetrieveUpdateAPIView):
 
 
 class ChartOfAccountViewSet(viewsets.ModelViewSet):
-    queryset = ChartOfAccount.objects.all().order_by('account_code')
+    queryset = ChartOfAccount.objects.all()
     serializer_class = ChartOfAccountSerializer
     pagination_class = None
+
+    def get_queryset(self):
+        from django.db.models import Count
+        # Annotate document count (number of journal lines) so list view stays fast.
+        qs = ChartOfAccount.objects.select_related('parent').annotate(
+            _documents_count=Count('journal_lines')
+        ).order_by('account_code')
+
+        params = self.request.query_params
+        account_type = params.get('account_type')
+        if account_type:
+            qs = qs.filter(account_type=account_type)
+        subtype = params.get('account_subtype')
+        if subtype:
+            qs = qs.filter(account_subtype=subtype)
+        is_active = params.get('is_active')
+        if is_active in ('true', 'false'):
+            qs = qs.filter(is_active=(is_active == 'true'))
+        search = params.get('search')
+        if search:
+            qs = qs.filter(
+                models.Q(account_code__icontains=search) |
+                models.Q(account_name__icontains=search)
+            )
+        return qs
 
     def perform_create(self, serializer):
         instance = serializer.save()
@@ -56,6 +82,32 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
         root_accounts = ChartOfAccount.objects.filter(parent__isnull=True).order_by('account_code')
         serializer = ChartOfAccountTreeSerializer(root_accounts, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], url_path='counts')
+    def counts(self, request):
+        """Per-type counts for pill filter UI."""
+        from django.db.models import Count
+        agg = ChartOfAccount.objects.values('account_type').annotate(c=Count('id'))
+        counts = {row['account_type']: row['c'] for row in agg}
+        active_count = ChartOfAccount.objects.filter(is_active=True).count()
+        inactive_count = ChartOfAccount.objects.filter(is_active=False).count()
+        total = sum(counts.values())
+        return Response({
+            'total': total,
+            'active': active_count,
+            'inactive': inactive_count,
+            'by_type': counts,
+        })
+
+    @action(detail=True, methods=['post'], url_path='toggle-active')
+    def toggle_active(self, request, pk=None):
+        account = self.get_object()
+        account.is_active = not account.is_active
+        account.save(update_fields=['is_active', 'updated_at'])
+        log_action('UPDATE', 'ChartOfAccount', account.pk,
+                   f"{account} → {'active' if account.is_active else 'inactive'}",
+                   request=request)
+        return Response(self.get_serializer(account).data)
 
 
 class AccountMappingViewSet(viewsets.ModelViewSet):
