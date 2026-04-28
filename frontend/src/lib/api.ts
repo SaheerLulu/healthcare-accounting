@@ -195,7 +195,12 @@ export interface JournalEntry {
 
 export async function getJournalEntries(params?: Record<string, string>) {
   const res = await api.get('/journals/entries/', { params })
-  return res.data as { results: JournalEntry[]; count: number }
+  return res.data as {
+    results: JournalEntry[]
+    count: number
+    posted_count: number
+    draft_count: number
+  }
 }
 
 export async function getJournalEntry(id: number) {

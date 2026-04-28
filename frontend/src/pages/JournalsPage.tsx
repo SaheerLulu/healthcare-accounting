@@ -52,6 +52,8 @@ export default function JournalsPage() {
   const { activeLocationId } = useLocation()
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [count, setCount] = useState(0)
+  const [postedCount, setPostedCount] = useState(0)
+  const [draftCount, setDraftCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
   const [search, setSearch] = useState('')
@@ -75,6 +77,8 @@ export default function JournalsPage() {
       const res = await getJournalEntries(params)
       setEntries(res.results)
       setCount(res.count)
+      setPostedCount(res.posted_count ?? 0)
+      setDraftCount(res.draft_count ?? 0)
     } catch {
       toast.error('Failed to load journal entries')
     } finally {
@@ -96,13 +100,10 @@ export default function JournalsPage() {
 
   const totals = useMemo(() => {
     let amount = 0
-    let drafts = 0
-    let posted = 0
     for (const e of entries) {
       amount += entryAmount(e)
-      if (e.is_posted) posted++; else drafts++
     }
-    return { amount, drafts, posted }
+    return { amount }
   }, [entries])
 
   function clearFilters() {
@@ -121,7 +122,7 @@ export default function JournalsPage() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">Journal Entries</h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            {count} entries · {totals.drafts} draft · {totals.posted} posted · Total {formatCurrency(totals.amount)}
+            {count} entries · {draftCount} draft · {postedCount} posted · Total {formatCurrency(totals.amount)}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -137,8 +138,8 @@ export default function JournalsPage() {
       {/* Status pill bar */}
       <div className="flex items-center gap-1.5 mb-4 flex-wrap">
         <StatusPill label="All" count={count} active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} />
-        <StatusPill label="Draft" count={totals.drafts} active={statusFilter === 'draft'} dotClassName="bg-amber-400" onClick={() => setStatusFilter('draft')} />
-        <StatusPill label="Posted" count={totals.posted} active={statusFilter === 'posted'} dotClassName="bg-emerald-500" onClick={() => setStatusFilter('posted')} />
+        <StatusPill label="Draft" count={draftCount} active={statusFilter === 'draft'} dotClassName="bg-amber-400" onClick={() => setStatusFilter('draft')} />
+        <StatusPill label="Posted" count={postedCount} active={statusFilter === 'posted'} dotClassName="bg-emerald-500" onClick={() => setStatusFilter('posted')} />
       </div>
 
       {/* Filters row */}

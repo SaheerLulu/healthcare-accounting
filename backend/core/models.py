@@ -134,6 +134,8 @@ class AccountMapping(models.Model):
         ('ESI_PAYABLE', 'ESI Payable'),
         ('PT_PAYABLE', 'Professional Tax Payable'),
         ('NET_SALARY_PAYABLE', 'Net Salary Payable'),
+        ('RENT_EXPENSE', 'Rent Expense'),
+        ('ELECTRICITY_EXPENSE', 'Electricity Expense'),
     ]
 
     # Default mapping from key to account_code for data migration
@@ -163,6 +165,8 @@ class AccountMapping(models.Model):
         'ESI_PAYABLE': '2180',
         'PT_PAYABLE': '2190',
         'NET_SALARY_PAYABLE': '2200',
+        'RENT_EXPENSE': '5410',
+        'ELECTRICITY_EXPENSE': '5420',
     }
 
     key = models.CharField(max_length=30, unique=True, choices=KEY_CHOICES)

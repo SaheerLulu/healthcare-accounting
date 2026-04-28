@@ -14,6 +14,10 @@ const LocationContext = createContext<LocationContextType | null>(null)
 
 const STORAGE_KEY = 'accounting_active_location'
 
+function persistLocation(id: number | null) {
+  localStorage.setItem(STORAGE_KEY, id === null ? 'all' : String(id))
+}
+
 export function LocationProvider({ children }: { children: ReactNode }) {
   const [locations, setLocations] = useState<UserLocation[]>([])
   const [activeLocationId, setActiveLocationId] = useState<number | null>(null)
@@ -29,7 +33,9 @@ export function LocationProvider({ children }: { children: ReactNode }) {
         setLocations(data.locations)
         setCanSeeAll(data.can_see_all)
 
-        // Restore from localStorage or use default
+        // Restore from localStorage or use default. The single useEffect below
+        // mirrors state→localStorage on every change, so this block only sets
+        // state — it never writes localStorage directly.
         const stored = localStorage.getItem(STORAGE_KEY)
         if (stored === 'all' && data.can_see_all) {
           setActiveLocationId(null)
@@ -39,29 +45,19 @@ export function LocationProvider({ children }: { children: ReactNode }) {
           if (valid) {
             setActiveLocationId(id)
           } else if (data.can_see_all) {
-            // Stored location no longer valid, admin sees all
             setActiveLocationId(null)
-            localStorage.setItem(STORAGE_KEY, 'all')
           } else {
-            // Non-admin: fall back to default assignment
             const def = data.locations.find((l) => l.is_default) || data.locations[0]
-            if (def) {
-              setActiveLocationId(def.id)
-              localStorage.setItem(STORAGE_KEY, String(def.id))
-            }
+            if (def) setActiveLocationId(def.id)
           }
         } else {
-          // No stored value — admins default to "All Locations", others to their default
           const def = data.locations.find((l) => l.is_default)
           if (def) {
             setActiveLocationId(def.id)
-            localStorage.setItem(STORAGE_KEY, String(def.id))
           } else if (data.can_see_all) {
             setActiveLocationId(null)
-            localStorage.setItem(STORAGE_KEY, 'all')
           } else if (data.locations[0]) {
             setActiveLocationId(data.locations[0].id)
-            localStorage.setItem(STORAGE_KEY, String(data.locations[0].id))
           }
         }
       } catch {
@@ -74,13 +70,13 @@ export function LocationProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true }
   }, [])
 
+  // Mirror state to localStorage on every change once initial load is done.
+  useEffect(() => {
+    if (!isLoading) persistLocation(activeLocationId)
+  }, [activeLocationId, isLoading])
+
   const setActiveLocation = useCallback((id: number | null) => {
     setActiveLocationId(id)
-    if (id === null) {
-      localStorage.setItem(STORAGE_KEY, 'all')
-    } else {
-      localStorage.setItem(STORAGE_KEY, String(id))
-    }
   }, [])
 
   const activeLocation = locations.find((l) => l.id === activeLocationId) || null

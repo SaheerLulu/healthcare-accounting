@@ -81,6 +81,7 @@ class JournalEntryLineCreateSerializer(serializers.ModelSerializer):
 
 class JournalEntryCreateSerializer(serializers.ModelSerializer):
     lines = JournalEntryLineCreateSerializer(many=True)
+    location_id = serializers.IntegerField(required=True, allow_null=False)
 
     class Meta:
         model = JournalEntry
@@ -97,6 +98,8 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'entry_no']
 
+    PARTY_REQUIRED_SUBTYPES = ('Receivable', 'Payable')
+
     def validate(self, data):
         lines = data.get('lines', [])
         if not lines:
@@ -108,6 +111,20 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 f'Journal entry is unbalanced: Debit={total_debit}, Credit={total_credit}'
             )
+
+        line_errors = {}
+        for idx, line in enumerate(lines):
+            account = line.get('account')
+            subtype = getattr(account, 'account_subtype', None)
+            if subtype in self.PARTY_REQUIRED_SUBTYPES:
+                if not line.get('party_type') or not line.get('party_id'):
+                    line_errors[idx] = (
+                        f'party_type and party_id are required for '
+                        f'{subtype} accounts (line {idx + 1}).'
+                    )
+        if line_errors:
+            raise serializers.ValidationError({'lines': line_errors})
+
         return data
 
     def create(self, validated_data):

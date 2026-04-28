@@ -132,7 +132,7 @@ function LocationSelector() {
     return <div className="h-8 w-32 rounded-lg animate-pulse" style={{ backgroundColor: 'var(--color-hover-bg)' }} />
   }
 
-  const label = activeLocation ? activeLocation.name : canSeeAll ? 'All Locations' : 'No Location'
+  const label = activeLocation ? activeLocation.name : canSeeAll ? 'All Stores' : 'No Store'
 
   return (
     <div className="relative flex-shrink-0" ref={ref}>
@@ -152,7 +152,7 @@ function LocationSelector() {
           style={{ backgroundColor: 'var(--color-dropdown-bg)', borderColor: 'var(--color-card-border)' }}
         >
           <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
-            Switch Location
+            Switch Store
           </div>
           {canSeeAll && (
             <button
@@ -164,7 +164,7 @@ function LocationSelector() {
                   : { color: 'var(--color-text-primary)' }
               }
             >
-              <span className="flex items-center gap-2"><Globe className="w-4 h-4" /> All Locations</span>
+              <span className="flex items-center gap-2"><Globe className="w-4 h-4" /> All Stores</span>
               {activeLocationId === null && <Check className="w-4 h-4" style={{ color: 'var(--color-teal)' }} />}
             </button>
           )}

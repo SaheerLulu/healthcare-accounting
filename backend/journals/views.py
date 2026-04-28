@@ -60,6 +60,14 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
             return JournalEntryCreateSerializer
         return JournalEntrySerializer
 
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        qs = self.filter_queryset(self.get_queryset())
+        if hasattr(response, 'data') and isinstance(response.data, dict):
+            response.data['posted_count'] = qs.filter(is_posted=True).count()
+            response.data['draft_count'] = qs.filter(is_posted=False).count()
+        return response
+
     def perform_create(self, serializer):
         instance = serializer.save()
         log_action('CREATE', 'JournalEntry', instance.pk, instance.entry_no, request=self.request)

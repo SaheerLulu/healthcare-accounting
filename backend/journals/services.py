@@ -9,6 +9,7 @@ from inventory_reader.models import (
     PurchaseReturnRO,
 )
 from core.models import AccountMapping, AccountingSettings
+from decimal import ROUND_HALF_UP
 from core.gst_utils import compute_tax_split, detect_supply_type, back_calculate_taxable
 from .models import JournalEntry, JournalEntryLine, RecurringJournal, RecurringJournalLine
 
@@ -36,8 +37,12 @@ class JournalAutoGenerationService:
         ).exists()
 
     def _get_supply_type(self, counterparty_gstin):
-        """Detect supply type using company GSTIN and counterparty GSTIN."""
-        return detect_supply_type(self._settings.gstin, counterparty_gstin)
+        """Detect supply type using company state (from GSTIN or state_code anchor)."""
+        return detect_supply_type(
+            self._settings.gstin,
+            counterparty_gstin,
+            self._settings.state_code,
+        )
 
     @transaction.atomic
     def generate_purchase(self, po_id):
@@ -55,8 +60,12 @@ class JournalAutoGenerationService:
         sgst_amount = Decimal('0.00')
         igst_amount = Decimal('0.00')
 
-        supply_type = po.supply_type or self._get_supply_type(po.supplier.gst_no if po.supplier else '')
+        # Always re-derive supply_type — pre-populated po.supply_type from inventory has been observed wrong.
+        supply_type = self._get_supply_type(po.supplier.gst_no if po.supplier else '')
 
+        # Pre-computed line.cgst_amount/sgst_amount/igst_amount carry the inventory's
+        # (possibly wrong) classification. Sum the total tax across lines and re-split
+        # per our freshly-derived supply_type.
         for line in lines_data:
             qty = Decimal(str(line.quantity + line.free_qty))
             rate = line.purchase_rate
@@ -64,16 +73,30 @@ class JournalAutoGenerationService:
             line_taxable = qty * rate * discount_factor
             taxable_amount += line_taxable
 
-            # Use pre-computed line-level tax if available, otherwise compute
-            if line.cgst_amount or line.sgst_amount or line.igst_amount:
-                cgst_amount += Decimal(str(line.cgst_amount or 0))
-                sgst_amount += Decimal(str(line.sgst_amount or 0))
-                igst_amount += Decimal(str(line.igst_amount or 0))
-            else:
-                split = compute_tax_split(line_taxable, line.tax_percent, supply_type)
-                cgst_amount += split['cgst']
-                sgst_amount += split['sgst']
-                igst_amount += split['igst']
+        total_tax = Decimal('0.00')
+        for line in lines_data:
+            total_tax += (
+                Decimal(str(line.cgst_amount or 0))
+                + Decimal(str(line.sgst_amount or 0))
+                + Decimal(str(line.igst_amount or 0))
+            )
+        if total_tax == Decimal('0.00'):
+            # Fall back to per-line tax_percent if no pre-computed totals.
+            for line in lines_data:
+                qty = Decimal(str(line.quantity + line.free_qty))
+                rate = line.purchase_rate
+                discount_factor = (Decimal('100') - line.discount_percent) / Decimal('100')
+                line_taxable = qty * rate * discount_factor
+                line_tax = (line_taxable * Decimal(str(line.tax_percent or 0)) / Decimal('100')).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP,
+                )
+                total_tax += line_tax
+
+        if supply_type == 'inter_state':
+            cgst_amount, sgst_amount, igst_amount = Decimal('0.00'), Decimal('0.00'), total_tax
+        else:
+            half = (total_tax / Decimal('2')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            cgst_amount, sgst_amount, igst_amount = half, total_tax - half, Decimal('0.00')
 
         transport = po.transport_cost or Decimal('0.00')
         other = po.other_charges or Decimal('0.00')
@@ -106,28 +129,37 @@ class JournalAutoGenerationService:
                 party_type='Supplier',
                 party_id=po.supplier_id,
             )
+        # Round-off: po.round_off was folded into total_payable; balance the JE
+        # by debiting Round Off (or crediting if negative).
+        round_off = po.round_off or Decimal('0.00')
+        if round_off != Decimal('0.00'):
+            round_off_ac = self._accounts.get('ROUND_OFF')
+            if round_off_ac:
+                if round_off > 0:
+                    JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=round_off)
+                else:
+                    JournalEntryLine.objects.create(entry=entry, account=round_off_ac, credit=abs(round_off))
 
         entry.post()
         return entry
 
     @transaction.atomic
     def generate_pos_sale(self, pos_id):
-        """Generate journal entry for a POS sale. POS prices are tax-inclusive (MRP-based)."""
+        """Generate journal entry for a POS sale.
+
+        POS line totals are tax-inclusive (MRP-based). The order-level
+        gst_percent is unreliable in the source data (always 0); per-line
+        tax_percent carries the actual rate. We aggregate taxable + tax
+        per line to support mixed-rate carts and emit Output GST credits.
+        """
         if self._entry_exists('POSOrder', pos_id):
             return None
 
-        pos = POSOrderRO.objects.get(id=pos_id)
+        pos = POSOrderRO.objects.prefetch_related('lines').get(id=pos_id)
         if pos.status not in ('confirmed', 'completed'):
             return None
 
-        total = pos.total_amount
-        gst_rate = pos.gst_percent
-
-        # POS is tax-inclusive: back-calculate the taxable base
-        inclusive_amount = pos.subtotal - pos.discount_amount
-        taxable_base = back_calculate_taxable(inclusive_amount, gst_rate)
-
-        # POS defaults to intra-state; could be inter-state for B2C-Large via customer state
+        # Customer state may be set if the customer is registered/B2C-Large.
         supply_type = 'intra_state'
         if pos.customer_id:
             try:
@@ -138,11 +170,33 @@ class JournalAutoGenerationService:
             except Exception:
                 pass
 
-        split = compute_tax_split(taxable_base, gst_rate, supply_type)
-        cgst = split['cgst']
-        sgst = split['sgst']
-        igst = split['igst']
-        sales_amount = taxable_base
+        # Aggregate per-line: each line's line_total is tax-inclusive at line.tax_percent.
+        sales_amount = Decimal('0.00')
+        cgst = Decimal('0.00')
+        sgst = Decimal('0.00')
+        igst = Decimal('0.00')
+
+        for line in pos.lines.all():
+            line_total = Decimal(str(line.line_total or 0))
+            line_taxable = back_calculate_taxable(line_total, line.tax_percent)
+            line_tax = line_total - line_taxable
+            sales_amount += line_taxable
+
+            if supply_type == 'inter_state':
+                igst += line_tax
+            else:
+                half = (line_tax / Decimal('2')).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP,
+                )
+                cgst += half
+                sgst += line_tax - half
+
+        sales_amount = sales_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        cgst = cgst.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        sgst = sgst.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        igst = igst.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        total = pos.total_amount
 
         entry = JournalEntry.objects.create(
             date=pos.sale_date.date() if hasattr(pos.sale_date, 'date') else pos.sale_date,
@@ -153,11 +207,7 @@ class JournalAutoGenerationService:
             location_id=pos.location_id,
         )
 
-        # Debit: Cash or Receivables
-        if pos.payment_type == 'Credit':
-            debit_ac = self._acct('TRADE_RECEIVABLES')
-        else:
-            debit_ac = self._acct('CASH')
+        debit_ac = self._acct('TRADE_RECEIVABLES') if pos.payment_type == 'Credit' else self._acct('CASH')
 
         if total > 0:
             JournalEntryLine.objects.create(entry=entry, account=debit_ac, debit=total)
@@ -170,10 +220,9 @@ class JournalAutoGenerationService:
         if igst > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST'), credit=igst)
 
-        # Handle rounding difference
-        credit_total = sales_amount + cgst + sgst + igst
-        diff = total - credit_total
-        if abs(diff) > Decimal('0.00') and abs(diff) < Decimal('1.00'):
+        # Round-off absorbs sub-rupee drift between debit (gross) and sum of credits.
+        diff = total - (sales_amount + cgst + sgst + igst)
+        if diff != Decimal('0.00') and abs(diff) < Decimal('1.00'):
             round_off_ac = self._accounts.get('ROUND_OFF')
             if round_off_ac:
                 if diff > 0:
@@ -190,7 +239,7 @@ class JournalAutoGenerationService:
         if self._entry_exists('B2BSalesOrder', b2b_id):
             return None
 
-        order = B2BSalesOrderRO.objects.select_related('customer').get(id=b2b_id)
+        order = B2BSalesOrderRO.objects.select_related('customer').prefetch_related('lines').get(id=b2b_id)
         if order.status not in ('confirmed', 'delivered', 'invoiced'):
             return None
 
@@ -198,22 +247,26 @@ class JournalAutoGenerationService:
 
         # B2B is tax-exclusive: subtotal is the taxable base
         taxable = order.subtotal - order.discount_amount
-        gst_rate = order.gst_percent
 
-        # Use pre-computed supply type / tax splits if available
-        supply_type = order.supply_type or self._get_supply_type(
+        # Always re-derive supply_type from the customer GSTIN against the company state.
+        supply_type = self._get_supply_type(
             order.customer.gst_no if order.customer else ''
         )
 
-        if order.total_cgst or order.total_sgst or order.total_igst:
-            cgst = Decimal(str(order.total_cgst or 0))
-            sgst = Decimal(str(order.total_sgst or 0))
-            igst = Decimal(str(order.total_igst or 0))
+        # Source line tax fields (cgst_amount/sgst_amount/igst_amount) carry the inventory's
+        # classification — the magnitude is right but the bucket may be wrong. Sum the total
+        # tax across lines, then re-split per the freshly-derived supply_type.
+        total_tax = sum(
+            (Decimal(str(l.cgst_amount or 0)) +
+             Decimal(str(l.sgst_amount or 0)) +
+             Decimal(str(l.igst_amount or 0)))
+            for l in order.lines.all()
+        )
+        if supply_type == 'inter_state':
+            cgst, sgst, igst = Decimal('0.00'), Decimal('0.00'), total_tax
         else:
-            split = compute_tax_split(taxable, gst_rate, supply_type)
-            cgst = split['cgst']
-            sgst = split['sgst']
-            igst = split['igst']
+            half = (total_tax / Decimal('2')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            cgst, sgst, igst = half, total_tax - half, Decimal('0.00')
 
         sales_amount = taxable
 
@@ -243,37 +296,70 @@ class JournalAutoGenerationService:
         if igst > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST'), credit=igst)
 
+        # Round-off for sub-rupee drift between debit (gross) and credits.
+        diff = total - (sales_amount + cgst + sgst + igst)
+        if diff != Decimal('0.00') and abs(diff) < Decimal('1.00'):
+            round_off_ac = self._accounts.get('ROUND_OFF')
+            if round_off_ac:
+                if diff > 0:
+                    JournalEntryLine.objects.create(entry=entry, account=round_off_ac, credit=diff)
+                else:
+                    JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(diff))
+
         entry.post()
         return entry
 
     @transaction.atomic
     def generate_sales_return(self, return_id):
-        """Generate journal entry for a sales return with proper IGST support."""
+        """Generate journal entry for a sales return with proper IGST support.
+
+        SalesReturnLineRO carries the per-line tax_percent; the parent's
+        gst_percent is unreliable in source data. Aggregate per line for
+        mixed-rate carts and emit Output GST debit reversals.
+        """
         if self._entry_exists('SalesReturn', return_id):
             return None
 
-        ret = SalesReturnRO.objects.select_related('customer').get(id=return_id)
+        ret = SalesReturnRO.objects.select_related('customer').prefetch_related('lines').get(id=return_id)
         if ret.status not in ('confirmed', 'completed'):
             return None
 
-        total = ret.total_amount
-        gst_rate = ret.gst_percent
-
-        if ret.return_type == 'pos':
-            # POS returns are tax-inclusive
-            inclusive_amount = ret.subtotal - ret.discount_amount
-            taxable_base = back_calculate_taxable(inclusive_amount, gst_rate)
-            supply_type = 'intra_state'
-        else:
-            # B2B returns are tax-exclusive
-            taxable_base = ret.subtotal - ret.discount_amount
+        if ret.return_type == 'b2b':
             supply_type = self._get_supply_type(ret.customer.gst_no if ret.customer else '')
+        else:
+            supply_type = 'intra_state'
 
-        split = compute_tax_split(taxable_base, gst_rate, supply_type)
-        cgst = split['cgst']
-        sgst = split['sgst']
-        igst = split['igst']
-        sales_amount = taxable_base
+        # Per-line aggregation. POS returns: line_total is tax-inclusive.
+        # B2B returns: line_total is tax-exclusive (taxable amount itself).
+        sales_amount = Decimal('0.00')
+        cgst = Decimal('0.00')
+        sgst = Decimal('0.00')
+        igst = Decimal('0.00')
+
+        # SalesReturnLineRO.line_total is tax-INCLUSIVE for both POS and B2B returns
+        # (verified against live source data: line_totals sum to ret.subtotal, which
+        # already includes tax — unlike B2BSalesOrderRO where subtotal is ex-tax).
+        for line in ret.lines.all():
+            line_total = Decimal(str(line.line_total or 0))
+            line_taxable = back_calculate_taxable(line_total, line.tax_percent)
+            line_tax = line_total - line_taxable
+            sales_amount += line_taxable
+
+            if supply_type == 'inter_state':
+                igst += line_tax
+            else:
+                half = (line_tax / Decimal('2')).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP,
+                )
+                cgst += half
+                sgst += line_tax - half
+
+        sales_amount = sales_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        cgst = cgst.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        sgst = sgst.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        igst = igst.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        total = ret.total_amount
 
         entry = JournalEntry.objects.create(
             date=ret.return_date.date() if hasattr(ret.return_date, 'date') else ret.return_date,
@@ -298,6 +384,19 @@ class JournalAutoGenerationService:
         if total > 0:
             JournalEntryLine.objects.create(entry=entry, account=credit_ac, credit=total)
 
+        # Round-off absorbs sub-rupee drift so the JE always balances.
+        debit_total = sales_amount + cgst + sgst + igst
+        diff = debit_total - total
+        if diff != Decimal('0.00') and abs(diff) < Decimal('1.00'):
+            round_off_ac = self._accounts.get('ROUND_OFF')
+            if round_off_ac:
+                # Round Off normally absorbs as a debit/credit on the side that's short.
+                if diff > 0:
+                    # Debits exceed credits → credit Round Off to balance.
+                    JournalEntryLine.objects.create(entry=entry, account=round_off_ac, credit=diff)
+                else:
+                    JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(diff))
+
         entry.post()
         return entry
 
@@ -316,23 +415,35 @@ class JournalAutoGenerationService:
         sgst_amount = Decimal('0.00')
         igst_amount = Decimal('0.00')
 
-        supply_type = ret.supply_type or self._get_supply_type(
+        supply_type = self._get_supply_type(
             ret.supplier.gst_no if ret.supplier else ''
         )
 
-        for line in ret.lines.all():
-            line_taxable = Decimal(str(line.quantity)) * line.purchase_rate
-            taxable_amount += line_taxable
+        # Same approach as generate_purchase: sum total tax from lines, then re-split
+        # per our supply_type so any inventory-side miscategorization is corrected.
+        lines_data = list(ret.lines.all())
+        for line in lines_data:
+            taxable_amount += Decimal(str(line.quantity)) * line.purchase_rate
 
-            if line.cgst_amount or line.sgst_amount or line.igst_amount:
-                cgst_amount += Decimal(str(line.cgst_amount or 0))
-                sgst_amount += Decimal(str(line.sgst_amount or 0))
-                igst_amount += Decimal(str(line.igst_amount or 0))
-            else:
-                split = compute_tax_split(line_taxable, line.tax_percent, supply_type)
-                cgst_amount += split['cgst']
-                sgst_amount += split['sgst']
-                igst_amount += split['igst']
+        total_tax = sum(
+            (Decimal(str(l.cgst_amount or 0)) +
+             Decimal(str(l.sgst_amount or 0)) +
+             Decimal(str(l.igst_amount or 0)))
+            for l in lines_data
+        )
+        if total_tax == Decimal('0.00'):
+            for line in lines_data:
+                line_taxable = Decimal(str(line.quantity)) * line.purchase_rate
+                line_tax = (line_taxable * Decimal(str(line.tax_percent or 0)) / Decimal('100')).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP,
+                )
+                total_tax += line_tax
+
+        if supply_type == 'inter_state':
+            cgst_amount, sgst_amount, igst_amount = Decimal('0.00'), Decimal('0.00'), total_tax
+        else:
+            half = (total_tax / Decimal('2')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            cgst_amount, sgst_amount, igst_amount = half, total_tax - half, Decimal('0.00')
 
         total_return = taxable_amount + cgst_amount + sgst_amount + igst_amount
 

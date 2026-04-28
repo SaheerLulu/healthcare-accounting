@@ -74,19 +74,30 @@ class JournalEntry(models.Model):
             seq = 1
         return f'JV-{year}-{seq:06d}'
 
+    # Brief §3.2 tolerance for posted-entry balance.
+    BALANCE_TOLERANCE = Decimal('0.005')
+
     def clean(self):
         if self.is_posted:
-            lines = self.lines.all()
-            total_debit = sum(line.debit for line in lines)
-            total_credit = sum(line.credit for line in lines)
-            if total_debit != total_credit:
-                raise ValidationError(
-                    f'Journal entry is unbalanced: Debit={total_debit}, Credit={total_credit}'
-                )
+            self._assert_balanced()
+
+    def _assert_balanced(self):
+        lines = self.lines.all()
+        total_debit = sum((l.debit for l in lines), Decimal('0'))
+        total_credit = sum((l.credit for l in lines), Decimal('0'))
+        if abs(total_debit - total_credit) > self.BALANCE_TOLERANCE:
+            raise ValidationError(
+                f'Journal entry is unbalanced: Debit={total_debit}, '
+                f'Credit={total_credit}, Δ={total_debit - total_credit}'
+            )
 
     def post(self):
-        """Post this journal entry after validating balance."""
-        self.clean()
+        """Post this journal entry after validating balance.
+
+        Validates regardless of current is_posted state — clean() guards by
+        is_posted, which used to skip the check on first post().
+        """
+        self._assert_balanced()
         self.is_posted = True
         self.save()
 

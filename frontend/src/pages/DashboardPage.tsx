@@ -21,6 +21,7 @@ import {
 import { getDashboard, type DashboardData } from '../lib/api'
 import { formatCurrency } from '../lib/utils'
 import { Card } from '../components/ui/card'
+import { useLocation as useAppLocation } from '../contexts/LocationContext'
 
 interface KPICardProps {
   title: string
@@ -63,13 +64,15 @@ const EMPTY: DashboardData = {
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData>(EMPTY)
   const [loading, setLoading] = useState(true)
+  const { activeLocationId } = useAppLocation()
 
   useEffect(() => {
+    setLoading(true)
     getDashboard()
       .then(setData)
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+  }, [activeLocationId])
 
   const netProfit = Number(data.net_profit)
 

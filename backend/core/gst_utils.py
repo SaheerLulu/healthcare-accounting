@@ -5,21 +5,32 @@ Replicates the parent inventory app's gst_engine logic.
 from decimal import Decimal, ROUND_HALF_UP
 
 
-def detect_supply_type(business_gstin: str, counterparty_gstin: str) -> str:
+def detect_supply_type(
+    business_gstin: str,
+    counterparty_gstin: str,
+    business_state_code: str = '',
+) -> str:
     """
-    Detect supply type based on GSTIN state codes.
+    Detect supply type based on state codes (first 2 chars of GSTIN).
     Returns 'intra_state' or 'inter_state'.
 
-    GSTIN format: first 2 digits are state code.
-    If either GSTIN is missing, defaults to intra_state.
+    Resolution order for the company side:
+      1. business_gstin[:2] if a 15-char GSTIN is provided
+      2. business_state_code (2-digit anchor from AccountingSettings)
+    If either side cannot be resolved to 2 digits, defaults to intra_state.
     """
-    if not business_gstin or not counterparty_gstin:
-        return 'intra_state'
-    if len(business_gstin) < 2 or len(counterparty_gstin) < 2:
-        return 'intra_state'
+    business_state = ''
+    if business_gstin and len(business_gstin) >= 2:
+        business_state = business_gstin[:2]
+    elif business_state_code and len(business_state_code) >= 2:
+        business_state = business_state_code[:2]
 
-    business_state = business_gstin[:2]
-    counterparty_state = counterparty_gstin[:2]
+    counterparty_state = ''
+    if counterparty_gstin and len(counterparty_gstin) >= 2:
+        counterparty_state = counterparty_gstin[:2]
+
+    if not business_state or not counterparty_state:
+        return 'intra_state'
 
     return 'intra_state' if business_state == counterparty_state else 'inter_state'
 

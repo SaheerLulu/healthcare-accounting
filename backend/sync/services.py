@@ -4,6 +4,7 @@ from django.db import transaction
 from inventory_reader.models import (
     PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO
 )
+from journals.models import JournalEntry
 from journals.services import JournalAutoGenerationService
 from .models import SyncLog, SyncError
 
@@ -14,6 +15,18 @@ class InventorySyncService:
 
     def __init__(self):
         self.journal_service = JournalAutoGenerationService()
+
+    def _synced_ids(self, reference_type: str) -> set:
+        """All inventory ids already represented by a JournalEntry for this ref type.
+        Used to make sync self-healing — any record the cursor skipped (e.g.,
+        cursor advanced past max while a lower-id record arrived later) gets
+        picked up on the next run regardless of the cursor.
+        """
+        return set(
+            JournalEntry.objects
+            .filter(reference_type=reference_type)
+            .values_list('reference_id', flat=True)
+        )
 
     def _log_error(self, sync_type, source_id, error):
         """Log error to SyncError model instead of printing."""
@@ -44,10 +57,10 @@ class InventorySyncService:
         ).update(resolved=True)
 
     def sync_purchases(self, since_id: int = 0) -> int:
+        already_synced = self._synced_ids('PurchaseOrder')
         orders = PurchaseOrderRO.objects.filter(
-            id__gt=since_id,
-            state__in=['confirmed', 'done', 'approved']
-        ).order_by('id')
+            state__in=['confirmed', 'done', 'approved'],
+        ).exclude(id__in=already_synced).order_by('id')
 
         count = 0
         last_id = since_id
@@ -57,7 +70,7 @@ class InventorySyncService:
                 if entry:
                     count += 1
                 self._resolve_error('purchase', po.id)
-                last_id = po.id
+                last_id = max(last_id, po.id)
             except Exception as e:
                 self._log_error('purchase', po.id, e)
 
@@ -68,10 +81,10 @@ class InventorySyncService:
         return count
 
     def sync_pos(self, since_id: int = 0) -> int:
+        already_synced = self._synced_ids('POSOrder')
         orders = POSOrderRO.objects.filter(
-            id__gt=since_id,
-            status__in=['confirmed', 'completed']
-        ).order_by('id')
+            status__in=['confirmed', 'completed'],
+        ).exclude(id__in=already_synced).order_by('id')
 
         count = 0
         last_id = since_id
@@ -81,7 +94,7 @@ class InventorySyncService:
                 if entry:
                     count += 1
                 self._resolve_error('pos', pos.id)
-                last_id = pos.id
+                last_id = max(last_id, pos.id)
             except Exception as e:
                 self._log_error('pos', pos.id, e)
 
@@ -92,10 +105,10 @@ class InventorySyncService:
         return count
 
     def sync_b2b(self, since_id: int = 0) -> int:
+        already_synced = self._synced_ids('B2BSalesOrder')
         orders = B2BSalesOrderRO.objects.filter(
-            id__gt=since_id,
-            status__in=['confirmed', 'delivered', 'invoiced']
-        ).order_by('id')
+            status__in=['confirmed', 'delivered', 'invoiced'],
+        ).exclude(id__in=already_synced).order_by('id')
 
         count = 0
         last_id = since_id
@@ -105,7 +118,7 @@ class InventorySyncService:
                 if entry:
                     count += 1
                 self._resolve_error('b2b', order.id)
-                last_id = order.id
+                last_id = max(last_id, order.id)
             except Exception as e:
                 self._log_error('b2b', order.id, e)
 
@@ -116,10 +129,10 @@ class InventorySyncService:
         return count
 
     def sync_returns(self, since_id: int = 0) -> int:
+        already_synced = self._synced_ids('SalesReturn')
         returns = SalesReturnRO.objects.filter(
-            id__gt=since_id,
-            status__in=['confirmed', 'completed']
-        ).order_by('id')
+            status__in=['confirmed', 'completed'],
+        ).exclude(id__in=already_synced).order_by('id')
 
         count = 0
         last_id = since_id
@@ -129,7 +142,7 @@ class InventorySyncService:
                 if entry:
                     count += 1
                 self._resolve_error('return', ret.id)
-                last_id = ret.id
+                last_id = max(last_id, ret.id)
             except Exception as e:
                 self._log_error('return', ret.id, e)
 
@@ -141,10 +154,10 @@ class InventorySyncService:
 
     def sync_purchase_returns(self, since_id: int = 0) -> int:
         """Sync purchase returns from inventory system (Phase 4A)."""
+        already_synced = self._synced_ids('PurchaseReturn')
         returns = PurchaseReturnRO.objects.filter(
-            id__gt=since_id,
-            status__in=['confirmed', 'completed', 'approved']
-        ).order_by('id')
+            status__in=['confirmed', 'completed', 'approved'],
+        ).exclude(id__in=already_synced).order_by('id')
 
         count = 0
         last_id = since_id
@@ -154,7 +167,7 @@ class InventorySyncService:
                 if entry:
                     count += 1
                 self._resolve_error('purchase_return', ret.id)
-                last_id = ret.id
+                last_id = max(last_id, ret.id)
             except Exception as e:
                 self._log_error('purchase_return', ret.id, e)
 

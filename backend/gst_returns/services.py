@@ -23,7 +23,11 @@ class GSTR1Generator:
         self._settings = AccountingSettings.get_settings()
 
     def _get_supply_type(self, counterparty_gstin):
-        return detect_supply_type(self._settings.gstin, counterparty_gstin)
+        return detect_supply_type(
+            self._settings.gstin,
+            counterparty_gstin,
+            self._settings.state_code,
+        )
 
     def generate(self, period: str, location_id: int):
         """
@@ -60,10 +64,23 @@ class GSTR1Generator:
         ).prefetch_related('lines')
 
         for pos in pos_orders:
-            # POS is tax-inclusive: back-calculate
-            inclusive_amount = pos.subtotal - pos.discount_amount
-            gst_rate = pos.gst_percent
-            taxable_base = back_calculate_taxable(inclusive_amount, gst_rate)
+            # Aggregate per line — header gst_percent is unreliable (0 in source data).
+            taxable_base = Decimal('0.00')
+            tax_total = Decimal('0.00')
+            line_rate_set = set()
+            for line in pos.lines.all():
+                line_total = Decimal(str(line.line_total or 0))
+                line_taxable = back_calculate_taxable(line_total, line.tax_percent)
+                taxable_base += line_taxable
+                tax_total += line_total - line_taxable
+                line_rate_set.add(line.tax_percent)
+            taxable_base = taxable_base.quantize(Decimal('0.01'))
+            tax_total = tax_total.quantize(Decimal('0.01'))
+            # Effective rate: single rate if homogeneous, else recover from totals.
+            gst_rate = next(iter(line_rate_set)) if len(line_rate_set) == 1 else (
+                (tax_total * Decimal('100') / taxable_base).quantize(Decimal('0.01'))
+                if taxable_base else Decimal('0.00')
+            )
 
             supply_type = 'intra_state'
             customer_gstin = ''
@@ -81,7 +98,11 @@ class GSTR1Generator:
             else:
                 pos_code = self._settings.state_code
 
-            split = compute_tax_split(taxable_base, gst_rate, supply_type)
+            if supply_type == 'inter_state':
+                split = {'cgst': Decimal('0.00'), 'sgst': Decimal('0.00'), 'igst': tax_total}
+            else:
+                half = (tax_total / Decimal('2')).quantize(Decimal('0.01'))
+                split = {'cgst': half, 'sgst': tax_total - half, 'igst': Decimal('0.00')}
             inv_type = 'B2C_LARGE' if pos.total_amount > Decimal('250000') else 'B2C_SMALL'
 
             GSTR1Entry.objects.create(
@@ -130,17 +151,27 @@ class GSTR1Generator:
 
         for order in b2b_orders:
             taxable = order.subtotal - order.discount_amount
-            gst_rate = order.gst_percent
             customer_gstin = order.customer.gst_no if order.customer and order.customer.gst_no else ''
-            supply_type = order.supply_type or self._get_supply_type(customer_gstin)
-
-            if order.total_cgst or order.total_sgst or order.total_igst:
-                cgst = Decimal(str(order.total_cgst or 0))
-                sgst = Decimal(str(order.total_sgst or 0))
-                igst = Decimal(str(order.total_igst or 0))
+            # Always re-derive — pre-populated supply_type / total_cgst|sgst|igst on the
+            # order may carry the old wrong classification.
+            supply_type = self._get_supply_type(customer_gstin)
+            # order.gst_percent is unreliable; sum line tax fields and re-split.
+            total_tax = sum(
+                (Decimal(str(l.cgst_amount or 0)) +
+                 Decimal(str(l.sgst_amount or 0)) +
+                 Decimal(str(l.igst_amount or 0)))
+                for l in order.lines.all()
+            )
+            if supply_type == 'inter_state':
+                cgst, sgst, igst = Decimal('0.00'), Decimal('0.00'), total_tax
             else:
-                split = compute_tax_split(taxable, gst_rate, supply_type)
-                cgst, sgst, igst = split['cgst'], split['sgst'], split['igst']
+                half = (total_tax / Decimal('2')).quantize(Decimal('0.01'))
+                cgst, sgst, igst = half, total_tax - half, Decimal('0.00')
+            # Effective rate: derive from totals if uniform, else 0.
+            gst_rate = (
+                (total_tax * Decimal('100') / taxable).quantize(Decimal('0.01'))
+                if taxable else Decimal('0.00')
+            )
 
             pos_code = customer_gstin[:2] if customer_gstin else self._settings.state_code
             inv_type = 'B2B' if customer_gstin else ('B2C_LARGE' if order.total_amount > Decimal('250000') else 'B2C_SMALL')
@@ -186,19 +217,37 @@ class GSTR1Generator:
             status__in=['confirmed', 'completed'],
         ).select_related('customer')
 
-        for ret in returns:
-            gst_rate = ret.gst_percent
+        for ret in returns.prefetch_related('lines'):
             customer_gstin = ret.customer.gst_no if ret.customer and ret.customer.gst_no else ''
+            supply_type = (
+                'intra_state' if ret.return_type == 'pos'
+                else self._get_supply_type(customer_gstin)
+            )
 
-            if ret.return_type == 'pos':
-                inclusive_amount = ret.subtotal - ret.discount_amount
-                taxable_base = back_calculate_taxable(inclusive_amount, gst_rate)
-                supply_type = 'intra_state'
+            # SalesReturnLineRO.line_total is tax-inclusive for both POS and B2B
+            # returns (live source data has tax baked into line_total in both cases).
+            taxable_base = Decimal('0.00')
+            tax_total = Decimal('0.00')
+            line_rate_set = set()
+            for line in ret.lines.all():
+                line_total = Decimal(str(line.line_total or 0))
+                line_taxable = back_calculate_taxable(line_total, line.tax_percent)
+                line_tax = line_total - line_taxable
+                taxable_base += line_taxable
+                tax_total += line_tax
+                line_rate_set.add(line.tax_percent)
+            taxable_base = taxable_base.quantize(Decimal('0.01'))
+            tax_total = tax_total.quantize(Decimal('0.01'))
+            gst_rate = next(iter(line_rate_set)) if len(line_rate_set) == 1 else (
+                (tax_total * Decimal('100') / taxable_base).quantize(Decimal('0.01'))
+                if taxable_base else Decimal('0.00')
+            )
+
+            if supply_type == 'inter_state':
+                split = {'cgst': Decimal('0.00'), 'sgst': Decimal('0.00'), 'igst': tax_total}
             else:
-                taxable_base = ret.subtotal - ret.discount_amount
-                supply_type = self._get_supply_type(customer_gstin)
-
-            split = compute_tax_split(taxable_base, gst_rate, supply_type)
+                half = (tax_total / Decimal('2')).quantize(Decimal('0.01'))
+                split = {'cgst': half, 'sgst': tax_total - half, 'igst': Decimal('0.00')}
 
             # Determine invoice type: CDNR for registered, CREDIT_NOTE for unregistered
             if customer_gstin:
@@ -303,7 +352,12 @@ class GSTR2BGenerator:
         for po in purchases:
             supplier_gstin = po.supplier.gst_no if po.supplier else ''
             supplier_name = po.supplier.company_name if po.supplier else f'Supplier #{po.supplier_id}'
-            supply_type = po.supply_type or detect_supply_type(self._settings.gstin, supplier_gstin)
+            # Always re-derive — pre-populated po.supply_type and per-line tax fields
+            # on the inventory side have been observed wrong (intra when supplier state
+            # differs from company state).
+            supply_type = detect_supply_type(
+                self._settings.gstin, supplier_gstin, self._settings.state_code,
+            )
 
             taxable_amount = Decimal('0.00')
             cgst_amount = Decimal('0.00')
@@ -317,15 +371,10 @@ class GSTR2BGenerator:
                 line_taxable = qty * rate * discount_factor
                 taxable_amount += line_taxable
 
-                if line.cgst_amount or line.sgst_amount or line.igst_amount:
-                    cgst_amount += Decimal(str(line.cgst_amount or 0))
-                    sgst_amount += Decimal(str(line.sgst_amount or 0))
-                    igst_amount += Decimal(str(line.igst_amount or 0))
-                else:
-                    split = compute_tax_split(line_taxable, line.tax_percent, supply_type)
-                    cgst_amount += split['cgst']
-                    sgst_amount += split['sgst']
-                    igst_amount += split['igst']
+                split = compute_tax_split(line_taxable, line.tax_percent, supply_type)
+                cgst_amount += split['cgst']
+                sgst_amount += split['sgst']
+                igst_amount += split['igst']
 
             pos_code = supplier_gstin[:2] if supplier_gstin else self._settings.state_code
 
@@ -357,7 +406,24 @@ class GSTR3BGenerator:
 
     @transaction.atomic
     def generate(self, period: str, location_id: int):
-        """Generate GSTR-3B using GSTR-1 for outward and GSTR-2B for ITC (Phase 2D)."""
+        """Generate GSTR-3B using GSTR-1 for outward and the General Ledger for ITC.
+
+        ITC is sourced directly from posted JournalEntryLine rows on Input GST
+        accounts (1140 / 1150 / 1160) for the period+location. This guarantees
+        the §7 identity Trial Balance ≡ GSTR-3B ITC, regardless of any drift
+        between inventory's per-line tax fields and the JE-posted amounts.
+
+        GSTR-1 and GSTR-2B are always re-generated for the period+location so
+        no stale source row can poison the outward / reconciliation views.
+        GSTR-2B retains its PO-derived view for the gov-supplied 2B
+        reconciliation flow (ITCReconciliationService) — that contract is
+        unchanged.
+        """
+        from journals.models import JournalEntryLine
+
+        GSTR1Generator().generate(period, location_id)
+        GSTR2BGenerator().generate(period, location_id)
+
         # Get outward supply data from active GSTR1 entries
         entries = list(GSTR1Entry.objects.filter(
             period=period,
@@ -371,19 +437,29 @@ class GSTR3BGenerator:
         outward_cgst = sum((e.cgst for e in entries if e.cgst > 0), Decimal('0.00'))
         outward_sgst = sum((e.sgst for e in entries if e.sgst > 0), Decimal('0.00'))
 
-        # ITC from GSTR-2B entries (where itc_eligible=True) instead of raw purchases
-        itc_agg = GSTR2BEntry.objects.filter(
-            period=period,
-            location_id=location_id,
-            itc_eligible=True,
-        ).aggregate(
-            itc_cgst=Sum('cgst'),
-            itc_sgst=Sum('sgst'),
-            itc_igst=Sum('igst'),
+        # ITC from posted JE Input GST lines for the period+location.
+        # Net debit = purchase debits − purchase-return credit reversals.
+        year, month = map(int, period.split('-'))
+        itc_rows = JournalEntryLine.objects.filter(
+            entry__is_posted=True,
+            entry__date__year=year,
+            entry__date__month=month,
+            entry__location_id=location_id,
+            account__account_code__in=['1140', '1150', '1160'],
+        ).values('account__account_code').annotate(
+            total_debit=Sum('debit'),
+            total_credit=Sum('credit'),
         )
-        itc_cgst = itc_agg['itc_cgst'] or Decimal('0.00')
-        itc_sgst = itc_agg['itc_sgst'] or Decimal('0.00')
-        itc_igst = itc_agg['itc_igst'] or Decimal('0.00')
+        itc_by_code = {
+            row['account__account_code']: (
+                (row['total_debit'] or Decimal('0.00'))
+                - (row['total_credit'] or Decimal('0.00'))
+            )
+            for row in itc_rows
+        }
+        itc_cgst = itc_by_code.get('1140', Decimal('0.00'))
+        itc_sgst = itc_by_code.get('1150', Decimal('0.00'))
+        itc_igst = itc_by_code.get('1160', Decimal('0.00'))
 
         # ITC utilization order per GST rules: IGST first, then CGST, then SGST
         remaining_igst = max(outward_igst - itc_igst, Decimal('0.00'))

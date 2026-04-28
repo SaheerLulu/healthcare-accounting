@@ -1,75 +1,82 @@
 from django.core.management.base import BaseCommand
-from core.models import ChartOfAccount
+from core.models import ChartOfAccount, AccountMapping
 
 
-COA_TREE = [
-    # (account_code, account_name, account_type, account_subtype, parent_code, is_leaf)
-    ('1000', 'Assets',              'ASSET',     '',                None,   False),
-    ('1100', 'Current Assets',      'ASSET',     '',                '1000', False),
-    ('1110', 'Cash in Hand',        'ASSET',     'Cash',            '1100', True),
-    ('1120', 'Bank Accounts',       'ASSET',     'Bank',            '1100', True),
-    ('1130', 'Trade Receivables',   'ASSET',     'Receivable',      '1100', True),
-    ('1140', 'Input CGST',          'ASSET',     'Input_GST',       '1100', True),
-    ('1150', 'Input SGST',          'ASSET',     'Input_GST',       '1100', True),
-    ('1160', 'Input IGST',          'ASSET',     'Input_GST',       '1100', True),
-    ('1170', 'TDS Receivable',      'ASSET',     'TDS_Receivable',  '1100', True),
-    ('1200', 'Fixed Assets',        'ASSET',     '',                '1000', False),
-    ('1210', 'Plant and Machinery', 'ASSET',     'Other_Expense',   '1200', True),
-    ('1220', 'Furniture and Fixtures', 'ASSET',  'Other_Expense',   '1200', True),
+# Canonical Chart of Accounts. Matches DOCUMENTATION.md and the live DB after
+# migrations 0003, 0006, 0007. Re-running this command is idempotent.
+#
+# Tuple shape: (account_code, account_name, account_type, account_subtype, mapping_key_or_None)
+COA_ROWS = [
+    # ── Assets (1xxx) ───────────────────────────────────────────────────────
+    ('1110', 'Cash',                     'ASSET',     'Cash',           'CASH'),
+    ('1120', 'Bank Account',             'ASSET',     'Bank',           'BANK'),
+    ('1130', 'Trade Receivables',        'ASSET',     'Receivable',     'TRADE_RECEIVABLES'),
+    ('1140', 'Input CGST',               'ASSET',     'Input_GST',      'INPUT_CGST'),
+    ('1150', 'Input SGST',               'ASSET',     'Input_GST',      'INPUT_SGST'),
+    ('1160', 'Input IGST',               'ASSET',     'Input_GST',      'INPUT_IGST'),
+    ('1170', 'TDS Receivable',           'ASSET',     'TDS_Receivable', 'TDS_RECEIVABLE'),
 
-    ('2000', 'Liabilities',         'LIABILITY', '',                None,   False),
-    ('2100', 'Current Liabilities', 'LIABILITY', '',                '2000', False),
-    ('2110', 'Trade Payables',      'LIABILITY', 'Payable',         '2100', True),
-    ('2120', 'Output CGST Payable', 'LIABILITY', 'Output_GST',      '2100', True),
-    ('2130', 'Output SGST Payable', 'LIABILITY', 'Output_GST',      '2100', True),
-    ('2140', 'Output IGST Payable', 'LIABILITY', 'Output_GST',      '2100', True),
-    ('2150', 'TDS Payable',         'LIABILITY', 'TDS_Payable',     '2100', True),
-    ('2160', 'GST Payable Net',     'LIABILITY', 'Output_GST',      '2100', True),
+    # ── Liabilities (2xxx) ─────────────────────────────────────────────────
+    ('2110', 'Trade Payables',           'LIABILITY', 'Payable',        'TRADE_PAYABLES'),
+    ('2120', 'Output CGST',              'LIABILITY', 'Output_GST',     'OUTPUT_CGST'),
+    ('2130', 'Output SGST',              'LIABILITY', 'Output_GST',     'OUTPUT_SGST'),
+    ('2140', 'Output IGST',              'LIABILITY', 'Output_GST',     'OUTPUT_IGST'),
+    ('2150', 'TDS Payable',              'LIABILITY', 'TDS_Payable',    'TDS_PAYABLE'),
+    ('2160', 'RCM GST Liability',        'LIABILITY', 'Output_GST',     'RCM_LIABILITY'),
+    ('2170', 'PF Payable',               'LIABILITY', 'Payable',        'PF_PAYABLE'),
+    ('2180', 'ESI Payable',              'LIABILITY', 'Payable',        'ESI_PAYABLE'),
+    ('2190', 'Professional Tax Payable', 'LIABILITY', 'Payable',        'PT_PAYABLE'),
+    ('2200', 'Net Salary Payable',       'LIABILITY', 'Payable',        'NET_SALARY_PAYABLE'),
 
-    ('3000', 'Equity',              'EQUITY',    '',                None,   False),
-    ('3100', 'Capital Account',     'EQUITY',    'Capital',         '3000', True),
-    ('3200', 'Retained Earnings',   'EQUITY',    'Retained_Earnings', '3000', True),
+    # ── Equity (3xxx) ──────────────────────────────────────────────────────
+    ('3200', 'Retained Earnings',        'EQUITY',    'Retained_Earnings', 'RETAINED_EARNINGS'),
 
-    ('4000', 'Revenue',             'REVENUE',   '',                None,   False),
-    ('4100', 'Sales Retail POS',    'REVENUE',   'Sales',           '4000', True),
-    ('4200', 'Sales B2B',           'REVENUE',   'Sales',           '4000', True),
-    ('4300', 'Other Income',        'REVENUE',   'Other_Income',    '4000', True),
+    # ── Revenue (4xxx) + contra-revenue ────────────────────────────────────
+    ('4100', 'Sales - POS',              'REVENUE',   'Sales',          'SALES_POS'),
+    ('4200', 'Sales - B2B',              'REVENUE',   'Sales',          'SALES_B2B'),
 
-    ('5000', 'Expenses',            'EXPENSE',   '',                None,   False),
-    ('5100', 'Purchases',           'EXPENSE',   'Purchases',       '5000', True),
-    ('5200', 'Purchase Returns',    'EXPENSE',   'Purchases',       '5000', True),
-    ('5300', 'Salaries',            'EXPENSE',   'Other_Expense',   '5000', True),
-    ('5400', 'Rent',                'EXPENSE',   'Other_Expense',   '5000', True),
-    ('5500', 'Other Expenses',      'EXPENSE',   'Other_Expense',   '5000', True),
+    # ── Expenses (5xxx) + contra-expense ───────────────────────────────────
+    ('5100', 'Purchases',                'EXPENSE',   'Purchases',      'PURCHASES'),
+    # 5200 Sales Returns is type=REVENUE (contra-revenue) — debits subtract from net revenue.
+    ('5200', 'Sales Returns',            'REVENUE',   'Other_Expense',  'SALES_RETURNS'),
+    ('5300', 'Purchase Returns',         'EXPENSE',   'Purchases',      'PURCHASE_RETURNS'),
+    ('5400', 'Salary Expense',           'EXPENSE',   'Other_Expense',  'SALARY_EXPENSE'),
+    ('5410', 'Rent Expense',             'EXPENSE',   'Other_Expense',  'RENT_EXPENSE'),
+    ('5420', 'Electricity Expense',      'EXPENSE',   'Other_Expense',  'ELECTRICITY_EXPENSE'),
+
+    # ── Other (6xxx) ───────────────────────────────────────────────────────
+    ('6100', 'Round Off',                'EXPENSE',   'Other_Expense',  'ROUND_OFF'),
 ]
 
 
 class Command(BaseCommand):
-    help = 'Seed the Indian Chart of Accounts'
+    help = 'Seed the canonical Indian Chart of Accounts and AccountMapping rows.'
 
     def handle(self, *args, **options):
-        # First pass: create all accounts without parents so FKs resolve cleanly
-        created_accounts = {}
+        accounts_created = 0
+        mappings_created = 0
 
-        for code, name, acct_type, subtype, parent_code, is_leaf in COA_TREE:
-            obj, created = ChartOfAccount.objects.get_or_create(
+        for code, name, acct_type, subtype, mapping_key in COA_ROWS:
+            account, created = ChartOfAccount.objects.get_or_create(
                 account_code=code,
                 defaults={
                     'account_name': name,
                     'account_type': acct_type,
                     'account_subtype': subtype,
-                    'is_leaf': is_leaf,
+                    'is_leaf': True,
                 },
             )
-            created_accounts[code] = obj
+            if created:
+                accounts_created += 1
 
-        # Second pass: assign parents
-        for code, name, acct_type, subtype, parent_code, is_leaf in COA_TREE:
-            if parent_code is not None:
-                obj = created_accounts[code]
-                parent_obj = created_accounts[parent_code]
-                if obj.parent_id != parent_obj.pk:
-                    obj.parent = parent_obj
-                    obj.save(update_fields=['parent'])
+            if mapping_key:
+                _, mapping_created = AccountMapping.objects.get_or_create(
+                    key=mapping_key,
+                    defaults={'account': account},
+                )
+                if mapping_created:
+                    mappings_created += 1
 
-        self.stdout.write(self.style.SUCCESS('COA seeded successfully'))
+        self.stdout.write(self.style.SUCCESS(
+            f'COA seeded: {accounts_created} new accounts, {mappings_created} new mappings'
+        ))
