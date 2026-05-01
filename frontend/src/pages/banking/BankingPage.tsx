@@ -10,6 +10,8 @@ import { formatCurrency } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import { Card } from '../../components/ui/card'
 import { Input } from '../../components/ui/input'
+import { EmptyState } from '../../components/ui/EmptyState'
+import { SkeletonCard } from '../../components/ui/Skeletons'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose, SheetTrigger,
 } from '../../components/ui/sheet'
@@ -41,24 +43,27 @@ export default function BankingPage() {
   useEffect(() => { load() }, [])
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
+    <div className="max-w-7xl mx-auto space-y-5">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Banking</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Reconcile bank statements against your books and categorize uncoded transactions
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Banking</h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
+            Reconcile bank statements against your books and categorize uncoded transactions.
           </p>
         </div>
         <NewBankAccountSheet glAccounts={glAccounts} onCreated={load} />
       </div>
 
       {loading ? (
-        <div className="text-center py-16"><Loader2 size={28} className="animate-spin inline text-teal-600" /></div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)}
+        </div>
       ) : accounts.length === 0 ? (
-        <Card className="p-12 text-center">
-          <Landmark size={32} className="mx-auto text-slate-300 mb-2" />
-          <p className="text-slate-500 text-sm">No bank accounts yet. Add one to import statements and start matching.</p>
-        </Card>
+        <EmptyState
+          icon={Landmark}
+          title="No bank or cash accounts yet"
+          description="Add a bank, credit card, or cash account to import statements and start matching transactions."
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {accounts.map((a) => {
@@ -68,46 +73,55 @@ export default function BankingPage() {
             const stmtBal = parseFloat(a.statement_balance) || 0
             const diff = stmtBal - bookBal
             return (
-              <Link
-                key={a.id}
-                to={`/banking/${a.id}`}
-                className="block group"
-              >
-                <Card className="p-5 h-full hover:border-teal-200 transition-colors">
+              <Link key={a.id} to={`/banking/${a.id}`} className="block group">
+                <Card className="p-5 h-full card-hover">
                   <div className="flex items-start justify-between mb-3">
-                    <div className="w-10 h-10 rounded-lg bg-teal-50 flex items-center justify-center text-teal-700">
+                    <div
+                      className="w-10 h-10 rounded-lg flex items-center justify-center"
+                      style={{ background: 'rgba(15,157,154,0.10)', color: 'var(--brand)' }}
+                    >
                       <Icon size={18} />
                     </div>
                     {a.unmatched_count > 0 && (
-                      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-medium">
+                      <span
+                        className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded font-medium mono"
+                        style={{ background: 'rgba(199,122,17,0.10)', color: 'var(--warning)' }}
+                      >
                         <AlertCircle size={11} /> {a.unmatched_count} for review
                       </span>
                     )}
                   </div>
-                  <div className="font-semibold text-slate-900 mb-0.5 group-hover:text-teal-700">{a.name}</div>
-                  <div className="text-xs text-slate-500 mb-3 truncate">
-                    {a.bank_name || meta.label}
-                    {a.account_number && ` · ****${a.account_number.slice(-4)}`}
+                  <div className="font-semibold mb-0.5 group-hover:underline" style={{ color: 'var(--ink)' }}>
+                    {a.name}
                   </div>
-                  <div className="space-y-1.5 pt-3 border-t border-slate-100">
+                  <div className="text-xs mb-3 truncate" style={{ color: 'var(--ink-2)' }}>
+                    {a.bank_name || meta.label}
+                    {a.account_number && (
+                      <span className="mono"> · ****{a.account_number.slice(-4)}</span>
+                    )}
+                  </div>
+                  <div className="space-y-1.5 pt-3 border-t" style={{ borderColor: 'var(--line)' }}>
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500">Balance per books</span>
-                      <span className="font-mono font-semibold text-slate-900">{formatCurrency(bookBal)}</span>
+                      <span style={{ color: 'var(--ink-2)' }}>Balance per books</span>
+                      <span className="mono font-semibold" style={{ color: 'var(--ink)' }}>{formatCurrency(bookBal)}</span>
                     </div>
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500">Balance per statement</span>
-                      <span className="font-mono font-medium text-slate-700">{formatCurrency(stmtBal)}</span>
+                      <span style={{ color: 'var(--ink-2)' }}>Balance per statement</span>
+                      <span className="mono font-medium" style={{ color: 'var(--ink)' }}>{formatCurrency(stmtBal)}</span>
                     </div>
                     {Math.abs(diff) > 0.005 && (
-                      <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
-                        <span className="text-slate-400">Difference</span>
-                        <span className={'font-mono ' + (diff > 0 ? 'text-amber-700' : 'text-rose-700')}>
+                      <div className="flex items-center justify-between text-xs pt-1 border-t" style={{ borderColor: 'var(--line)' }}>
+                        <span style={{ color: 'var(--ink-3)' }}>Difference</span>
+                        <span
+                          className="mono"
+                          style={{ color: diff > 0 ? 'var(--warning)' : 'var(--danger)' }}
+                        >
                           {diff > 0 ? '+' : ''}{formatCurrency(diff)}
                         </span>
                       </div>
                     )}
                   </div>
-                  <div className="text-xs text-slate-400 mt-3 font-mono">
+                  <div className="text-xs mt-3 mono" style={{ color: 'var(--ink-3)' }}>
                     GL: {a.chart_account_code} {a.chart_account_name}
                   </div>
                 </Card>

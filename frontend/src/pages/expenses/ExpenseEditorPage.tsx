@@ -227,7 +227,7 @@ export default function ExpenseEditorPage() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto pb-24">
+    <div className="max-w-6xl mx-auto space-y-5 pb-24">
       <button onClick={() => navigate('/expenses')}
         className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3">
         <ArrowLeft size={14} /> Back to Expenses
@@ -235,10 +235,10 @@ export default function ExpenseEditorPage() {
 
       <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">
+          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
             {editingId ? `Edit expense #${editingId}` : 'New Expense'}
           </h1>
-          <p className="text-sm text-slate-500 mt-0.5">
+          <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>
             Record a daily-operations expense paid out of bank, cash, or credit card.
           </p>
         </div>

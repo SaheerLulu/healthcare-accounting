@@ -180,7 +180,7 @@ export default function JournalEditorPage() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto pb-24">
+    <div className="max-w-6xl mx-auto space-y-5 pb-24">
       <button
         onClick={() => navigate('/journals')}
         className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3"
@@ -190,10 +190,10 @@ export default function JournalEditorPage() {
 
       <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">
+          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
             {editingId ? `Edit ${originalEntry?.entry_no ?? 'Journal'}` : 'New Journal Entry'}
           </h1>
-          <p className="text-sm text-slate-500 mt-0.5">
+          <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>
             {editingId ? 'Update the draft and save or publish.' : 'Record a manual debit/credit entry.'}
           </p>
         </div>

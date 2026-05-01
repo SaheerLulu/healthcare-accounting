@@ -12,6 +12,8 @@ import { Badge } from '../../components/ui/badge'
 import { Input } from '../../components/ui/input'
 import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
+import { EmptyState } from '../../components/ui/EmptyState'
+import { SkeletonTable } from '../../components/ui/Skeletons'
 
 const STATUS_BADGE: Record<RecurringStatus, 'default' | 'success' | 'warning' | 'error'> = {
   active: 'success', paused: 'warning', stopped: 'default',
@@ -70,16 +72,18 @@ export default function RecurringJournalsListPage() {
     return { active, paused, stopped, due, total: profiles.length }
   }, [profiles, today])
 
+  const hasFilters = filter !== 'all' || !!search
+
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
+    <div className="max-w-7xl mx-auto space-y-5">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Recurring Journals</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Recurring Journals</h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
             Templates that auto-post journal entries on a schedule (depreciation, accruals, prepaid expenses).
             {counts.due > 0 && (
-              <span className="ml-2 inline-flex items-center gap-1 text-amber-700">
-                <AlertCircle size={12} /> {counts.due} due to generate
+              <span className="ml-2 inline-flex items-center gap-1" style={{ color: 'var(--warning)' }}>
+                <AlertCircle size={12} /> <span className="mono">{counts.due}</span> due to generate
               </span>
             )}
           </p>
@@ -95,92 +99,99 @@ export default function RecurringJournalsListPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+      <div className="flex items-center gap-1.5 flex-wrap">
         <Pill label="All" count={counts.total} active={filter === 'all'} onClick={() => setFilter('all')} />
-        <Pill label="Active" count={counts.active} active={filter === 'active'} dot="bg-emerald-500" onClick={() => setFilter('active')} />
-        <Pill label="Paused" count={counts.paused} active={filter === 'paused'} dot="bg-amber-400" onClick={() => setFilter('paused')} />
-        <Pill label="Stopped" count={counts.stopped} active={filter === 'stopped'} dot="bg-slate-400" onClick={() => setFilter('stopped')} />
+        <Pill label="Active" count={counts.active} active={filter === 'active'} dotColor="var(--success)" onClick={() => setFilter('active')} />
+        <Pill label="Paused" count={counts.paused} active={filter === 'paused'} dotColor="var(--warning)" onClick={() => setFilter('paused')} />
+        <Pill label="Stopped" count={counts.stopped} active={filter === 'stopped'} dotColor="var(--ink-3)" onClick={() => setFilter('stopped')} />
       </div>
 
-      <div className="flex items-center gap-2 mb-4">
+      <div className="flex items-center gap-2">
         <div className="relative flex-1 max-w-md">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
           <Input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search profile name or narration…" className="pl-9 py-1.5" />
+            placeholder="Search profile name or narration…" className="pl-9" />
         </div>
       </div>
 
-      <Card className="overflow-hidden p-0">
-        <Table>
-          <Thead>
-            <Tr className="bg-slate-50">
-              <Th className="text-left">Profile</Th>
-              <Th className="text-left">Voucher</Th>
-              <Th className="text-left">Frequency</Th>
-              <Th className="text-left">Next Run</Th>
-              <Th className="text-right px-3">Lines</Th>
-              <Th className="text-right px-3">Generated</Th>
-              <Th className="text-left">Status</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {loading ? (
-              <tr><td colSpan={7} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
-            ) : profiles.length === 0 ? (
-              <tr><td colSpan={7} className="text-center py-12 text-slate-400 text-sm">
-                {filter === 'all'
-                  ? 'No recurring journals yet. Create one for monthly depreciation, accruals, etc.'
-                  : 'No profiles match your filter'}
-              </td></tr>
-            ) : profiles.map((p) => {
-              const isDue = p.status === 'active' && p.next_run_date <= today
-              return (
-                <Tr key={p.id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/journals/recurring/${p.id}`)}>
-                  <Td>
-                    <Link to={`/journals/recurring/${p.id}`} onClick={(e) => e.stopPropagation()}
-                      className="font-medium text-teal-700 hover:underline inline-flex items-center gap-1.5">
-                      <Repeat size={13} className="text-teal-600" /> {p.profile_name}
-                    </Link>
-                    {p.auto_post && (
-                      <span className="ml-2 text-[10px] uppercase tracking-wide text-emerald-700">Auto-post</span>
-                    )}
-                  </Td>
-                  <Td className="text-sm text-slate-600">{p.voucher_type_display}</Td>
-                  <Td className="text-sm text-slate-600">{FREQ_LABEL[p.frequency] || p.frequency}</Td>
-                  <Td className={cn('text-sm', isDue ? 'text-amber-700 font-medium' : 'text-slate-600')}>
-                    {formatDate(p.next_run_date)}
-                    {isDue && <span className="ml-1 text-xs">(due)</span>}
-                  </Td>
-                  <Td className="text-right text-sm text-slate-500 px-3">{p.lines.length}</Td>
-                  <Td className="text-right text-sm text-slate-500 px-3">{p.generated_count}</Td>
-                  <Td><Badge variant={STATUS_BADGE[p.status]}>{p.status}</Badge></Td>
-                </Tr>
-              )
-            })}
-          </Tbody>
-        </Table>
-      </Card>
+      {loading ? (
+        <SkeletonTable rows={8} cols={7} />
+      ) : profiles.length === 0 ? (
+        <EmptyState
+          variant={hasFilters ? 'no-results' : 'no-data'}
+          title={hasFilters ? 'No profiles match your filter' : 'No recurring journals yet'}
+          description={hasFilters ? 'Try adjusting your search or clearing filters.' : 'Create a profile for monthly depreciation, accruals, or prepaid expense allocations.'}
+          actionLabel={hasFilters ? undefined : 'New Profile'}
+          onAction={hasFilters ? undefined : () => navigate('/journals/recurring/new')}
+        />
+      ) : (
+        <Card className="overflow-hidden p-0">
+          <Table>
+            <Thead>
+              <Tr>
+                <Th className="text-left">Profile</Th>
+                <Th className="text-left">Voucher</Th>
+                <Th className="text-left">Frequency</Th>
+                <Th className="text-left">Next Run</Th>
+                <Th className="text-right px-3">Lines</Th>
+                <Th className="text-right px-3">Generated</Th>
+                <Th className="text-left">Status</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {profiles.map((p) => {
+                const isDue = p.status === 'active' && p.next_run_date <= today
+                return (
+                  <Tr key={p.id} className="cursor-pointer" onClick={() => navigate(`/journals/recurring/${p.id}`)}>
+                    <Td>
+                      <Link to={`/journals/recurring/${p.id}`} onClick={(e) => e.stopPropagation()}
+                        className="font-medium hover:underline inline-flex items-center gap-1.5" style={{ color: 'var(--brand)' }}>
+                        <Repeat size={13} /> {p.profile_name}
+                      </Link>
+                      {p.auto_post && (
+                        <span className="ml-2 text-[10px] mono uppercase" style={{ color: 'var(--success)', letterSpacing: '0.08em' }}>Auto-post</span>
+                      )}
+                    </Td>
+                    <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{p.voucher_type_display}</Td>
+                    <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{FREQ_LABEL[p.frequency] || p.frequency}</Td>
+                    <Td className={cn('text-sm', isDue && 'font-medium')} style={{ color: isDue ? 'var(--warning)' : 'var(--ink-2)' }}>
+                      {formatDate(p.next_run_date)}
+                      {isDue && <span className="ml-1 text-xs">(due)</span>}
+                    </Td>
+                    <Td className="text-right text-sm mono px-3" style={{ color: 'var(--ink-2)' }}>{p.lines.length}</Td>
+                    <Td className="text-right text-sm mono px-3" style={{ color: 'var(--ink-2)' }}>{p.generated_count}</Td>
+                    <Td><Badge variant={STATUS_BADGE[p.status]}>{p.status}</Badge></Td>
+                  </Tr>
+                )
+              })}
+            </Tbody>
+          </Table>
+        </Card>
+      )}
     </div>
   )
 }
 
-function Pill({ label, count, active, dot, onClick }: {
+function Pill({ label, count, active, dotColor, onClick }: {
   label: string
   count: number
   active: boolean
-  dot?: string
+  dotColor?: string
   onClick: () => void
 }) {
   return (
-    <button onClick={onClick} className={cn(
-      'inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors',
-      active
-        ? 'bg-teal-50 border-teal-200 text-teal-700'
-        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-    )}>
-      {dot && <span className={cn('w-1.5 h-1.5 rounded-full', dot)} />}
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-2 px-3 h-8 rounded-full text-xs font-medium transition-colors"
+      style={{
+        background: active ? 'rgba(15,157,154,0.10)' : 'var(--surface-0)',
+        border: `1px solid ${active ? 'rgba(15,157,154,0.35)' : 'var(--line)'}`,
+        color: active ? 'var(--brand)' : 'var(--ink-2)',
+      }}
+    >
+      {dotColor && <span className="w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />}
       {label}
-      <span className={cn('text-[10px] tabular-nums', active ? 'text-teal-600' : 'text-slate-400')}>{count}</span>
+      <span className="text-[10px] mono" style={{ color: active ? 'var(--brand)' : 'var(--ink-3)' }}>{count}</span>
     </button>
   )
 }

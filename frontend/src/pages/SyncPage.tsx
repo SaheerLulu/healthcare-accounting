@@ -7,6 +7,9 @@ import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { Card, CardHeader } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
+import { EmptyState } from '../components/ui/EmptyState'
+import { SkeletonTable } from '../components/ui/Skeletons'
+import { AlertBanner } from '../components/ui/AlertBanner'
 
 function SyncStatusBadge({ status }: { status: string }) {
   const map: Record<string, { icon: React.ReactNode; variant: 'success' | 'error' | 'info' | 'warning' | 'default' }> = {
@@ -71,44 +74,54 @@ export default function SyncPage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="max-w-5xl mx-auto space-y-5">
+      <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Data Sync</h1>
-          <p className="text-sm text-slate-500 mt-0.5">Sync accounting data from inventory & sales systems</p>
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Data Sync</h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>Sync accounting data from inventory & sales systems.</p>
         </div>
         <div className="flex items-center gap-2">
           {errors.length > 0 && (
-            <button onClick={handleRetry} disabled={retrying}
-              className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-amber-700 border border-amber-300 bg-amber-50 rounded-lg hover:bg-amber-100 disabled:opacity-60 transition-colors">
+            <button
+              onClick={handleRetry}
+              disabled={retrying}
+              className="flex items-center gap-2 px-3 h-9 text-sm font-medium rounded-md disabled:opacity-60"
+              style={{ background: 'rgba(199,122,17,0.08)', border: '1px solid rgba(199,122,17,0.30)', color: 'var(--warning)' }}
+            >
               {retrying ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
               Retry Failed ({errors.length})
             </button>
           )}
           <Button onClick={handleSync} disabled={syncing}>
             {syncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-            {syncing ? 'Syncing...' : 'Run Sync'}
+            {syncing ? 'Syncing…' : 'Run Sync'}
           </Button>
         </div>
       </div>
 
       {syncing && (
-        <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center gap-3">
-          <Loader2 size={16} className="animate-spin text-blue-600" />
-          <p className="text-sm text-blue-700">Sync in progress. This may take a few minutes...</p>
-        </div>
+        <AlertBanner tone="info">
+          <span className="inline-flex items-center gap-2">
+            <Loader2 size={14} className="animate-spin" />
+            Sync in progress. This may take a few minutes…
+          </span>
+        </AlertBanner>
       )}
 
-      {/* Sync Errors */}
       {errors.length > 0 && (
-        <Card className="mb-4 overflow-hidden border-red-200">
-          <div className="px-5 py-3 border-b border-red-100 bg-red-50 flex items-center gap-2">
-            <AlertTriangle size={14} className="text-red-600" />
-            <h2 className="text-sm font-semibold text-red-800">Failed Records ({errors.length})</h2>
+        <Card className="overflow-hidden p-0" style={{ borderColor: 'rgba(192,57,43,0.30)' }}>
+          <div
+            className="px-5 py-3 border-b flex items-center gap-2"
+            style={{ background: 'rgba(192,57,43,0.06)', borderColor: 'rgba(192,57,43,0.20)' }}
+          >
+            <AlertTriangle size={14} style={{ color: 'var(--danger)' }} />
+            <h2 className="text-sm font-semibold" style={{ color: 'var(--danger)' }}>
+              Failed records (<span className="mono">{errors.length}</span>)
+            </h2>
           </div>
           <Table>
             <Thead>
-              <Tr className="bg-slate-50">
+              <Tr>
                 <Th>Type</Th>
                 <Th>Source ID</Th>
                 <Th>Error</Th>
@@ -118,10 +131,10 @@ export default function SyncPage() {
             <Tbody>
               {errors.map((err) => (
                 <Tr key={err.id}>
-                  <Td className="capitalize text-slate-500">{err.sync_type.replace(/_/g, ' ')}</Td>
-                  <Td className="font-mono text-xs text-slate-500">#{err.source_id}</Td>
-                  <Td className="text-xs text-red-600 max-w-sm truncate">{err.error_message}</Td>
-                  <Td className="text-right text-xs text-slate-500">{err.retry_count}/{err.max_retries}</Td>
+                  <Td className="capitalize" style={{ color: 'var(--ink-2)' }}>{err.sync_type.replace(/_/g, ' ')}</Td>
+                  <Td className="mono text-xs" style={{ color: 'var(--ink-3)' }}>#{err.source_id}</Td>
+                  <Td className="text-xs max-w-sm truncate" style={{ color: 'var(--danger)' }}>{err.error_message}</Td>
+                  <Td className="text-right text-xs mono" style={{ color: 'var(--ink-2)' }}>{err.retry_count}/{err.max_retries}</Td>
                 </Tr>
               ))}
             </Tbody>
@@ -129,37 +142,45 @@ export default function SyncPage() {
         </Card>
       )}
 
-      <Card className="overflow-hidden">
-        <CardHeader className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-900">Sync History</h2>
+      <Card className="overflow-hidden p-0">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Sync History</h2>
           <Button variant="link" size="sm" onClick={loadAll}>Refresh</Button>
         </CardHeader>
-        <Table>
-          <Thead>
-            <Tr className="bg-slate-50">
-              <Th>Sync Type</Th>
-              <Th>Last Synced</Th>
-              <Th className="text-right">Records</Th>
-              <Th>Status</Th>
-              <Th>Error</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {loading ? (
-              <tr><td colSpan={5} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
-            ) : logs.length === 0 ? (
-              <tr><td colSpan={5} className="text-center py-12 text-slate-400 text-sm">No sync logs found. Run a sync to get started.</td></tr>
-            ) : logs.map((log) => (
-              <Tr key={log.id}>
-                <Td className="font-medium text-slate-900 capitalize">{log.sync_type.replace(/_/g, ' ')}</Td>
-                <Td className="text-slate-500">{formatDate(log.last_synced_at)}</Td>
-                <Td className="text-right font-mono text-slate-500">{log.records_processed.toLocaleString()}</Td>
-                <Td><SyncStatusBadge status={log.status} /></Td>
-                <Td className="text-xs text-red-600 max-w-xs truncate">{log.error_message || '-'}</Td>
+        {loading ? (
+          <SkeletonTable rows={6} cols={5} />
+        ) : logs.length === 0 ? (
+          <EmptyState
+            icon={RefreshCw}
+            title="No sync logs yet"
+            description="Run a sync to import customers, suppliers, and posted bills from inventory."
+            actionLabel="Run Sync"
+            onAction={handleSync}
+          />
+        ) : (
+          <Table>
+            <Thead>
+              <Tr>
+                <Th>Sync Type</Th>
+                <Th>Last Synced</Th>
+                <Th className="text-right">Records</Th>
+                <Th>Status</Th>
+                <Th>Error</Th>
               </Tr>
-            ))}
-          </Tbody>
-        </Table>
+            </Thead>
+            <Tbody>
+              {logs.map((log) => (
+                <Tr key={log.id}>
+                  <Td className="font-medium capitalize" style={{ color: 'var(--ink)' }}>{log.sync_type.replace(/_/g, ' ')}</Td>
+                  <Td style={{ color: 'var(--ink-2)' }}>{formatDate(log.last_synced_at)}</Td>
+                  <Td className="text-right mono" style={{ color: 'var(--ink-2)' }}>{log.records_processed.toLocaleString()}</Td>
+                  <Td><SyncStatusBadge status={log.status} /></Td>
+                  <Td className="text-xs max-w-xs truncate" style={{ color: 'var(--danger)' }}>{log.error_message || '—'}</Td>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+        )}
       </Card>
     </div>
   )

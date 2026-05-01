@@ -90,7 +90,7 @@ export default function BankAccountPage() {
   if (!account) return null
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto space-y-5">
       <button onClick={() => navigate('/banking')}
         className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3">
         <ArrowLeft size={14} /> Back to Banking
@@ -99,7 +99,7 @@ export default function BankAccountPage() {
       {/* Header */}
       <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">{account.name}</h1>
+          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{account.name}</h1>
           <div className="text-sm text-slate-500 mt-0.5">
             {account.bank_name && <span>{account.bank_name} · </span>}
             <span className="font-mono">{account.chart_account_code} {account.chart_account_name}</span>

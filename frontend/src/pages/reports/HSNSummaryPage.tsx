@@ -32,10 +32,10 @@ export default function HSNSummaryPage() {
   useEffect(() => { if (period) load() }, [period, activeLocationId])
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-slate-900">HSN Summary</h1>
-        <p className="text-sm text-slate-500 mt-0.5">HSN-code level aggregation</p>
+        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>HSN Summary</h1>
+        <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>HSN-code level aggregation</p>
       </div>
 
       <div className="flex items-center gap-3 mb-5 flex-wrap">

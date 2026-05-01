@@ -18,6 +18,8 @@ import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Card } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
+import { EmptyState } from '../components/ui/EmptyState'
+import { SkeletonTable } from '../components/ui/Skeletons'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose, SheetTrigger,
 } from '../components/ui/sheet'
@@ -116,13 +118,17 @@ export default function JournalsPage() {
   const hasActiveFilters = !!(search || statusFilter !== 'all' || voucherType !== 'all' || dateFrom || dateTo)
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto space-y-5">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Journal Entries</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            {count} entries · {draftCount} draft · {postedCount} posted · Total {formatCurrency(totals.amount)}
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+            Journal Entries
+          </h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
+            <span className="mono">{count}</span> entries · <span className="mono">{draftCount}</span> draft ·{' '}
+            <span className="mono">{postedCount}</span> posted · Total{' '}
+            <span className="mono">{formatCurrency(totals.amount)}</span>
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -136,117 +142,130 @@ export default function JournalsPage() {
       </div>
 
       {/* Status pill bar */}
-      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+      <div className="flex items-center gap-1.5 flex-wrap">
         <StatusPill label="All" count={count} active={statusFilter === 'all'} onClick={() => setStatusFilter('all')} />
-        <StatusPill label="Draft" count={draftCount} active={statusFilter === 'draft'} dotClassName="bg-amber-400" onClick={() => setStatusFilter('draft')} />
-        <StatusPill label="Posted" count={postedCount} active={statusFilter === 'posted'} dotClassName="bg-emerald-500" onClick={() => setStatusFilter('posted')} />
+        <StatusPill label="Draft" count={draftCount} active={statusFilter === 'draft'} dotColor="var(--warning)" onClick={() => setStatusFilter('draft')} />
+        <StatusPill label="Posted" count={postedCount} active={statusFilter === 'posted'} dotColor="var(--success)" onClick={() => setStatusFilter('posted')} />
       </div>
 
       {/* Filters row */}
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
+      <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 min-w-[220px] max-w-md">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
           <Input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search narration…" className="pl-9 py-1.5" />
+            placeholder="Search narration…" className="pl-9" />
         </div>
         <select value={voucherType} onChange={(e) => setVoucherType(e.target.value)}
-          className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+          className="h-9 px-3 text-sm rounded-md outline-none"
+          style={{ border: '1px solid var(--line)', background: 'var(--surface-0)', color: 'var(--ink)' }}
+        >
           <option value="all">All voucher types</option>
           {VOUCHER_TYPES.map((v) => <option key={v} value={v}>{voucherLabel(v)}</option>)}
         </select>
-        <div className="flex items-center gap-1 px-2 py-1 border border-slate-200 rounded-lg bg-white">
-          <Calendar size={13} className="text-slate-400" />
+        <div
+          className="flex items-center gap-1 px-2 h-9 rounded-md"
+          style={{ border: '1px solid var(--line)', background: 'var(--surface-0)' }}
+        >
+          <Calendar size={13} style={{ color: 'var(--ink-3)' }} />
           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="text-xs bg-transparent focus:outline-none" />
-          <span className="text-slate-300 text-xs">→</span>
+            className="text-xs bg-transparent focus:outline-none" style={{ color: 'var(--ink)' }} />
+          <span style={{ color: 'var(--ink-3)' }} className="text-xs">→</span>
           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="text-xs bg-transparent focus:outline-none" />
+            className="text-xs bg-transparent focus:outline-none" style={{ color: 'var(--ink)' }} />
         </div>
         {hasActiveFilters && (
-          <button onClick={clearFilters} className="text-xs text-slate-500 hover:text-slate-900 inline-flex items-center gap-1">
+          <button onClick={clearFilters} className="text-xs hover:underline inline-flex items-center gap-1" style={{ color: 'var(--ink-2)' }}>
             <X size={12} /> Clear
           </button>
         )}
       </div>
 
-      <Card className="overflow-hidden p-0">
-        <Table>
-          <Thead>
-            <Tr className="bg-slate-50">
-              <Th className="text-left">Date</Th>
-              <Th className="text-left">Journal #</Th>
-              <Th className="text-left">Reference</Th>
-              <Th className="text-left">Voucher</Th>
-              <Th className="text-left">Notes</Th>
-              <Th className="text-right px-3">Amount</Th>
-              <Th className="text-left">Status</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {loading ? (
-              <tr><td colSpan={7} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
-            ) : entries.length === 0 ? (
-              <tr><td colSpan={7} className="text-center py-12 text-slate-400 text-sm">No journal entries match your filters</td></tr>
-            ) : entries.map((entry) => {
-              const amount = entryAmount(entry)
-              return (
-                <Tr key={entry.id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/journals/${entry.id}`)}>
-                  <Td className="text-sm text-slate-600">{formatDate(entry.date)}</Td>
-                  <Td>
-                    <Link to={`/journals/${entry.id}`} onClick={(e) => e.stopPropagation()}
-                      className="font-mono text-xs text-teal-700 hover:underline">
-                      {entry.entry_no}
-                    </Link>
-                  </Td>
-                  <Td className="text-xs text-slate-500">
-                    {entry.reference_type
-                      ? `${entry.reference_type}${entry.reference_id ? ` #${entry.reference_id}` : ''}`
-                      : '—'}
-                  </Td>
-                  <Td>
-                    <span className={cn('inline-flex px-2 py-0.5 rounded text-xs font-medium', VOUCHER_BG[entry.voucher_type] || 'bg-slate-100 text-slate-600')}>
-                      {voucherLabel(entry.voucher_type)}
-                    </span>
-                  </Td>
-                  <Td className="text-sm text-slate-700 max-w-xs truncate">{entry.narration || '—'}</Td>
-                  <Td className="text-right font-mono px-3">{amount > 0 ? formatCurrency(amount) : '—'}</Td>
-                  <Td>
-                    <Badge variant={entry.is_posted ? 'success' : 'warning'}>
-                      {entry.is_posted ? 'Posted' : 'Draft'}
-                    </Badge>
-                  </Td>
-                </Tr>
-              )
-            })}
-          </Tbody>
-        </Table>
-      </Card>
+      {loading ? (
+        <SkeletonTable rows={8} cols={7} />
+      ) : entries.length === 0 ? (
+        <EmptyState
+          variant={hasActiveFilters ? 'no-results' : 'no-data'}
+          title={hasActiveFilters ? 'No journal entries match your filters' : 'No journal entries yet'}
+          description={hasActiveFilters ? 'Try adjusting your search or clearing filters.' : 'Post your first journal entry to start tracking transactions.'}
+          actionLabel={hasActiveFilters ? undefined : 'New Journal'}
+          onAction={hasActiveFilters ? undefined : () => navigate('/journals/new')}
+        />
+      ) : (
+        <Card className="overflow-hidden p-0">
+          <Table>
+            <Thead>
+              <Tr>
+                <Th className="text-left">Date</Th>
+                <Th className="text-left">Journal #</Th>
+                <Th className="text-left">Reference</Th>
+                <Th className="text-left">Voucher</Th>
+                <Th className="text-left">Notes</Th>
+                <Th className="text-right px-3">Amount</Th>
+                <Th className="text-left">Status</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {entries.map((entry) => {
+                const amount = entryAmount(entry)
+                return (
+                  <Tr key={entry.id} className="cursor-pointer" onClick={() => navigate(`/journals/${entry.id}`)}>
+                    <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(entry.date)}</Td>
+                    <Td>
+                      <Link to={`/journals/${entry.id}`} onClick={(e) => e.stopPropagation()}
+                        className="mono text-xs hover:underline" style={{ color: 'var(--brand)' }}>
+                        {entry.entry_no}
+                      </Link>
+                    </Td>
+                    <Td className="text-xs" style={{ color: 'var(--ink-3)' }}>
+                      {entry.reference_type
+                        ? `${entry.reference_type}${entry.reference_id ? ` #${entry.reference_id}` : ''}`
+                        : '—'}
+                    </Td>
+                    <Td>
+                      <span className={cn('inline-flex px-2 py-0.5 rounded text-xs font-medium', VOUCHER_BG[entry.voucher_type] || 'bg-slate-100 text-slate-600')}>
+                        {voucherLabel(entry.voucher_type)}
+                      </span>
+                    </Td>
+                    <Td className="text-sm max-w-xs truncate" style={{ color: 'var(--ink)' }}>{entry.narration || '—'}</Td>
+                    <Td className="text-right mono px-3" style={{ color: 'var(--ink)' }}>{amount > 0 ? formatCurrency(amount) : '—'}</Td>
+                    <Td>
+                      <Badge variant={entry.is_posted ? 'success' : 'warning'}>
+                        {entry.is_posted ? 'Posted' : 'Draft'}
+                      </Badge>
+                    </Td>
+                  </Tr>
+                )
+              })}
+            </Tbody>
+          </Table>
+        </Card>
+      )}
     </div>
   )
 }
 
 // ─── Status pill ────────────────────────────────────────────────────────────
 
-function StatusPill({ label, count, active, dotClassName, onClick }: {
+function StatusPill({ label, count, active, dotColor, onClick }: {
   label: string
   count: number
   active: boolean
-  dotClassName?: string
+  dotColor?: string
   onClick: () => void
 }) {
   return (
     <button
       onClick={onClick}
-      className={cn(
-        'inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors',
-        active
-          ? 'bg-teal-50 border-teal-200 text-teal-700'
-          : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-      )}
+      className="inline-flex items-center gap-2 px-3 h-8 rounded-full text-xs font-medium transition-colors"
+      style={{
+        background: active ? 'rgba(15,157,154,0.10)' : 'var(--surface-0)',
+        border: `1px solid ${active ? 'rgba(15,157,154,0.35)' : 'var(--line)'}`,
+        color: active ? 'var(--brand)' : 'var(--ink-2)',
+      }}
     >
-      {dotClassName && <span className={cn('w-1.5 h-1.5 rounded-full', dotClassName)} />}
+      {dotColor && <span className="w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />}
       {label}
-      <span className={cn('text-[10px] tabular-nums', active ? 'text-teal-600' : 'text-slate-400')}>
+      <span className="text-[10px] mono" style={{ color: active ? 'var(--brand)' : 'var(--ink-3)' }}>
         {count}
       </span>
     </button>

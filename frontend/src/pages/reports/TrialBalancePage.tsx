@@ -1,13 +1,15 @@
 import { useState } from 'react'
-import { Loader2, CheckCircle, AlertCircle } from 'lucide-react'
+import { Loader2, CheckCircle2, AlertCircle, ScrollText } from 'lucide-react'
 import { toast } from 'sonner'
 import { getTrialBalance, type TrialBalanceRow } from '../../lib/api'
 import { formatCurrency, getCurrentFY, cn } from '../../lib/utils'
 import { Input } from '../../components/ui/input'
 import { Button } from '../../components/ui/button'
-import { Badge } from '../../components/ui/badge'
 import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
+import { AlertBanner } from '../../components/ui/AlertBanner'
+import { EmptyState } from '../../components/ui/EmptyState'
+import { SkeletonTable } from '../../components/ui/Skeletons'
 
 export default function TrialBalancePage() {
   const fy = getCurrentFY()
@@ -37,31 +39,39 @@ export default function TrialBalancePage() {
   const balanced = Math.abs(totalDebit - totalCredit) < 0.01
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="max-w-7xl mx-auto space-y-5">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Trial Balance</h1>
-          <p className="text-sm text-slate-500 mt-0.5">All accounts with debit and credit balances</p>
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Trial Balance</h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>All accounts with debit and credit balances.</p>
         </div>
-        {fetched && (
-          <Badge variant={balanced ? 'success' : 'error'}>
-            {balanced ? <CheckCircle size={13} /> : <AlertCircle size={13} />}
-            {balanced ? 'Balanced' : 'Not Balanced'}
-          </Badge>
-        )}
       </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
+      {fetched && (
+        <AlertBanner
+          tone={balanced ? 'success' : 'danger'}
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              {balanced ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+              {balanced ? 'Balanced' : 'Not Balanced'}
+            </span>
+          }
+        >
+          {balanced
+            ? `Debits and credits match at ${formatCurrency(totalDebit)}.`
+            : `Difference: ${formatCurrency(totalDebit - totalCredit)} — investigate before relying on these numbers.`}
+        </AlertBanner>
+      )}
+
+      {/* Period filters */}
+      <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500 font-medium">From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="w-auto px-2.5 py-1.5" />
+          <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-auto" />
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500 font-medium">To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="w-auto px-2.5 py-1.5" />
+          <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-auto" />
         </div>
         <Button onClick={load} disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
@@ -69,63 +79,69 @@ export default function TrialBalancePage() {
         </Button>
       </div>
 
-      <Card className="overflow-hidden">
-        <Table>
-          <Thead>
-            <Tr className="bg-slate-50">
-              <Th className="text-left">Account Code</Th>
-              <Th className="text-left">Account Name</Th>
-              <Th className="text-left">Type</Th>
-              <Th className="text-right">Debit</Th>
-              <Th className="text-right">Credit</Th>
-              <Th className="text-right">Balance</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {loading ? (
-              <tr><td colSpan={6} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
-            ) : !fetched ? (
-              <tr><td colSpan={6} className="text-center py-12 text-slate-400 text-sm">Select date range and run report</td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan={6} className="text-center py-12 text-slate-400 text-sm">No data found</td></tr>
-            ) : (
-              rows.map((row, i) => (
+      {loading ? (
+        <SkeletonTable rows={8} cols={6} />
+      ) : !fetched ? (
+        <EmptyState
+          icon={ScrollText}
+          title="Run the trial balance"
+          description="Select a date range and click Run Report to compute debit / credit totals across the chart of accounts."
+          actionLabel="Run Report"
+          onAction={load}
+        />
+      ) : rows.length === 0 ? (
+        <EmptyState variant="no-data" title="No data for this range" description="Try widening your date range or post journal entries first." />
+      ) : (
+        <Card className="overflow-hidden p-0">
+          <Table>
+            <Thead>
+              <Tr>
+                <Th className="text-left">Account Code</Th>
+                <Th className="text-left">Account Name</Th>
+                <Th className="text-left">Type</Th>
+                <Th className="text-right">Debit</Th>
+                <Th className="text-right">Credit</Th>
+                <Th className="text-right">Balance</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {rows.map((row, i) => (
                 <Tr key={i}>
-                  <Td className="font-mono text-xs text-slate-500">{row.account_code}</Td>
-                  <Td className="font-medium">{row.account_name}</Td>
-                  <Td className="text-slate-500 capitalize">{row.account_type}</Td>
-                  <Td className="text-right font-mono">
-                    {Number(row.debit) > 0 ? formatCurrency(row.debit) : '-'}
+                  <Td className="mono text-xs" style={{ color: 'var(--ink-3)' }}>{row.account_code}</Td>
+                  <Td className="font-medium" style={{ color: 'var(--ink)' }}>{row.account_name}</Td>
+                  <Td className="capitalize" style={{ color: 'var(--ink-2)' }}>{row.account_type}</Td>
+                  <Td className="text-right mono" style={{ color: 'var(--ink)' }}>
+                    {Number(row.debit) > 0 ? formatCurrency(row.debit) : '—'}
                   </Td>
-                  <Td className="text-right font-mono">
-                    {Number(row.credit) > 0 ? formatCurrency(row.credit) : '-'}
+                  <Td className="text-right mono" style={{ color: 'var(--ink)' }}>
+                    {Number(row.credit) > 0 ? formatCurrency(row.credit) : '—'}
                   </Td>
-                  <Td className={cn("text-right font-mono font-medium",
-                    Number(row.balance) >= 0 ? '' : 'text-red-600')}>
+                  <Td
+                    className={cn('text-right mono font-medium')}
+                    style={{ color: Number(row.balance) >= 0 ? 'var(--ink)' : 'var(--danger)' }}
+                  >
                     {formatCurrency(row.balance)}
                   </Td>
                 </Tr>
-              ))
-            )}
-          </Tbody>
-          {fetched && rows.length > 0 && (
+              ))}
+            </Tbody>
             <tfoot>
-              <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold">
-                <td colSpan={3} className="py-3 px-4 text-sm text-slate-500">Totals</td>
-                <td className={cn("py-3 px-4 text-right font-mono", balanced ? 'text-slate-900' : 'text-red-600')}>
+              <tr style={{ borderTop: '2px solid var(--line)', background: 'var(--color-grey-light)' }} className="font-semibold">
+                <td colSpan={3} className="py-3 px-4 text-sm" style={{ color: 'var(--ink-2)' }}>Totals</td>
+                <td className="py-3 px-4 text-right mono" style={{ color: balanced ? 'var(--ink)' : 'var(--danger)' }}>
                   {formatCurrency(totalDebit)}
                 </td>
-                <td className={cn("py-3 px-4 text-right font-mono", balanced ? 'text-slate-900' : 'text-red-600')}>
+                <td className="py-3 px-4 text-right mono" style={{ color: balanced ? 'var(--ink)' : 'var(--danger)' }}>
                   {formatCurrency(totalCredit)}
                 </td>
-                <td className="py-3 px-4 text-right font-mono text-slate-900">
+                <td className="py-3 px-4 text-right mono" style={{ color: 'var(--ink)' }}>
                   {formatCurrency(totalDebit - totalCredit)}
                 </td>
               </tr>
             </tfoot>
-          )}
-        </Table>
-      </Card>
+          </Table>
+        </Card>
+      )}
     </div>
   )
 }

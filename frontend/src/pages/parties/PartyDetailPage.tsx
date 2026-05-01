@@ -60,14 +60,14 @@ export default function PartyDetailPage({ partyType }: { partyType: PartyType })
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto space-y-5">
       <Link to={baseRoute} className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3">
         <ArrowLeft className="w-4 h-4" /> Back to {heading}s
       </Link>
 
       <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">{detail.name}</h1>
+          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{detail.name}</h1>
           <div className="flex items-center gap-3 text-sm text-slate-500 mt-1 flex-wrap">
             {detail.gst_no && <span className="font-mono">{detail.gst_no}</span>}
             <Badge variant={detail.status?.toLowerCase() === 'active' ? 'success' : 'default'}>

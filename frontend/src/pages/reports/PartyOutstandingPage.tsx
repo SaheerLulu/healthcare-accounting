@@ -31,10 +31,10 @@ export default function PartyOutstandingPage() {
   useEffect(() => { load() }, [partyType, activeLocationId])
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-bold text-slate-900">Party Outstanding</h1>
-        <p className="text-sm text-slate-500 mt-0.5">Outstanding balances by {partyType.toLowerCase()} — Total: {formatCurrency(total)}</p>
+        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Party Outstanding</h1>
+        <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Outstanding balances by {partyType.toLowerCase()} — Total: {formatCurrency(total)}</p>
       </div>
 
       <div className="flex items-center gap-3 mb-5 flex-wrap">

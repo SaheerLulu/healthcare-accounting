@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Plus, Loader2, Search, Calendar, X } from 'lucide-react'
+import { Plus, Search, Calendar, X } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getExpenses, getExpenseCounts,
   type Expense, type ExpenseCounts, type ExpenseStatus,
 } from '../../lib/api'
-import { formatCurrency, formatDate, cn } from '../../lib/utils'
+import { formatCurrency, formatDate } from '../../lib/utils'
 import { useLocation } from '../../contexts/LocationContext'
 import { Button } from '../../components/ui/button'
 import { Badge } from '../../components/ui/badge'
 import { Input } from '../../components/ui/input'
 import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
+import { EmptyState } from '../../components/ui/EmptyState'
+import { SkeletonTable } from '../../components/ui/Skeletons'
 
 const STATUS_BADGE: Record<ExpenseStatus, 'default' | 'success'> = {
   draft: 'default',
@@ -65,114 +67,130 @@ export default function ExpensesListPage() {
   const hasFilters = !!(search || filter !== 'all' || dateFrom || dateTo)
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
+    <div className="max-w-7xl mx-auto space-y-5">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Expenses</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            {counts?.total ?? 0} expenses · Total spent{' '}
-            <span className="font-medium text-slate-700">{formatCurrency(counts?.total_amount ?? '0')}</span>
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Expenses</h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
+            <span className="mono">{counts?.total ?? 0}</span> expenses · Total spent{' '}
+            <span className="mono font-medium" style={{ color: 'var(--ink)' }}>{formatCurrency(counts?.total_amount ?? '0')}</span>
           </p>
         </div>
         <Button onClick={() => navigate('/expenses/new')}><Plus size={16} /> New Expense</Button>
       </div>
 
-      <div className="flex items-center gap-1.5 mb-4 flex-wrap">
+      <div className="flex items-center gap-1.5 flex-wrap">
         <Pill label="All" count={counts?.total ?? 0} active={filter === 'all'} onClick={() => setFilter('all')} />
-        <Pill label="Draft" count={counts?.by_status?.draft ?? 0} active={filter === 'draft'} dot="bg-slate-400" onClick={() => setFilter('draft')} />
-        <Pill label="Recorded" count={counts?.by_status?.recorded ?? 0} active={filter === 'recorded'} dot="bg-emerald-500" onClick={() => setFilter('recorded')} />
+        <Pill label="Draft" count={counts?.by_status?.draft ?? 0} active={filter === 'draft'} dotColor="var(--ink-3)" onClick={() => setFilter('draft')} />
+        <Pill label="Recorded" count={counts?.by_status?.recorded ?? 0} active={filter === 'recorded'} dotColor="var(--success)" onClick={() => setFilter('recorded')} />
       </div>
 
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
+      <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 min-w-[220px] max-w-md">
-          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
           <Input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search vendor, reference, notes…" className="pl-9 py-1.5" />
+            placeholder="Search vendor, reference, notes…" className="pl-9" />
         </div>
-        <div className="flex items-center gap-1 px-2 py-1 border border-slate-200 rounded-lg bg-white">
-          <Calendar size={13} className="text-slate-400" />
+        <div
+          className="flex items-center gap-1 px-2 h-9 rounded-md"
+          style={{ border: '1px solid var(--line)', background: 'var(--surface-0)' }}
+        >
+          <Calendar size={13} style={{ color: 'var(--ink-3)' }} />
           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="text-xs bg-transparent focus:outline-none" />
-          <span className="text-slate-300 text-xs">→</span>
+            className="text-xs bg-transparent focus:outline-none" style={{ color: 'var(--ink)' }} />
+          <span className="text-xs" style={{ color: 'var(--ink-3)' }}>→</span>
           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="text-xs bg-transparent focus:outline-none" />
+            className="text-xs bg-transparent focus:outline-none" style={{ color: 'var(--ink)' }} />
         </div>
         {hasFilters && (
           <button onClick={() => { setSearch(''); setFilter('all'); setDateFrom(''); setDateTo('') }}
-            className="text-xs text-slate-500 hover:text-slate-900 inline-flex items-center gap-1">
+            className="text-xs hover:underline inline-flex items-center gap-1" style={{ color: 'var(--ink-2)' }}>
             <X size={12} /> Clear
           </button>
         )}
       </div>
 
-      <Card className="overflow-hidden p-0">
-        <Table>
-          <Thead>
-            <Tr className="bg-slate-50">
-              <Th className="text-left">Date</Th>
-              <Th className="text-left">Vendor</Th>
-              <Th className="text-left">Paid Through</Th>
-              <Th className="text-left">Reference</Th>
-              <Th className="text-right px-3">Amount</Th>
-              <Th className="text-left">Status</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {loading ? (
-              <tr><td colSpan={6} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
-            ) : expenses.length === 0 ? (
-              <tr><td colSpan={6} className="text-center py-12 text-slate-400 text-sm">No expenses match your filters</td></tr>
-            ) : expenses.map((e) => (
-              <Tr key={e.id} className="cursor-pointer hover:bg-slate-50" onClick={() => navigate(`/expenses/${e.id}`)}>
-                <Td className="text-sm text-slate-600">{formatDate(e.expense_date)}</Td>
-                <Td>
-                  <Link to={`/expenses/${e.id}`} onClick={(ev) => ev.stopPropagation()}
-                    className="font-medium text-teal-700 hover:underline">
-                    {e.vendor_name || `Expense #${e.id}`}
-                  </Link>
-                  {e.is_itemized && (
-                    <span className="ml-2 text-[10px] uppercase tracking-wide text-slate-400">Itemized</span>
-                  )}
-                </Td>
-                <Td className="text-sm text-slate-600">
-                  <span className="font-mono text-xs text-slate-400 mr-1">{e.paid_through_code}</span>
-                  {e.paid_through_name}
-                </Td>
-                <Td className="text-sm text-slate-500">{e.reference || '—'}</Td>
-                <Td className="text-right font-mono px-3">{formatCurrency(e.total_amount)}</Td>
-                <Td><Badge variant={STATUS_BADGE[e.status]}>{e.status === 'recorded' ? 'Recorded' : 'Draft'}</Badge></Td>
+      {loading ? (
+        <SkeletonTable rows={8} cols={6} />
+      ) : expenses.length === 0 ? (
+        <EmptyState
+          variant={hasFilters ? 'no-results' : 'no-data'}
+          title={hasFilters ? 'No expenses match your filters' : 'No expenses recorded'}
+          description={hasFilters ? 'Try adjusting your search or clearing filters.' : 'Log your first business expense to start tracking outflows.'}
+          actionLabel={hasFilters ? undefined : 'New Expense'}
+          onAction={hasFilters ? undefined : () => navigate('/expenses/new')}
+        />
+      ) : (
+        <Card className="overflow-hidden p-0">
+          <Table>
+            <Thead>
+              <Tr>
+                <Th className="text-left">Date</Th>
+                <Th className="text-left">Vendor</Th>
+                <Th className="text-left">Paid Through</Th>
+                <Th className="text-left">Reference</Th>
+                <Th className="text-right px-3">Amount</Th>
+                <Th className="text-left">Status</Th>
               </Tr>
-            ))}
-          </Tbody>
-        </Table>
-      </Card>
+            </Thead>
+            <Tbody>
+              {expenses.map((e) => (
+                <Tr key={e.id} className="cursor-pointer" onClick={() => navigate(`/expenses/${e.id}`)}>
+                  <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(e.expense_date)}</Td>
+                  <Td>
+                    <Link to={`/expenses/${e.id}`} onClick={(ev) => ev.stopPropagation()}
+                      className="font-medium hover:underline" style={{ color: 'var(--brand)' }}>
+                      {e.vendor_name || `Expense #${e.id}`}
+                    </Link>
+                    {e.is_itemized && (
+                      <span className="ml-2 text-[10px] mono uppercase" style={{ color: 'var(--ink-3)', letterSpacing: '0.08em' }}>
+                        Itemized
+                      </span>
+                    )}
+                  </Td>
+                  <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>
+                    <span className="mono text-xs mr-1" style={{ color: 'var(--ink-3)' }}>{e.paid_through_code}</span>
+                    {e.paid_through_name}
+                  </Td>
+                  <Td className="text-sm" style={{ color: 'var(--ink-3)' }}>{e.reference || '—'}</Td>
+                  <Td className="text-right mono px-3" style={{ color: 'var(--ink)' }}>{formatCurrency(e.total_amount)}</Td>
+                  <Td><Badge variant={STATUS_BADGE[e.status]}>{e.status === 'recorded' ? 'Recorded' : 'Draft'}</Badge></Td>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+        </Card>
+      )}
 
       {expenses.length > 0 && (
-        <div className="mt-3 text-xs text-slate-500 flex items-center justify-end gap-4 px-2">
-          <span>Total on page: <span className="font-mono font-medium text-slate-700">{formatCurrency(totals)}</span></span>
+        <div className="text-xs flex items-center justify-end gap-4 px-2" style={{ color: 'var(--ink-2)' }}>
+          <span>Total on page: <span className="mono font-medium" style={{ color: 'var(--ink)' }}>{formatCurrency(totals)}</span></span>
         </div>
       )}
     </div>
   )
 }
 
-function Pill({ label, count, active, dot, onClick }: {
+function Pill({ label, count, active, dotColor, onClick }: {
   label: string
   count: number
   active: boolean
-  dot?: string
+  dotColor?: string
   onClick: () => void
 }) {
   return (
-    <button onClick={onClick} className={cn(
-      'inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors',
-      active
-        ? 'bg-teal-50 border-teal-200 text-teal-700'
-        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-    )}>
-      {dot && <span className={cn('w-1.5 h-1.5 rounded-full', dot)} />}
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-2 px-3 h-8 rounded-full text-xs font-medium transition-colors"
+      style={{
+        background: active ? 'rgba(15,157,154,0.10)' : 'var(--surface-0)',
+        border: `1px solid ${active ? 'rgba(15,157,154,0.35)' : 'var(--line)'}`,
+        color: active ? 'var(--brand)' : 'var(--ink-2)',
+      }}
+    >
+      {dotColor && <span className="w-1.5 h-1.5 rounded-full" style={{ background: dotColor }} />}
       {label}
-      <span className={cn('text-[10px] tabular-nums', active ? 'text-teal-600' : 'text-slate-400')}>{count}</span>
+      <span className="text-[10px] mono" style={{ color: active ? 'var(--brand)' : 'var(--ink-3)' }}>{count}</span>
     </button>
   )
 }

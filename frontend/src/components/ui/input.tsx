@@ -9,13 +9,14 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
       <input
         type={type}
         className={cn(
-          'w-full px-3 py-2 text-sm rounded-lg border placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition',
+          'w-full h-9 px-3 text-sm rounded-md border placeholder:text-[var(--ink-3)] outline-none transition-colors',
+          'focus:border-[var(--ink)] focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]',
           className
         )}
         style={{
-          backgroundColor: 'var(--color-input-bg)',
-          borderColor: 'var(--color-input-border)',
-          color: 'var(--color-text-primary)',
+          backgroundColor: 'var(--surface-0)',
+          borderColor: 'var(--line)',
+          color: 'var(--ink)',
           ...style,
         }}
         ref={ref}

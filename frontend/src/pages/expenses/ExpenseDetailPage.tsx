@@ -99,7 +99,7 @@ export default function ExpenseDetailPage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="max-w-5xl mx-auto space-y-5">
       <button onClick={() => navigate('/expenses')}
         className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3">
         <ArrowLeft size={14} /> Back to Expenses
@@ -109,7 +109,7 @@ export default function ExpenseDetailPage() {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <FileText size={18} className="text-slate-400" />
-            <h1 className="text-xl font-bold text-slate-900">
+            <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
               {expense.vendor_name || `Expense #${expense.id}`}
             </h1>
             <Badge variant={expense.status === 'recorded' ? 'success' : 'default'}>

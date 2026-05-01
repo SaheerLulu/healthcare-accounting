@@ -14,7 +14,6 @@ import {
   LogOut,
   Sun,
   Moon,
-  Calculator,
   Globe,
   Users,
   Landmark,
@@ -22,6 +21,7 @@ import {
 import { useTheme } from 'next-themes'
 import { cn } from '../lib/utils'
 import { useLocation as useAppLocation } from '../contexts/LocationContext'
+import { PageTransition } from './ui/PageTransition'
 
 interface MenuItem {
   id: string
@@ -66,9 +66,7 @@ const menuGroups: MenuGroup[] = [
   {
     label: 'Banking',
     icon: Landmark,
-    items: [
-      { id: 'banking', label: 'Bank Accounts', to: '/banking' },
-    ],
+    items: [{ id: 'banking', label: 'Bank Accounts', to: '/banking' }],
   },
   {
     label: 'GST',
@@ -115,8 +113,45 @@ const menuGroups: MenuGroup[] = [
   },
 ]
 
+function Wordmark() {
+  return (
+    <div className="flex items-center gap-2 mr-5 flex-shrink-0">
+      <span
+        style={{
+          fontFamily: 'Inter, system-ui, sans-serif',
+          fontWeight: 700,
+          fontSize: 18,
+          letterSpacing: '-0.04em',
+          lineHeight: 1,
+          display: 'inline-flex',
+          alignItems: 'baseline',
+        }}
+      >
+        <span style={{ color: 'var(--ink)' }}>seef</span>
+        <span style={{ color: 'var(--brand)' }}>med</span>
+        <span style={{ color: 'var(--brand)' }}>.</span>
+      </span>
+      <span
+        className="mono uppercase hidden lg:inline"
+        style={{
+          fontSize: 10,
+          color: 'var(--ink-3)',
+          letterSpacing: '0.12em',
+          fontWeight: 600,
+          marginLeft: 4,
+          paddingLeft: 8,
+          borderLeft: '1px solid var(--line)',
+        }}
+      >
+        Accounting
+      </span>
+    </div>
+  )
+}
+
 function LocationSelector() {
-  const { locations, activeLocationId, activeLocation, canSeeAll, isLoading, setActiveLocation } = useAppLocation()
+  const { locations, activeLocationId, activeLocation, canSeeAll, isLoading, setActiveLocation } =
+    useAppLocation()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -129,7 +164,12 @@ function LocationSelector() {
   }, [])
 
   if (isLoading) {
-    return <div className="h-8 w-32 rounded-lg animate-pulse" style={{ backgroundColor: 'var(--color-hover-bg)' }} />
+    return (
+      <div
+        className="h-8 w-32 rounded-md animate-pulse"
+        style={{ backgroundColor: 'var(--color-hover-bg)' }}
+      />
+    )
   }
 
   const label = activeLocation ? activeLocation.name : canSeeAll ? 'All Stores' : 'No Store'
@@ -138,49 +178,68 @@ function LocationSelector() {
     <div className="relative flex-shrink-0" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100 border"
-        style={{ color: 'var(--color-slate)', borderColor: 'var(--color-card-border)' }}
+        className="flex items-center gap-1.5 px-3 h-8 rounded-md text-sm font-medium hover:bg-[var(--color-hover-bg)]"
+        style={{
+          color: 'var(--ink)',
+          border: '1px solid var(--line)',
+          background: 'var(--surface-0)',
+        }}
       >
-        <MapPin className="w-3.5 h-3.5" style={{ color: 'var(--color-teal)' }} />
+        <MapPin className="w-3.5 h-3.5" style={{ color: 'var(--brand)' }} />
         <span className="max-w-[140px] truncate">{label}</span>
         <ChevronDown className={cn('w-3 h-3 transition-transform', open && 'rotate-180')} />
       </button>
 
       {open && (
         <div
-          className="absolute top-full left-0 mt-1 rounded-lg shadow-lg py-1 min-w-[200px] z-50 dropdown-animate border"
-          style={{ backgroundColor: 'var(--color-dropdown-bg)', borderColor: 'var(--color-card-border)' }}
+          className="absolute top-full left-0 mt-1 rounded-lg shadow-lg py-1 min-w-[220px] z-50 dropdown-animate"
+          style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
         >
-          <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
+          <div
+            className="px-3 py-2 mono uppercase"
+            style={{ fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.1em', fontWeight: 600 }}
+          >
             Switch Store
           </div>
           {canSeeAll && (
             <button
-              onClick={() => { setActiveLocation(null); setOpen(false) }}
-              className="w-full text-left px-4 py-2 text-sm flex items-center justify-between transition-all hover:translate-x-0.5"
+              onClick={() => {
+                setActiveLocation(null)
+                setOpen(false)
+              }}
+              className="w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:translate-x-0.5 transition-transform"
               style={
                 activeLocationId === null
-                  ? { color: 'var(--color-teal)', backgroundColor: 'rgba(15, 157, 154, 0.08)', fontWeight: 500 }
-                  : { color: 'var(--color-text-primary)' }
+                  ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)', fontWeight: 500 }
+                  : { color: 'var(--ink)' }
               }
             >
-              <span className="flex items-center gap-2"><Globe className="w-4 h-4" /> All Stores</span>
-              {activeLocationId === null && <Check className="w-4 h-4" style={{ color: 'var(--color-teal)' }} />}
+              <span className="flex items-center gap-2">
+                <Globe className="w-4 h-4" /> All Stores
+              </span>
+              {activeLocationId === null && (
+                <Check className="w-4 h-4" style={{ color: 'var(--brand)' }} />
+              )}
             </button>
           )}
           {locations.map((loc) => (
             <button
               key={loc.id}
-              onClick={() => { setActiveLocation(loc.id); setOpen(false) }}
-              className="w-full text-left px-4 py-2 text-sm flex items-center justify-between transition-all hover:translate-x-0.5"
+              onClick={() => {
+                setActiveLocation(loc.id)
+                setOpen(false)
+              }}
+              className="w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:translate-x-0.5 transition-transform"
               style={
                 activeLocationId === loc.id
-                  ? { color: 'var(--color-teal)', backgroundColor: 'rgba(15, 157, 154, 0.08)', fontWeight: 500 }
-                  : { color: 'var(--color-text-primary)' }
+                  ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)', fontWeight: 500 }
+                  : { color: 'var(--ink)' }
               }
             >
               <span className="truncate">{loc.name}</span>
-              {activeLocationId === loc.id && <Check className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-teal)' }} />}
+              {activeLocationId === loc.id && (
+                <Check className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--brand)' }} />
+              )}
             </button>
           ))}
         </div>
@@ -244,19 +303,11 @@ function TopNav() {
       className="h-16 backdrop-blur-lg border-b fixed top-0 left-0 right-0 z-40 flex items-center px-4"
       style={{ backgroundColor: 'var(--color-nav-bg)', borderColor: 'var(--color-nav-border)' }}
     >
-      {/* Logo */}
-      <div className="flex items-center gap-2 mr-6 flex-shrink-0">
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--color-teal)' }}>
-          <Calculator className="w-4 h-4 text-white" />
-        </div>
-        <div className="leading-tight">
-          <p className="font-semibold text-sm" style={{ color: 'var(--color-slate)' }}>Seefmed</p>
-          <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Accounting</p>
-        </div>
-      </div>
+      <Wordmark />
 
-      {/* Location Selector */}
-      <div className="mr-3"><LocationSelector /></div>
+      <div className="mr-3">
+        <LocationSelector />
+      </div>
 
       {/* Menu Groups */}
       <div className="flex items-center flex-1 mx-2">
@@ -271,30 +322,34 @@ function TopNav() {
               <button
                 onClick={() => handleGroupClick(group)}
                 className={cn(
-                  'relative flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-sm font-medium w-full max-w-[150px]',
-                  !active && 'hover:bg-gray-100'
+                  'relative flex items-center justify-center gap-1 px-3 py-2 rounded-md text-sm font-medium w-full max-w-[150px]',
+                  !active && 'hover:bg-[var(--color-hover-bg)]'
                 )}
                 style={
                   active
-                    ? { color: 'var(--color-teal)', backgroundColor: 'rgba(15, 157, 154, 0.08)' }
-                    : { color: 'var(--color-text-secondary)' }
+                    ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)' }
+                    : { color: 'var(--ink-2)' }
                 }
               >
                 <Icon className="w-4 h-4" />
                 <span className="hidden md:inline">{group.label}</span>
-                {hasSubs && <ChevronDown className={cn('w-3 h-3 transition-transform', isOpen && 'rotate-180')} />}
+                {hasSubs && (
+                  <ChevronDown
+                    className={cn('w-3 h-3 transition-transform', isOpen && 'rotate-180')}
+                  />
+                )}
                 {active && (
                   <span
-                    className="absolute bottom-0 left-1/2 -translate-x-1/2 w-6 h-0.5 rounded-full"
-                    style={{ backgroundColor: 'var(--color-teal)' }}
+                    className="absolute -bottom-[1px] left-1/2 -translate-x-1/2 w-6 h-0.5 rounded-full"
+                    style={{ backgroundColor: 'var(--brand)' }}
                   />
                 )}
               </button>
 
               {isOpen && hasSubs && (
                 <div
-                  className="absolute top-full left-1/2 -translate-x-1/2 mt-1 rounded-lg shadow-lg py-1 min-w-[220px] z-50 dropdown-animate border"
-                  style={{ backgroundColor: 'var(--color-dropdown-bg)', borderColor: 'var(--color-card-border)' }}
+                  className="absolute top-full left-1/2 -translate-x-1/2 mt-1 rounded-lg shadow-lg py-1 min-w-[220px] z-50 dropdown-animate"
+                  style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
                 >
                   {group.items.map((item) => (
                     <NavLink
@@ -303,14 +358,14 @@ function TopNav() {
                       onClick={() => setOpenMenu(null)}
                       className={({ isActive }) =>
                         cn(
-                          'block w-full text-left px-4 py-2 text-sm transition-all hover:translate-x-0.5',
+                          'block w-full text-left px-4 py-2 text-sm hover:translate-x-0.5 transition-transform',
                           isActive && 'font-medium'
                         )
                       }
                       style={({ isActive }) =>
                         isActive
-                          ? { color: 'var(--color-teal)', backgroundColor: 'rgba(15, 157, 154, 0.08)' }
-                          : { color: 'var(--color-text-primary)' }
+                          ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)' }
+                          : { color: 'var(--ink)' }
                       }
                     >
                       {item.label}
@@ -327,37 +382,57 @@ function TopNav() {
       <div className="flex items-center gap-2 flex-shrink-0">
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
-          style={{ color: 'var(--color-text-secondary)' }}
+          className="p-2 rounded-md hover:bg-[var(--color-hover-bg)]"
+          style={{ color: 'var(--ink-2)' }}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
-          {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
 
         <div className="relative">
           <button
-            onClick={() => { setShowProfile(!showProfile); setOpenMenu(null) }}
-            className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+            onClick={() => {
+              setShowProfile(!showProfile)
+              setOpenMenu(null)
+            }}
+            className="flex items-center gap-2 p-1 rounded-md hover:bg-[var(--color-hover-bg)]"
           >
-            <div className="w-7 h-7 rounded-full flex items-center justify-center" style={{ backgroundColor: 'var(--color-teal)' }}>
+            <div
+              className="w-7 h-7 rounded-full flex items-center justify-center"
+              style={{ backgroundColor: 'var(--brand)' }}
+            >
               <User className="w-3.5 h-3.5 text-white" />
             </div>
-            <ChevronDown className="w-3.5 h-3.5 hidden lg:block" style={{ color: 'var(--color-text-muted)' }} />
+            <ChevronDown
+              className="w-3.5 h-3.5 hidden lg:block"
+              style={{ color: 'var(--ink-3)' }}
+            />
           </button>
 
           {showProfile && (
             <div
-              className="absolute right-0 mt-2 w-56 rounded-xl shadow-xl overflow-hidden z-50 dropdown-animate border"
-              style={{ backgroundColor: 'var(--color-dropdown-bg)', borderColor: 'var(--color-card-border)' }}
+              className="absolute right-0 mt-2 w-56 rounded-xl shadow-xl overflow-hidden z-50 dropdown-animate"
+              style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
             >
-              <div className="p-4 border-b" style={{ borderColor: 'var(--color-card-border)', backgroundColor: 'var(--color-grey-light)' }}>
-                <p className="text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>Signed in</p>
-                <p className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>Seefmed Accounting</p>
+              <div
+                className="p-4 border-b"
+                style={{
+                  borderColor: 'var(--line)',
+                  backgroundColor: 'var(--color-grey-light)',
+                }}
+              >
+                <p className="text-sm font-medium" style={{ color: 'var(--ink)' }}>
+                  Signed in
+                </p>
+                <p className="text-xs" style={{ color: 'var(--ink-2)' }}>
+                  Seefmed Accounting
+                </p>
               </div>
               <div className="py-2">
                 <button
                   onClick={handleLogout}
-                  className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 text-red-600 hover:bg-red-50 transition-all hover:translate-x-0.5"
+                  className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 hover:translate-x-0.5 transition-transform"
+                  style={{ color: 'var(--danger)' }}
                 >
                   <LogOut className="w-4 h-4" />
                   Sign Out
@@ -373,12 +448,13 @@ function TopNav() {
 
 export default function Layout() {
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--color-grey-bg)' }}>
+    <div className="min-h-screen" style={{ backgroundColor: 'var(--surface-1)' }}>
       <TopNav />
-      <main className="px-6 pb-6 pt-20 animate-fade-in">
-        <Outlet />
+      <main className="px-6 pb-6 pt-20">
+        <PageTransition>
+          <Outlet />
+        </PageTransition>
       </main>
     </div>
   )
 }
-

@@ -170,7 +170,7 @@ export default function RecurringJournalEditorPage() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto pb-24">
+    <div className="max-w-6xl mx-auto space-y-5 pb-24">
       <button onClick={() => navigate('/journals/recurring')}
         className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3">
         <ArrowLeft size={14} /> Back to Recurring Journals
@@ -179,7 +179,7 @@ export default function RecurringJournalEditorPage() {
       <div className="mb-5">
         <div className="flex items-center gap-2 mb-1">
           <Repeat size={18} className="text-teal-600" />
-          <h1 className="text-xl font-bold text-slate-900">
+          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
             {editingId ? `Edit ${original?.profile_name || 'profile'}` : 'New Recurring Journal'}
           </h1>
         </div>

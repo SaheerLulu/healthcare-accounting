@@ -185,12 +185,12 @@ export default function AccountsPage() {
   const totalCount = counts?.total ?? 0
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="max-w-7xl mx-auto space-y-5">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-5 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Chart of Accounts</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
+          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Chart of Accounts</h1>
+          <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>
             {totalCount} accounts · {counts?.active ?? 0} active · {counts?.inactive ?? 0} inactive
           </p>
         </div>

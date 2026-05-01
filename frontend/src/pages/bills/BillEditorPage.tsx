@@ -192,7 +192,7 @@ export default function BillEditorPage() {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto pb-24">
+    <div className="max-w-6xl mx-auto space-y-5 pb-24">
       <button onClick={() => navigate('/bills')}
         className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3">
         <ArrowLeft size={14} /> Back to Bills
@@ -200,10 +200,10 @@ export default function BillEditorPage() {
 
       <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">
+          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
             {editingId ? `Edit ${original?.bill_no || `Bill #${editingId}`}` : 'New Bill'}
           </h1>
-          <p className="text-sm text-slate-500 mt-0.5">
+          <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>
             Record a vendor bill (rent, utilities, services, etc.). Approve to post it to the books.
           </p>
         </div>

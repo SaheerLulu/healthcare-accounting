@@ -11,6 +11,8 @@ import { Input } from '../components/ui/input'
 import { Card } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
 import { Button } from '../components/ui/button'
+import { EmptyState } from '../components/ui/EmptyState'
+import { SkeletonTable } from '../components/ui/Skeletons'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose,
 } from '../components/ui/sheet'
@@ -49,105 +51,96 @@ export default function PayablesPage() {
   ), [rows])
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
+    <div className="max-w-7xl mx-auto space-y-5">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Payables Aging</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            {rows.length} suppliers owed a total of{' '}
-            <span className="font-medium text-amber-700">{formatCurrency(totals.total)}</span>.
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Payables Aging</h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
+            <span className="mono">{rows.length}</span> suppliers owed a total of{' '}
+            <span className="font-medium mono" style={{ color: 'var(--warning)' }}>{formatCurrency(totals.total)}</span>.
             Click a row to drill into the supplier; use Pay to record payment.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500 font-medium">As of</label>
-          <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)}
-            className="w-auto px-2.5 py-1.5" />
+          <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>As of</label>
+          <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-auto" />
         </div>
       </div>
 
-      <Card className="overflow-hidden p-0">
-        <Table>
-          <Thead>
-            <Tr className="bg-slate-50">
-              <Th className="text-left">Supplier</Th>
-              <Th className="text-right px-3">Total Outstanding</Th>
-              <Th className="text-right px-3">0–30</Th>
-              <Th className="text-right px-3">31–60</Th>
-              <Th className="text-right px-3">61–90</Th>
-              <Th className="text-right px-3">90+</Th>
-              <Th className="w-[160px]" />
-            </Tr>
-          </Thead>
-          <Tbody>
-            {loading ? (
-              <tr>
-                <td colSpan={7} className="text-center py-12">
-                  <Loader2 size={24} className="animate-spin inline text-teal-600" />
-                </td>
-              </tr>
-            ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="text-center py-12 text-slate-400 text-sm">
-                  No payables data found
-                </td>
-              </tr>
-            ) : (
-              rows.map((row) => (
-                <Tr key={row.supplier_id} className="group hover:bg-slate-50">
+      {loading ? (
+        <SkeletonTable rows={6} cols={7} />
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon={Banknote}
+          title="No outstanding payables"
+          description="When you owe suppliers, their aging buckets will appear here."
+        />
+      ) : (
+        <Card className="overflow-hidden p-0">
+          <Table>
+            <Thead>
+              <Tr>
+                <Th className="text-left">Supplier</Th>
+                <Th className="text-right px-3">Total Outstanding</Th>
+                <Th className="text-right px-3">0–30</Th>
+                <Th className="text-right px-3">31–60</Th>
+                <Th className="text-right px-3">61–90</Th>
+                <Th className="text-right px-3">90+</Th>
+                <Th className="w-[160px]" />
+              </Tr>
+            </Thead>
+            <Tbody>
+              {rows.map((row) => (
+                <Tr key={row.supplier_id} className="group">
                   <Td className="font-medium">
-                    <Link to={`/parties/suppliers/${row.supplier_id}`}
-                      className="inline-flex items-center gap-1 text-slate-900 hover:text-teal-700">
+                    <Link
+                      to={`/parties/suppliers/${row.supplier_id}`}
+                      className="inline-flex items-center gap-1 hover:underline"
+                      style={{ color: 'var(--ink)' }}
+                    >
                       {row.supplier_name}
-                      <ExternalLink size={11} className="opacity-0 group-hover:opacity-100 text-teal-600" />
+                      <ExternalLink size={11} className="opacity-0 group-hover:opacity-100" style={{ color: 'var(--brand)' }} />
                     </Link>
                   </Td>
-                  <Td className="text-right font-mono font-semibold px-3">
+                  <Td className="text-right mono font-semibold px-3" style={{ color: 'var(--ink)' }}>
                     {formatCurrency(row.total_outstanding)}
                   </Td>
-                  <Td className="text-right font-mono text-slate-500 px-3">
-                    {formatCurrency(row.aging_0_30)}
-                  </Td>
-                  <Td className="text-right font-mono text-amber-700 px-3">
-                    {formatCurrency(row.aging_31_60)}
-                  </Td>
-                  <Td className="text-right font-mono text-orange-700 px-3">
-                    {formatCurrency(row.aging_61_90)}
-                  </Td>
-                  <Td className="text-right font-mono text-red-700 px-3">
-                    {formatCurrency(row.aging_90_plus)}
-                  </Td>
+                  <Td className="text-right mono px-3" style={{ color: 'var(--ink-2)' }}>{formatCurrency(row.aging_0_30)}</Td>
+                  <Td className="text-right mono px-3" style={{ color: 'var(--warning)' }}>{formatCurrency(row.aging_31_60)}</Td>
+                  <Td className="text-right mono px-3" style={{ color: '#d97706' }}>{formatCurrency(row.aging_61_90)}</Td>
+                  <Td className="text-right mono px-3" style={{ color: 'var(--danger)' }}>{formatCurrency(row.aging_90_plus)}</Td>
                   <Td className="text-right pr-3">
                     <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                       <Button size="sm" onClick={() => setPaying(row)}>
                         <Banknote size={13} /> Pay
                       </Button>
-                      <Link to={`/parties/suppliers/${row.supplier_id}`}
-                        className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100"
-                        title="Open detail">
+                      <Link
+                        to={`/parties/suppliers/${row.supplier_id}`}
+                        className="p-1.5 rounded hover:bg-[var(--color-hover-bg)]"
+                        style={{ color: 'var(--ink-3)' }}
+                        title="Open detail"
+                      >
                         <ChevronRight size={16} />
                       </Link>
                     </div>
                   </Td>
                 </Tr>
-              ))
-            )}
-          </Tbody>
-          {rows.length > 0 && (
+              ))}
+            </Tbody>
             <tfoot>
-              <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold">
-                <td className="py-3 px-4 text-sm text-slate-500">Total</td>
-                <td className="py-3 px-3 text-right font-mono text-slate-900">{formatCurrency(totals.total)}</td>
-                <td className="py-3 px-3 text-right font-mono text-slate-500">{formatCurrency(totals.d0_30)}</td>
-                <td className="py-3 px-3 text-right font-mono text-amber-700">{formatCurrency(totals.d31_60)}</td>
-                <td className="py-3 px-3 text-right font-mono text-orange-700">{formatCurrency(totals.d61_90)}</td>
-                <td className="py-3 px-3 text-right font-mono text-red-700">{formatCurrency(totals.d90plus)}</td>
+              <tr style={{ borderTop: '2px solid var(--line)', background: 'var(--color-grey-light)' }} className="font-semibold">
+                <td className="py-3 px-4 text-sm" style={{ color: 'var(--ink-2)' }}>Total</td>
+                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--ink)' }}>{formatCurrency(totals.total)}</td>
+                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--ink-2)' }}>{formatCurrency(totals.d0_30)}</td>
+                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--warning)' }}>{formatCurrency(totals.d31_60)}</td>
+                <td className="py-3 px-3 text-right mono" style={{ color: '#d97706' }}>{formatCurrency(totals.d61_90)}</td>
+                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--danger)' }}>{formatCurrency(totals.d90plus)}</td>
                 <td />
               </tr>
             </tfoot>
-          )}
-        </Table>
-      </Card>
+          </Table>
+        </Card>
+      )}
 
       {paying && (
         <PayPaymentSheet row={paying} onClose={() => setPaying(null)}

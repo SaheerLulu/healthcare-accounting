@@ -103,19 +103,20 @@ export default function JournalDetailPage() {
   )
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="max-w-5xl mx-auto space-y-5">
       <button
         onClick={() => navigate('/journals')}
-        className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3"
+        className="inline-flex items-center gap-1 text-sm hover:underline"
+        style={{ color: 'var(--ink-2)' }}
       >
         <ArrowLeft size={14} /> Back to Journals
       </button>
 
-      <div className="flex items-start justify-between mb-5 gap-4 flex-wrap">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <FileText size={18} className="text-slate-400" />
-            <h1 className="text-xl font-bold text-slate-900 font-mono">{entry.entry_no}</h1>
+            <FileText size={18} style={{ color: 'var(--ink-3)' }} />
+            <h1 className="text-xl font-semibold mono" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>{entry.entry_no}</h1>
             <Badge variant={entry.is_posted ? 'success' : 'warning'}>
               {entry.is_posted ? 'Posted' : 'Draft'}
             </Badge>
@@ -123,7 +124,7 @@ export default function JournalDetailPage() {
               {voucherLabel(entry.voucher_type)}
             </span>
           </div>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
             {formatDate(entry.date)}
             {entry.reference_type && (
               <> · {entry.reference_type}{entry.reference_id ? ` #${entry.reference_id}` : ''}</>
@@ -157,60 +158,65 @@ export default function JournalDetailPage() {
       </div>
 
       {entry.narration && (
-        <Card className="p-4 mb-4">
-          <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Notes</div>
-          <p className="text-sm text-slate-800 whitespace-pre-wrap">{entry.narration}</p>
+        <Card className="p-4">
+          <div
+            className="text-xs mono uppercase mb-1"
+            style={{ color: 'var(--ink-3)', letterSpacing: '0.1em', fontWeight: 600 }}
+          >
+            Notes
+          </div>
+          <p className="text-sm whitespace-pre-wrap" style={{ color: 'var(--ink)' }}>{entry.narration}</p>
         </Card>
       )}
 
       <Card className="overflow-hidden p-0">
-        <div className="px-5 py-3 border-b border-slate-100">
-          <h2 className="text-sm font-semibold text-slate-900">Line Items</h2>
+        <div className="px-5 py-3 border-b" style={{ borderColor: 'var(--line)' }}>
+          <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Line Items</h2>
         </div>
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 border-b border-slate-100">
+          <thead style={{ background: 'var(--color-grey-light)', borderBottom: '1px solid var(--line)' }}>
             <tr>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Account</th>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Description</th>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Party</th>
-              <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Debit</th>
-              <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Credit</th>
+              <th className="text-left text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Account</th>
+              <th className="text-left text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Description</th>
+              <th className="text-left text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Party</th>
+              <th className="text-right text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Debit</th>
+              <th className="text-right text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Credit</th>
             </tr>
           </thead>
           <tbody>
             {entry.lines.map((l, i) => (
-              <tr key={i} className="border-b border-slate-100 last:border-0">
+              <tr key={i} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
                 <td className="px-4 py-2.5">
-                  <div className="font-medium text-slate-900">{l.account_name || `Account ${l.account}`}</div>
-                  {l.account_code && <div className="text-xs text-slate-400 font-mono">{l.account_code}</div>}
+                  <div className="font-medium" style={{ color: 'var(--ink)' }}>{l.account_name || `Account ${l.account}`}</div>
+                  {l.account_code && <div className="text-xs mono" style={{ color: 'var(--ink-3)' }}>{l.account_code}</div>}
                 </td>
-                <td className="px-4 py-2.5 text-slate-600 text-sm">{l.narration || '—'}</td>
-                <td className="px-4 py-2.5 text-slate-500 text-xs">
+                <td className="px-4 py-2.5 text-sm" style={{ color: 'var(--ink-2)' }}>{l.narration || '—'}</td>
+                <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--ink-3)' }}>
                   {(l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null })
                     .party_type && (l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null }).party_type !== 'None'
                     ? `${(l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null }).party_type} #${(l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null }).party_id}`
                     : '—'}
                 </td>
-                <td className="px-4 py-2.5 text-right font-mono">
+                <td className="px-4 py-2.5 text-right mono" style={{ color: 'var(--ink)' }}>
                   {parseFloat(l.debit) > 0 ? formatCurrency(l.debit) : '—'}
                 </td>
-                <td className="px-4 py-2.5 text-right font-mono">
+                <td className="px-4 py-2.5 text-right mono" style={{ color: 'var(--ink)' }}>
                   {parseFloat(l.credit) > 0 ? formatCurrency(l.credit) : '—'}
                 </td>
               </tr>
             ))}
           </tbody>
-          <tfoot className="bg-slate-50 border-t border-slate-200">
+          <tfoot style={{ background: 'var(--color-grey-light)', borderTop: '2px solid var(--line)' }}>
             <tr>
-              <td colSpan={3} className="px-4 py-2.5 text-right text-sm font-semibold text-slate-900">Total</td>
-              <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{formatCurrency(totals.dr)}</td>
-              <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{formatCurrency(totals.cr)}</td>
+              <td colSpan={3} className="px-4 py-2.5 text-right text-sm font-semibold" style={{ color: 'var(--ink)' }}>Total</td>
+              <td className="px-4 py-2.5 text-right mono font-bold" style={{ color: 'var(--ink)' }}>{formatCurrency(totals.dr)}</td>
+              <td className="px-4 py-2.5 text-right mono font-bold" style={{ color: 'var(--ink)' }}>{formatCurrency(totals.cr)}</td>
             </tr>
           </tfoot>
         </table>
       </Card>
 
-      <div className="mt-4 text-xs text-slate-400">
+      <div className="text-xs mono" style={{ color: 'var(--ink-3)' }}>
         Created {formatDate(entry.created_at)}
         {(entry as JournalEntry & { created_by_name?: string | null }).created_by_name && (
           <> by {(entry as JournalEntry & { created_by_name?: string | null }).created_by_name}</>
