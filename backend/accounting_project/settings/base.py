@@ -90,14 +90,46 @@ TEMPLATES = [
 WSGI_APPLICATION = 'accounting_project.wsgi.application'
 
 # ---------------------------------------------------------------------------
-# Database – points to the shared inventory SQLite DB
+# Database – shared Postgres with healthcare-inventory-management & dashboard.
+# Override priority: DATABASE_URL > POSTGRES_* env vars > auto-detected defaults.
+# On WSL2 the Windows host is the default-route gateway, and that IP changes
+# between WSL sessions — re-derive it on every startup.
 # ---------------------------------------------------------------------------
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': '/home/saheer/biloop/healthcare/healthcare/backend/db.sqlite3',
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+if DATABASE_URL:
+    import dj_database_url
+    DATABASES = {
+        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600),
     }
-}
+else:
+    def _default_postgres_host():
+        try:
+            with open('/proc/sys/kernel/osrelease') as f:
+                if 'microsoft' not in f.read().lower():
+                    return 'localhost'
+        except OSError:
+            return 'localhost'
+        try:
+            import subprocess
+            out = subprocess.check_output(['ip', 'route', 'show', 'default'], text=True)
+            for tok in out.split():
+                if tok.count('.') == 3:
+                    return tok
+        except Exception:
+            pass
+        return 'localhost'
+
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('POSTGRES_DB', 'healthcare_inv'),
+            'USER': os.environ.get('POSTGRES_USER', 'postgres'),
+            'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'postgres'),
+            'HOST': os.environ.get('POSTGRES_HOST') or _default_postgres_host(),
+            'PORT': os.environ.get('POSTGRES_PORT', '5432'),
+            'CONN_MAX_AGE': 600,
+        }
+    }
 
 # ---------------------------------------------------------------------------
 # Password validation
