@@ -127,7 +127,9 @@ else:
             'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'postgres'),
             'HOST': os.environ.get('POSTGRES_HOST') or _default_postgres_host(),
             'PORT': os.environ.get('POSTGRES_PORT', '5432'),
-            'CONN_MAX_AGE': 600,
+            # CONN_MAX_AGE=0 (the default) closes connections at request end,
+            # which prevents Postgres from hitting max_connections when the
+            # dev server, pipelines, and shells all share the same DB.
         }
     }
 
