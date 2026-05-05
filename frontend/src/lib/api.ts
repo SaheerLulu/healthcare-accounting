@@ -212,6 +212,9 @@ export async function createJournalEntry(data: {
   date: string
   narration: string
   voucher_type: string
+  reference_type?: string
+  reference_id?: number | null
+  location_id: number
   lines: JournalLine[]
 }) {
   const res = await api.post('/journals/entries/', data)
@@ -234,6 +237,7 @@ export async function updateJournalEntry(id: number, data: {
   voucher_type?: string
   reference_type?: string
   reference_id?: number | null
+  location_id: number
   lines?: JournalLine[]
 }) {
   const res = await api.put(`/journals/entries/${id}/`, data)
@@ -262,21 +266,21 @@ export async function getCustomers() {
 }
 
 export async function createPaymentVoucher(data: {
-  date: string; amount: string; party_id?: number | null; payment_mode: string; narration?: string; location_id?: number | null
+  date: string; amount: string; party_id?: number | null; payment_mode: string; narration?: string; location_id: number
 }) {
   const res = await api.post('/journals/entries/payment/', data)
   return res.data as JournalEntry
 }
 
 export async function createReceiptVoucher(data: {
-  date: string; amount: string; party_id?: number | null; receipt_mode: string; narration?: string; location_id?: number | null
+  date: string; amount: string; party_id?: number | null; receipt_mode: string; narration?: string; location_id: number
 }) {
   const res = await api.post('/journals/entries/receipt/', data)
   return res.data as JournalEntry
 }
 
 export async function createContraVoucher(data: {
-  date: string; amount: string; direction: string; narration?: string; location_id?: number | null
+  date: string; amount: string; direction: string; narration?: string; location_id: number
 }) {
   const res = await api.post('/journals/entries/contra/', data)
   return res.data as JournalEntry

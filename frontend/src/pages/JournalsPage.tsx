@@ -275,6 +275,7 @@ function StatusPill({ label, count, active, dotColor, onClick }: {
 // ─── Quick voucher sheets ───────────────────────────────────────────────────
 
 function PaymentSheet({ suppliers, onSuccess }: { suppliers: Party[]; onSuccess: () => void }) {
+  const { activeLocationId } = useLocation()
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
@@ -290,9 +291,16 @@ function PaymentSheet({ suppliers, onSuccess }: { suppliers: Party[]; onSuccess:
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (activeLocationId === null) {
+      toast.error('Select a specific location before recording a payment')
+      return
+    }
     setSaving(true)
     try {
-      await createPaymentVoucher({ date, amount, party_id: partyId || null, payment_mode: mode, narration })
+      await createPaymentVoucher({
+        date, amount, party_id: partyId || null, payment_mode: mode, narration,
+        location_id: activeLocationId,
+      })
       toast.success('Payment voucher created')
       setOpen(false)
       reset()
@@ -363,6 +371,7 @@ function PaymentSheet({ suppliers, onSuccess }: { suppliers: Party[]; onSuccess:
 }
 
 function ReceiptSheet({ customers, onSuccess }: { customers: Party[]; onSuccess: () => void }) {
+  const { activeLocationId } = useLocation()
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
@@ -378,9 +387,16 @@ function ReceiptSheet({ customers, onSuccess }: { customers: Party[]; onSuccess:
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (activeLocationId === null) {
+      toast.error('Select a specific location before recording a receipt')
+      return
+    }
     setSaving(true)
     try {
-      await createReceiptVoucher({ date, amount, party_id: partyId || null, receipt_mode: mode, narration })
+      await createReceiptVoucher({
+        date, amount, party_id: partyId || null, receipt_mode: mode, narration,
+        location_id: activeLocationId,
+      })
       toast.success('Receipt voucher created')
       setOpen(false); reset(); onSuccess()
     } catch {
@@ -449,6 +465,7 @@ function ReceiptSheet({ customers, onSuccess }: { customers: Party[]; onSuccess:
 }
 
 function ContraSheet({ onSuccess }: { onSuccess: () => void }) {
+  const { activeLocationId } = useLocation()
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
@@ -463,9 +480,16 @@ function ContraSheet({ onSuccess }: { onSuccess: () => void }) {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
+    if (activeLocationId === null) {
+      toast.error('Select a specific location before recording a contra')
+      return
+    }
     setSaving(true)
     try {
-      await createContraVoucher({ date, amount, direction, narration })
+      await createContraVoucher({
+        date, amount, direction, narration,
+        location_id: activeLocationId,
+      })
       toast.success('Contra voucher created')
       setOpen(false); reset(); onSuccess()
     } catch {

@@ -13,6 +13,7 @@ import { Input } from '../../components/ui/input'
 import { Card } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
 import { AccountPicker } from './AccountPicker'
+import { useLocation as useActiveLocation } from '../../contexts/LocationContext'
 
 const VOUCHER_TYPES = [
   'JOURNAL', 'PAYMENT', 'RECEIPT', 'CONTRA', 'CREDIT_NOTE', 'DEBIT_NOTE',
@@ -39,6 +40,7 @@ export default function JournalEditorPage() {
   const { id } = useParams<{ id?: string }>()
   const navigate = useNavigate()
   const editingId = id ? Number(id) : null
+  const { activeLocationId } = useActiveLocation()
 
   const [accounts, setAccounts] = useState<Account[]>([])
   const [date, setDate] = useState(today())
@@ -127,12 +129,14 @@ export default function JournalEditorPage() {
       voucher_type: voucherType,
       reference_type: referenceType,
       reference_id: referenceId ? Number(referenceId) : null,
+      location_id: activeLocationId as number,
       lines: cleanLines,
     }
   }
 
   function validate(): string | null {
     const data = payload()
+    if (activeLocationId === null) return 'Select a specific location before saving a journal entry'
     if (data.lines.length < 2) return 'At least two lines are required'
     if (!isBalanced) return `Debit ₹${totals.dr.toFixed(2)} ≠ Credit ₹${totals.cr.toFixed(2)}`
     return null

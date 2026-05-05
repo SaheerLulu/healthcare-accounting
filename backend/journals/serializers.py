@@ -160,7 +160,7 @@ class PaymentVoucherSerializer(serializers.Serializer):
     party_id = serializers.IntegerField(required=False, allow_null=True)
     payment_mode = serializers.ChoiceField(choices=['bank', 'cash'], default='bank')
     narration = serializers.CharField(required=False, allow_blank=True, default='Payment')
-    location_id = serializers.IntegerField(required=False, allow_null=True)
+    location_id = serializers.IntegerField(required=True, allow_null=False)
 
 
 class ReceiptVoucherSerializer(serializers.Serializer):
@@ -169,7 +169,7 @@ class ReceiptVoucherSerializer(serializers.Serializer):
     party_id = serializers.IntegerField(required=False, allow_null=True)
     receipt_mode = serializers.ChoiceField(choices=['bank', 'cash'], default='bank')
     narration = serializers.CharField(required=False, allow_blank=True, default='Receipt')
-    location_id = serializers.IntegerField(required=False, allow_null=True)
+    location_id = serializers.IntegerField(required=True, allow_null=False)
 
 
 class ContraVoucherSerializer(serializers.Serializer):
@@ -177,7 +177,7 @@ class ContraVoucherSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal('0.01'))
     direction = serializers.ChoiceField(choices=['bank_to_cash', 'cash_to_bank'], default='bank_to_cash')
     narration = serializers.CharField(required=False, allow_blank=True, default='Contra Entry')
-    location_id = serializers.IntegerField(required=False, allow_null=True)
+    location_id = serializers.IntegerField(required=True, allow_null=False)
 
 
 # ─── Recurring journals ─────────────────────────────────────────────────────

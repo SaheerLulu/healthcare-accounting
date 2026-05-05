@@ -16,6 +16,7 @@ import { SkeletonTable } from '../components/ui/Skeletons'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose,
 } from '../components/ui/sheet'
+import { useLocation as useActiveLocation } from '../contexts/LocationContext'
 
 export default function ReceivablesPage() {
   const [rows, setRows] = useState<ReceivablesAgingRow[]>([])
@@ -163,10 +164,16 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
 
   const outstanding = parseFloat(row.total_outstanding) || 0
 
+  const { activeLocationId } = useActiveLocation()
+
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     const amt = parseFloat(amount) || 0
     if (amt <= 0) { toast.error('Amount must be > 0'); return }
+    if (activeLocationId === null) {
+      toast.error('Select a specific location before recording a receipt')
+      return
+    }
     if (amt > outstanding + 0.005) {
       if (!confirm(`Amount ${formatCurrency(amt)} exceeds outstanding ${formatCurrency(outstanding)}. Continue anyway?`)) return
     }
@@ -175,6 +182,7 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
       await createReceiptVoucher({
         date, amount, party_id: row.customer_id,
         receipt_mode: mode, narration,
+        location_id: activeLocationId,
       })
       toast.success('Receipt posted')
       onSuccess()
