@@ -3,10 +3,16 @@ __pycache__/
 *.pyc
 *.pyo
 backend/.venv/
+backend/.vev/
 backend/logs/
 backend/staticfiles/
 backend/media/
 *.sqlite3
+
+# Stray root-level npm artefacts (real frontend lives under frontend/)
+/package.json
+/package-lock.json
+/node_modules/
 
 # Node
 frontend/node_modules/
