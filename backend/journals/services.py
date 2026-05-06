@@ -575,6 +575,221 @@ class JournalAutoGenerationService:
         return entry
 
     @transaction.atomic
+    def post_inventory_adjustment(self, *, date, location_id, value: Decimal,
+                                  adjustment_type: str = 'shrinkage',
+                                  itc_to_reverse: Decimal = Decimal('0.00'),
+                                  narration: str = '', user=None):
+        """
+        Inventory adjustment for shrinkage / damage / count variance.
+
+        Books:
+            Dr Inventory Loss (P&L)         value
+            Dr Input GST (reversal)         itc_to_reverse  ← per CGST §17(5)(h)
+                Cr Closing Stock (Asset)        value
+                Cr Input GST                    itc_to_reverse
+
+        Wait — re-reading §17(5)(h): for goods lost/stolen/destroyed/written-off,
+        ITC originally claimed must be REVERSED (i.e., Dr Inventory Loss /
+        Cr Input GST), and the GST becomes part of the loss. So the correct
+        entry is:
+            Dr Inventory Loss               (value + itc_to_reverse)
+                Cr Closing Stock                value
+                Cr Input GST                    itc_to_reverse
+
+        `adjustment_type` determines the loss-account mapping (shrinkage vs damage).
+        """
+        value = Decimal(str(value))
+        itc = Decimal(str(itc_to_reverse))
+        if value <= 0:
+            raise ValueError('Adjustment value must be positive.')
+
+        loss_acct = self._acct('INVENTORY_LOSS')
+        stock_acct = self._acct('CLOSING_STOCK')
+
+        je = JournalEntry.objects.create(
+            date=date,
+            narration=(narration or
+                       f'Inventory {adjustment_type} adjustment'),
+            voucher_type='JOURNAL', reference_type='Manual',
+            location_id=location_id, created_by=user,
+        )
+        JournalEntryLine.objects.create(entry=je, account=loss_acct,
+                                        debit=value + itc)
+        JournalEntryLine.objects.create(entry=je, account=stock_acct,
+                                        credit=value)
+        if itc > 0:
+            # Reverse from CGST/SGST/IGST mix — caller should split by type.
+            # Simpler default: reverse from CGST + SGST 50:50.
+            half = (itc / 2).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            JournalEntryLine.objects.create(entry=je,
+                                            account=self._acct('INPUT_CGST'),
+                                            credit=half)
+            JournalEntryLine.objects.create(entry=je,
+                                            account=self._acct('INPUT_SGST'),
+                                            credit=itc - half)
+        je.post()
+        return je
+
+    @transaction.atomic
+    def post_drug_expiry_writeoff(self, *, date, location_id,
+                                  value_at_cost: Decimal,
+                                  itc_to_reverse: Decimal = Decimal('0.00'),
+                                  narration: str = '', user=None):
+        """Pharmacy-specific: expired drugs are destroyed → §17(5)(h) ITC reversal.
+
+        Same balance-sheet impact as inventory adjustment but lands in the
+        Expiry Loss P&L line so management can see expiry separately from
+        general shrinkage.
+        """
+        value = Decimal(str(value_at_cost))
+        itc = Decimal(str(itc_to_reverse))
+        if value <= 0:
+            raise ValueError('Write-off value must be positive.')
+
+        je = JournalEntry.objects.create(
+            date=date,
+            narration=narration or 'Expired drug stock write-off',
+            voucher_type='JOURNAL', reference_type='Manual',
+            location_id=location_id, created_by=user,
+        )
+        JournalEntryLine.objects.create(entry=je,
+                                        account=self._acct('EXPIRY_LOSS'),
+                                        debit=value + itc)
+        JournalEntryLine.objects.create(entry=je,
+                                        account=self._acct('CLOSING_STOCK'),
+                                        credit=value)
+        if itc > 0:
+            half = (itc / 2).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            JournalEntryLine.objects.create(entry=je,
+                                            account=self._acct('INPUT_CGST'),
+                                            credit=half)
+            JournalEntryLine.objects.create(entry=je,
+                                            account=self._acct('INPUT_SGST'),
+                                            credit=itc - half)
+        je.post()
+        return je
+
+    @transaction.atomic
+    def post_closing_stock_adjustment(self, *, date, value: Decimal,
+                                      location_id: int = None,
+                                      narration: str = '', user=None):
+        """
+        Period-end closing-stock JV — the entry that the periodic-inventory
+        system needs to make the balance sheet correct.
+
+        Mechanics:
+          1. Caller passes the *target* balance for Closing Stock — typically
+             from a physical count (or from `reports.StockValuationView`).
+          2. Service computes existing balance and posts only the *delta*.
+          3. Counter-leg goes to Purchases — increasing Closing Stock reduces
+             Purchases (and therefore boosts net profit by the same amount),
+             keeping the equation Assets = Liabilities + Equity in balance.
+
+        Books:
+          delta > 0 (more stock on hand than already booked):
+              Dr Closing Stock          delta
+                  Cr Purchases (5100)       delta   [reverses over-expensing]
+
+          delta < 0 (less on hand — e.g. shrinkage caught at count):
+              Dr Purchases              |delta|
+                  Cr Closing Stock          |delta|
+
+        Idempotent at the *value* level — re-call with same target → no-op.
+        """
+        target = Decimal(str(value))
+        if target < 0:
+            raise ValueError('Closing-stock value cannot be negative.')
+
+        closing_stock = self._acct('CLOSING_STOCK')
+        purchases = self._acct('PURCHASES')
+
+        # Existing balance on Closing Stock up to `date`
+        from django.db.models import Sum
+        agg = JournalEntryLine.objects.filter(
+            account=closing_stock, entry__is_posted=True, entry__date__lte=date,
+        )
+        if location_id is not None:
+            agg = agg.filter(entry__location_id=location_id)
+        agg = agg.aggregate(d=Sum('debit'), c=Sum('credit'))
+        existing = (agg['d'] or Decimal('0')) - (agg['c'] or Decimal('0'))
+
+        delta = target - existing
+        if abs(delta) < Decimal('0.01'):
+            return None  # already at target — no JV needed
+
+        je = JournalEntry.objects.create(
+            date=date,
+            narration=(narration or
+                       f'Closing stock adjustment as of {date} '
+                       f'(target ₹{target}, existing ₹{existing})'),
+            voucher_type='JOURNAL', reference_type='Manual',
+            location_id=location_id, created_by=user,
+        )
+        if delta > 0:
+            JournalEntryLine.objects.create(entry=je, account=closing_stock,
+                                            debit=delta)
+            JournalEntryLine.objects.create(entry=je, account=purchases,
+                                            credit=delta)
+        else:
+            JournalEntryLine.objects.create(entry=je, account=purchases,
+                                            debit=-delta)
+            JournalEntryLine.objects.create(entry=je, account=closing_stock,
+                                            credit=-delta)
+        je.post()
+        return je
+
+    @transaction.atomic
+    def post_stock_transfer(self, *, date, value: Decimal,
+                            from_location_id: int, to_location_id: int,
+                            narration: str = '', user=None):
+        """
+        Inter-branch stock transfer. Two entries to keep each location's
+        books square:
+
+        At source location:
+            Dr Stock-in-Transit
+                Cr Closing Stock (source)
+        At destination location:
+            Dr Closing Stock (destination)
+                Cr Stock-in-Transit
+
+        We post these as ONE pair of JEs so the in-transit account nets to
+        zero across the consolidated entity.
+        """
+        value = Decimal(str(value))
+        if value <= 0:
+            raise ValueError('Transfer value must be positive.')
+        if from_location_id == to_location_id:
+            raise ValueError('Source and destination locations must differ.')
+
+        transit = self._acct('STOCK_TRANSFER_TRANSIT')
+        stock = self._acct('CLOSING_STOCK')
+
+        out_je = JournalEntry.objects.create(
+            date=date,
+            narration=(narration or
+                       f'Stock transfer OUT to location {to_location_id}'),
+            voucher_type='JOURNAL', reference_type='Manual',
+            location_id=from_location_id, created_by=user,
+        )
+        JournalEntryLine.objects.create(entry=out_je, account=transit, debit=value)
+        JournalEntryLine.objects.create(entry=out_je, account=stock, credit=value)
+        out_je.post()
+
+        in_je = JournalEntry.objects.create(
+            date=date,
+            narration=(narration or
+                       f'Stock transfer IN from location {from_location_id}'),
+            voucher_type='JOURNAL', reference_type='Manual',
+            location_id=to_location_id, created_by=user,
+        )
+        JournalEntryLine.objects.create(entry=in_je, account=stock, debit=value)
+        JournalEntryLine.objects.create(entry=in_je, account=transit, credit=value)
+        in_je.post()
+
+        return {'out_entry': out_je, 'in_entry': in_je}
+
+    @transaction.atomic
     def generate_contra(self, data):
         """Generate contra journal entry (Phase 4C). Manual trigger."""
         entry = JournalEntry.objects.create(

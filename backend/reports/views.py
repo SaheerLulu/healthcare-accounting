@@ -321,6 +321,150 @@ class LedgerView(APIView):
         })
 
 
+class LedgerExportView(APIView):
+    """
+    WP 614 — export account ledger as CSV (default), Excel (?format=xlsx),
+    or PDF (?format=pdf). Same query params as LedgerView (account_code,
+    start_date, end_date).
+    """
+
+    def get(self, request):
+        from django.http import HttpResponse
+        import csv
+        import io
+
+        account_code = request.query_params.get('account_code')
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+        fmt = request.query_params.get('format', 'csv').lower()
+        location = get_active_location(request)
+
+        if not account_code:
+            return Response({'error': 'account_code is required'}, status=400)
+        try:
+            account = ChartOfAccount.objects.get(account_code=account_code)
+        except ChartOfAccount.DoesNotExist:
+            return Response({'error': 'Account not found'}, status=404)
+
+        base_qs = JournalEntryLine.objects.filter(
+            account=account, entry__is_posted=True,
+        ).select_related('entry')
+        if location:
+            base_qs = base_qs.filter(entry__location_id=location.id)
+
+        opening_balance = Decimal('0.00')
+        if start_date:
+            agg = base_qs.filter(entry__date__lt=start_date).aggregate(
+                dr=Sum('debit'), cr=Sum('credit'),
+            )
+            opening_balance = (agg['dr'] or Decimal('0.00')) - (agg['cr'] or Decimal('0.00'))
+
+        lines_qs = base_qs.order_by('entry__date', 'entry__id')
+        if start_date:
+            lines_qs = lines_qs.filter(entry__date__gte=start_date)
+        if end_date:
+            lines_qs = lines_qs.filter(entry__date__lte=end_date)
+
+        rows = []
+        running = opening_balance
+        for line in lines_qs:
+            running += line.debit - line.credit
+            rows.append({
+                'date': line.entry.date.isoformat(),
+                'entry_no': line.entry.entry_no,
+                'narration': line.entry.narration or line.narration,
+                'voucher_type': line.entry.voucher_type,
+                'debit': str(line.debit),
+                'credit': str(line.credit),
+                'balance': str(running),
+            })
+
+        if fmt == 'xlsx':
+            from openpyxl import Workbook
+            wb = Workbook()
+            ws = wb.active
+            ws.title = f'Ledger {account.account_code}'
+            ws.append([f'Account: {account.account_code} — {account.account_name}'])
+            ws.append([f'Period: {start_date or "all"} to {end_date or "all"}'])
+            ws.append([f'Opening Balance: {opening_balance}'])
+            ws.append([])
+            ws.append(['Date', 'Entry No', 'Narration', 'Voucher', 'Debit', 'Credit', 'Balance'])
+            for r in rows:
+                ws.append([r['date'], r['entry_no'], r['narration'], r['voucher_type'],
+                           r['debit'], r['credit'], r['balance']])
+            ws.append([])
+            ws.append(['', '', '', 'Closing', '', '', str(running)])
+            buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+            response = HttpResponse(
+                buf.read(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            )
+            response['Content-Disposition'] = (
+                f'attachment; filename="ledger_{account.account_code}.xlsx"'
+            )
+            return response
+
+        if fmt == 'pdf':
+            from reportlab.lib.pagesizes import A4, landscape
+            from reportlab.lib import colors
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+            buf = io.BytesIO()
+            doc = SimpleDocTemplate(buf, pagesize=landscape(A4),
+                                    topMargin=24, bottomMargin=24,
+                                    leftMargin=24, rightMargin=24)
+            styles = getSampleStyleSheet()
+            story = [
+                Paragraph(f'<b>Ledger — {account.account_code} {account.account_name}</b>',
+                          styles['Title']),
+                Paragraph(f'Period: {start_date or "All"} to {end_date or "All"}',
+                          styles['Normal']),
+                Paragraph(f'Opening balance: {opening_balance}', styles['Normal']),
+                Spacer(1, 8),
+            ]
+            data = [['Date', 'Entry', 'Narration', 'Voucher', 'Debit', 'Credit', 'Balance']]
+            for r in rows:
+                data.append([r['date'], r['entry_no'], r['narration'][:60],
+                             r['voucher_type'], r['debit'], r['credit'], r['balance']])
+            data.append(['', '', '', 'Closing', '', '', str(running)])
+            tbl = Table(data, repeatRows=1)
+            tbl.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e5e7eb')),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
+                ('ALIGN', (4, 1), (6, -1), 'RIGHT'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ]))
+            story.append(tbl)
+            doc.build(story)
+            response = HttpResponse(buf.getvalue(), content_type='application/pdf')
+            response['Content-Disposition'] = (
+                f'attachment; filename="ledger_{account.account_code}.pdf"'
+            )
+            buf.close()
+            return response
+
+        # default — CSV
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = (
+            f'attachment; filename="ledger_{account.account_code}.csv"'
+        )
+        w = csv.writer(response)
+        w.writerow([f'Account: {account.account_code} — {account.account_name}'])
+        w.writerow([f'Period: {start_date or "all"} to {end_date or "all"}'])
+        w.writerow([f'Opening Balance: {opening_balance}'])
+        w.writerow([])
+        w.writerow(['Date', 'Entry No', 'Narration', 'Voucher', 'Debit', 'Credit', 'Balance'])
+        for r in rows:
+            w.writerow([r['date'], r['entry_no'], r['narration'], r['voucher_type'],
+                        r['debit'], r['credit'], r['balance']])
+        w.writerow([])
+        w.writerow(['', '', '', 'Closing', '', '', str(running)])
+        return response
+
+
 class ReceivablesAgingView(APIView):
     def get(self, request):
         as_of_date = request.query_params.get('date', date.today().isoformat())
@@ -960,4 +1104,620 @@ class StockValuationView(APIView):
             'rows': rows,
             'total_products': len(rows),
             'total_value': str(total_value),
+        })
+
+
+class MSMEComplianceReportView(APIView):
+    """
+    WP / new — payables aging restricted to MSME suppliers, with interest
+    payable per Section 16 of the MSMED Act 2006.
+
+    Section 16 requires the buyer to pay interest at three-times the bank
+    rate notified by RBI from the day after the appointed date (≤45 days
+    from acceptance) until actual payment. We expose `?bank_rate_pct=X` so
+    finance can override the rate annually.
+    """
+
+    def get(self, request):
+        from parties.models import PartyMetadata
+
+        bank_rate = Decimal(request.query_params.get('bank_rate_pct', '6.5'))
+        interest_rate = bank_rate * Decimal('3')  # per s.16 MSMED Act
+        as_of = date.fromisoformat(
+            request.query_params.get('as_of', date.today().isoformat()))
+
+        # Collect MSME-tagged supplier ids
+        msme_suppliers = list(
+            PartyMetadata.objects.filter(party_type='Supplier')
+            .exclude(msme_category='')
+            .values('party_id', 'msme_category', 'msme_udyam_no',
+                    'msme_credit_period_days')
+        )
+        msme_index = {row['party_id']: row for row in msme_suppliers}
+        if not msme_index:
+            return Response({
+                'as_of': str(as_of), 'bank_rate_pct': str(bank_rate),
+                'interest_rate_pct': str(interest_rate),
+                'rows': [], 'count': 0,
+                'note': 'No suppliers tagged with MSME registration. Add via /api/parties/metadata/',
+            })
+
+        # Aged payables: outstanding per supplier with the bill's accounting date
+        lines = (JournalEntryLine.objects
+                 .filter(party_type='Supplier', party_id__in=msme_index.keys(),
+                         entry__is_posted=True, entry__date__lte=as_of)
+                 .select_related('entry', 'account'))
+
+        # Build per-supplier outstanding bills (by entry, not invoice — JE is the
+        # accounting unit available)
+        per_supplier = defaultdict(lambda: {'open_bills': [], 'total_outstanding': Decimal('0')})
+        for line in lines:
+            net = line.credit - line.debit  # payable: credit > debit
+            if net == 0:
+                continue
+            per_supplier[line.party_id]['open_bills'].append({
+                'entry_no': line.entry.entry_no,
+                'date': line.entry.date.isoformat(),
+                'amount': str(net),
+                'days_outstanding': (as_of - line.entry.date).days,
+            })
+
+        rows = []
+        location = get_active_location(request)
+        for party_id, info in per_supplier.items():
+            net_outstanding = sum(Decimal(b['amount']) for b in info['open_bills'])
+            if net_outstanding <= 0:
+                continue
+            meta = msme_index[party_id]
+            credit_days = meta['msme_credit_period_days'] or 45
+            # Compute interest on each overdue bill
+            interest_total = Decimal('0')
+            for bill in info['open_bills']:
+                amt = Decimal(bill['amount'])
+                overdue_days = max(bill['days_outstanding'] - credit_days, 0)
+                if overdue_days > 0 and amt > 0:
+                    interest_total += (
+                        amt * interest_rate / Decimal('100') * overdue_days /
+                        Decimal('365')
+                    ).quantize(Decimal('0.01'))
+                bill['overdue_days'] = overdue_days
+            rows.append({
+                'supplier_id': party_id,
+                'msme_category': meta['msme_category'],
+                'udyam_no': meta['msme_udyam_no'],
+                'credit_days': credit_days,
+                'net_outstanding': str(net_outstanding),
+                'interest_payable_s16': str(interest_total),
+                'open_bills': info['open_bills'],
+            })
+
+        rows.sort(key=lambda r: -Decimal(r['interest_payable_s16']))
+        return Response({
+            'as_of': str(as_of),
+            'bank_rate_pct': str(bank_rate),
+            'interest_rate_pct': str(interest_rate),
+            'rows': rows,
+            'count': len(rows),
+            'total_outstanding': str(sum(Decimal(r['net_outstanding']) for r in rows)),
+            'total_interest_payable': str(
+                sum(Decimal(r['interest_payable_s16']) for r in rows)
+            ),
+        })
+
+
+class FinancialRatiosView(APIView):
+    """
+    Standard financial ratios for management reporting.
+
+    Computed from posted JE balances over the requested period:
+
+      Profitability:
+        - Gross Profit %      = (Revenue - COGS) / Revenue
+        - Net Profit %        = Net Profit / Revenue
+        - Operating Margin %  = (Revenue - Operating Expense) / Revenue
+        - Return on Assets %  = Net Profit / Total Assets
+
+      Liquidity (point-in-time):
+        - Current Ratio       = Current Assets / Current Liabilities
+        - Quick Ratio         = (Current Assets - Inventory) / Current Liabilities
+        - Cash Ratio          = (Cash + Bank) / Current Liabilities
+
+      Activity:
+        - Receivable days     = AR / (Revenue / 365)
+        - Payable days        = AP / (Purchases / 365)
+        - Inventory days      = Inventory / (COGS / 365)
+        - Cash conversion     = Receivable days + Inventory days - Payable days
+
+      Leverage:
+        - Debt-to-Equity      = Total Liabilities / Total Equity
+    """
+
+    def get(self, request):
+        start = date.fromisoformat(request.query_params.get('start_date',
+                                                            get_fy_dates()[0].isoformat()))
+        end = date.fromisoformat(request.query_params.get('end_date',
+                                                          get_fy_dates()[1].isoformat()))
+        location = get_active_location(request)
+
+        period_lines = JournalEntryLine.objects.filter(
+            entry__is_posted=True, entry__date__gte=start, entry__date__lte=end,
+        )
+        as_of_lines = JournalEntryLine.objects.filter(
+            entry__is_posted=True, entry__date__lte=end,
+        )
+        if location:
+            period_lines = period_lines.filter(entry__location_id=location.id)
+            as_of_lines = as_of_lines.filter(entry__location_id=location.id)
+
+        def _net(qs, account_type=None, subtype=None, side='debit'):
+            """Net debit (or net credit if side='credit') for the queryset."""
+            q = qs
+            if account_type:
+                q = q.filter(account__account_type=account_type)
+            if subtype:
+                q = q.filter(account__account_subtype__in=subtype
+                             if isinstance(subtype, (list, tuple)) else [subtype])
+            agg = q.aggregate(d=Sum('debit'), c=Sum('credit'))
+            d = agg['d'] or Decimal('0')
+            c = agg['c'] or Decimal('0')
+            return (d - c) if side == 'debit' else (c - d)
+
+        # Period figures
+        revenue = _net(period_lines, account_type='REVENUE', side='credit')
+        purchases = _net(period_lines, subtype='Purchases', side='debit')
+        operating_expense = _net(period_lines, account_type='EXPENSE', side='debit')
+        gross_profit = revenue - purchases
+        net_profit = revenue - operating_expense
+
+        # Point-in-time figures (as of end_date)
+        cash = _net(as_of_lines, subtype=('Cash', 'Bank'))
+        ar = _net(as_of_lines, subtype='Receivable')
+        ap = _net(as_of_lines, subtype='Payable', side='credit')
+        inventory = _net(as_of_lines, subtype='Cash')  # Closing Stock uses 'Cash' subtype in seed
+        # Total assets: ASSET account_type net debit
+        total_assets = _net(as_of_lines, account_type='ASSET')
+        total_liab = _net(as_of_lines, account_type='LIABILITY', side='credit')
+        total_equity = _net(as_of_lines, account_type='EQUITY', side='credit')
+
+        # Approximation: current assets ≈ Cash+Bank+Receivables+Closing Stock
+        # current liabilities ≈ Trade Payables + GST/TDS payables
+        current_assets = cash + ar
+        current_liabilities = ap + _net(
+            as_of_lines, subtype=('Output_GST', 'TDS_Payable'), side='credit')
+
+        def _safe(num, denom, *, scale=Decimal('1')):
+            if not denom or denom == 0:
+                return None
+            return float((num / denom * scale).quantize(Decimal('0.01')))
+
+        days = Decimal((end - start).days or 1)
+
+        return Response({
+            'start_date': str(start), 'end_date': str(end),
+            'period_days': int(days),
+            'profitability': {
+                'gross_profit_pct': _safe(gross_profit, revenue, scale=Decimal('100')),
+                'net_profit_pct': _safe(net_profit, revenue, scale=Decimal('100')),
+                'operating_margin_pct': _safe(net_profit, revenue, scale=Decimal('100')),
+                'return_on_assets_pct': _safe(net_profit, total_assets, scale=Decimal('100')),
+            },
+            'liquidity': {
+                'current_ratio': _safe(current_assets, current_liabilities),
+                'quick_ratio': _safe(current_assets - inventory, current_liabilities),
+                'cash_ratio': _safe(cash, current_liabilities),
+            },
+            'activity_days': {
+                'receivable_days': (
+                    _safe(ar * days, revenue) if revenue else None),
+                'payable_days': (
+                    _safe(ap * days, purchases) if purchases else None),
+                'inventory_days': (
+                    _safe(inventory * days, purchases) if purchases else None),
+            },
+            'leverage': {
+                'debt_to_equity': _safe(total_liab, total_equity),
+            },
+            'figures': {
+                'revenue': str(revenue), 'purchases': str(purchases),
+                'gross_profit': str(gross_profit), 'net_profit': str(net_profit),
+                'cash': str(cash), 'ar': str(ar), 'ap': str(ap),
+                'inventory': str(inventory),
+                'total_assets': str(total_assets),
+                'total_liabilities': str(total_liab),
+                'total_equity': str(total_equity),
+            },
+        })
+
+
+class BankReconciliationSummaryView(APIView):
+    """
+    Combined view for bank reconciliation:
+      • Book balance (per GL)
+      • Statement balance (running total of imported transactions)
+      • Un-cleared cheques issued (we wrote them — bank hasn't paid yet)
+      • Un-cleared cheques received (deposited but not credited)
+      • Un-matched bank transactions (in statement but not booked)
+      • Bounced cheques pending action
+      • Reconciled net = Book + uncleared issues - uncleared receipts ± delta
+    """
+
+    def get(self, request):
+        from banking.models import BankAccount, BankTransaction, Cheque
+        from banking.services import book_balance, statement_balance
+
+        as_of = date.fromisoformat(
+            request.query_params.get('as_of', date.today().isoformat()))
+        bank_account_id = request.query_params.get('bank_account_id')
+
+        accounts = BankAccount.objects.all()
+        if bank_account_id:
+            accounts = accounts.filter(id=int(bank_account_id))
+
+        rows = []
+        for acct in accounts:
+            book_bal = book_balance(acct)
+            stmt_bal = statement_balance(acct)
+
+            # Un-cleared issued = pending cheques drawn on this account
+            uncleared_issued = Cheque.objects.filter(
+                bank_account=acct, kind='issued', status='pending',
+            ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
+
+            uncleared_received = Cheque.objects.filter(
+                bank_account=acct, kind='received', status='pending',
+            ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
+
+            unmatched_txns = BankTransaction.objects.filter(
+                bank_account=acct, status='unmatched', date__lte=as_of,
+            ).aggregate(s=Sum('amount'))['s'] or Decimal('0')
+
+            bounced = Cheque.objects.filter(
+                bank_account=acct, status='bounced',
+            ).count()
+
+            # Classic reconciliation:
+            # Reconciled balance = book balance + uncleared issued - uncleared received
+            # Should equal statement balance (within unmatched-txns delta)
+            recon_book = book_bal + uncleared_issued - uncleared_received
+            delta = stmt_bal - recon_book
+
+            rows.append({
+                'bank_account_id': acct.id,
+                'bank_account_name': acct.name,
+                'book_balance': str(book_bal),
+                'statement_balance': str(stmt_bal),
+                'uncleared_cheques_issued': str(uncleared_issued),
+                'uncleared_cheques_received': str(uncleared_received),
+                'unmatched_bank_txns': str(unmatched_txns),
+                'bounced_cheques_count': bounced,
+                'reconciled_balance': str(recon_book),
+                'unexplained_delta': str(delta),
+                'is_clean': abs(delta) < Decimal('0.01') and unmatched_txns == 0,
+            })
+
+        return Response({
+            'as_of': str(as_of),
+            'rows': rows,
+            'total_unmatched_txns': str(sum(
+                Decimal(r['unmatched_bank_txns']) for r in rows
+            )),
+            'total_unexplained_delta': str(sum(
+                Decimal(r['unexplained_delta']) for r in rows
+            )),
+        })
+
+
+class ClosingStockReconciliationView(APIView):
+    """
+    Compare Closing Stock per BOOKS (general-ledger balance on account 1190)
+    against Closing Stock per INVENTORY (StockValuationView's running total
+    across StockMovementRO × per-product cost).
+
+    A non-zero variance means either:
+      • The period-end closing-stock JV hasn't been posted yet, OR
+      • Stock has shrunk / expired without an inventory adjustment, OR
+      • Inventory cost data is out of date.
+
+    Use the difference figure as the input to the next closing-stock JV.
+    """
+
+    def get(self, request):
+        as_of = date.fromisoformat(
+            request.query_params.get('as_of', date.today().isoformat()))
+        location = get_active_location(request)
+
+        # 1. Books-side: Closing Stock GL balance up to as_of
+        from core.models import AccountMapping
+        try:
+            cs_acct = AccountMapping.get_account('CLOSING_STOCK')
+        except ValueError:
+            return Response(
+                {'detail': 'CLOSING_STOCK account mapping is not configured.'},
+                status=400,
+            )
+        bq = JournalEntryLine.objects.filter(
+            account=cs_acct, entry__is_posted=True, entry__date__lte=as_of,
+        )
+        if location:
+            bq = bq.filter(entry__location_id=location.id)
+        agg = bq.aggregate(d=Sum('debit'), c=Sum('credit'))
+        books_balance = (agg['d'] or Decimal('0')) - (agg['c'] or Decimal('0'))
+
+        # 2. Inventory-side: replay movements to get qty-on-hand × purchase rate
+        from inventory_reader.models import (
+            PurchaseOrderLineRO, StockMovementRO,
+        )
+        moves = StockMovementRO.objects.filter(created_at__date__lte=as_of)
+        if location:
+            moves = moves.filter(location_id=location.id)
+        from collections import defaultdict
+        qty_on_hand = defaultdict(int)
+        for m in moves:
+            qty_on_hand[m.product_id] += m.quantity if (
+                m.movement_type not in ('out', 'sale', 'transfer_out')
+            ) else -abs(m.quantity)
+        # Last purchase rate per product as a cost proxy
+        cost_proxy = {
+            row['product_id']: row['rate']
+            for row in PurchaseOrderLineRO.objects
+            .values('product_id')
+            .annotate(rate=Sum('purchase_rate'))
+        }
+        inventory_value = sum(
+            (Decimal(str(qty_on_hand.get(pid, 0))) *
+             cost_proxy.get(pid, Decimal('0')))
+            for pid in qty_on_hand if qty_on_hand[pid] > 0
+        ) or Decimal('0')
+
+        variance = inventory_value - books_balance
+        return Response({
+            'as_of': str(as_of),
+            'books_closing_stock': str(books_balance),
+            'inventory_value': str(inventory_value),
+            'variance': str(variance),
+            'recommended_jv_value': str(inventory_value),
+            'note': (
+                'POST /api/journals/journal-entries/closing-stock/ with '
+                f'value={inventory_value} to bring Books in line with Inventory.'
+                if abs(variance) > Decimal('0.01') else 'No adjustment needed.'
+            ),
+        })
+
+
+class AgedStockReportView(APIView):
+    """Slow-moving / aged stock — current qty + days since last sale per product+location."""
+
+    def get(self, request):
+        from inventory_reader.models import StockMovementRO
+        location = get_active_location(request)
+        as_of = date.fromisoformat(
+            request.query_params.get('as_of', date.today().isoformat()))
+        slow_days = int(request.query_params.get('slow_days', 90))
+
+        moves = StockMovementRO.objects.filter(created_at__date__lte=as_of)
+        if location:
+            moves = moves.filter(location_id=location.id)
+        moves = moves.select_related('product', 'location')
+
+        per_product = {}
+        for m in moves:
+            key = (m.product_id, m.location_id)
+            row = per_product.setdefault(key, {
+                'product_id': m.product_id,
+                'product_name': m.product.name if m.product else f'#{m.product_id}',
+                'location_id': m.location_id,
+                'qty_in': 0, 'qty_out': 0, 'last_out_date': None,
+            })
+            qty = abs(m.quantity)
+            if m.movement_type in ('out', 'sale', 'transfer_out'):
+                row['qty_out'] += qty
+                if not row['last_out_date'] or m.created_at.date() > row['last_out_date']:
+                    row['last_out_date'] = m.created_at.date()
+            else:
+                row['qty_in'] += qty
+
+        rows = []
+        for row in per_product.values():
+            stock_on_hand = row['qty_in'] - row['qty_out']
+            if stock_on_hand <= 0:
+                continue
+            days_since_last_sale = (
+                (as_of - row['last_out_date']).days if row['last_out_date'] else None
+            )
+            is_slow = (days_since_last_sale is None or
+                       days_since_last_sale >= slow_days)
+            if not is_slow:
+                continue
+            rows.append({
+                **row, 'stock_on_hand': stock_on_hand,
+                'days_since_last_sale': days_since_last_sale,
+                'last_out_date': str(row['last_out_date']) if row['last_out_date'] else None,
+            })
+        rows.sort(key=lambda r: -(r['days_since_last_sale'] or 99999))
+        return Response({
+            'as_of': str(as_of), 'slow_days_threshold': slow_days,
+            'rows': rows, 'count': len(rows),
+        })
+
+
+class DepartmentalPLView(APIView):
+    """P&L pivoted by JournalEntry.cost_center."""
+
+    def get(self, request):
+        start = date.fromisoformat(request.query_params.get('start_date',
+                                                            get_fy_dates()[0].isoformat()))
+        end = date.fromisoformat(request.query_params.get('end_date',
+                                                          get_fy_dates()[1].isoformat()))
+        location = get_active_location(request)
+
+        lines = (JournalEntryLine.objects
+                 .filter(entry__is_posted=True,
+                         entry__date__gte=start, entry__date__lte=end,
+                         account__account_type__in=('REVENUE', 'EXPENSE'))
+                 .select_related('entry', 'account'))
+        if location:
+            lines = lines.filter(entry__location_id=location.id)
+
+        rows_by_acct = defaultdict(lambda: defaultdict(Decimal))
+        cost_centers = set()
+        meta = {}
+
+        for line in lines:
+            cc = line.entry.cost_center or 'UNASSIGNED'
+            cost_centers.add(cc)
+            net = (line.credit - line.debit
+                   if line.account.account_type == 'REVENUE'
+                   else line.debit - line.credit)
+            rows_by_acct[line.account.account_code][cc] += net
+            meta[line.account.account_code] = {
+                'name': line.account.account_name,
+                'type': line.account.account_type,
+            }
+
+        cc_sorted = sorted(cost_centers)
+        out_rows = []
+        for code, by_cc in sorted(rows_by_acct.items()):
+            out_rows.append({
+                'account_code': code,
+                'account_name': meta[code]['name'],
+                'account_type': meta[code]['type'],
+                'columns': {cc: str(by_cc.get(cc, Decimal('0'))) for cc in cc_sorted},
+                'total': str(sum(by_cc.values(), Decimal('0'))),
+            })
+
+        # Net profit per cost center
+        np_by_cc = {cc: Decimal('0') for cc in cc_sorted}
+        for r in out_rows:
+            for cc in cc_sorted:
+                v = Decimal(r['columns'][cc])
+                if r['account_type'] == 'REVENUE':
+                    np_by_cc[cc] += v
+                else:
+                    np_by_cc[cc] -= v
+        return Response({
+            'start_date': str(start), 'end_date': str(end),
+            'cost_centers': cc_sorted, 'rows': out_rows,
+            'net_profit_by_cost_center': {cc: str(v) for cc, v in np_by_cc.items()},
+        })
+
+
+class CashFlowStatementView(APIView):
+    """
+    Cash Flow Statement — indirect method, computed from posted JEs in the
+    given period. Conforms to AS-3 / Ind AS-7 categories: Operating,
+    Investing, Financing.
+
+    Heuristic: every account is bucketed by its account_type + account_subtype.
+    Net change in each bucket between opening and closing of the period is the
+    cash-flow line item. Final reconciliation: net change in cash & bank ledger
+    must equal sum of all three sections.
+    """
+
+    OPERATING_TYPES = ('REVENUE', 'EXPENSE')
+    OPERATING_WC_SUBTYPES = ('Receivable', 'Payable', 'Output_GST', 'Input_GST',
+                             'TDS_Receivable', 'TDS_Payable')
+    INVESTING_KEYWORDS = ('asset', 'investment', 'fixed asset')
+    FINANCING_KEYWORDS = ('loan', 'borrowing', 'capital', 'reserves',
+                          'retained earnings', 'share')
+
+    def get(self, request):
+        start = date.fromisoformat(request.query_params.get('start_date',
+                                                            get_fy_dates()[0].isoformat()))
+        end = date.fromisoformat(request.query_params.get('end_date',
+                                                          get_fy_dates()[1].isoformat()))
+        location = get_active_location(request)
+
+        all_lines = JournalEntryLine.objects.filter(
+            entry__is_posted=True, entry__date__gte=start, entry__date__lte=end,
+        ).select_related('entry', 'account')
+        if location:
+            all_lines = all_lines.filter(entry__location_id=location.id)
+
+        # 1. Net profit for the period
+        revenue = sum(
+            (l.credit - l.debit for l in all_lines if l.account.account_type == 'REVENUE'),
+            Decimal('0'),
+        )
+        expenses = sum(
+            (l.debit - l.credit for l in all_lines if l.account.account_type == 'EXPENSE'),
+            Decimal('0'),
+        )
+        net_profit = revenue - expenses
+
+        # 2. Non-cash addbacks: depreciation expense (subtype 'Other_Expense'
+        # carrying name 'Depreciation' — heuristic) + bad debts + other non-cash
+        non_cash = Decimal('0')
+        for l in all_lines:
+            name = (l.account.account_name or '').lower()
+            if any(k in name for k in ('depreciation', 'amortization', 'bad debt')):
+                non_cash += (l.debit - l.credit)
+
+        # 3. Working capital changes — increase in asset uses cash; increase in liability provides cash
+        wc_change = Decimal('0')
+        wc_breakdown = {}
+        for sub in self.OPERATING_WC_SUBTYPES:
+            net = sum(
+                (l.debit - l.credit for l in all_lines if l.account.account_subtype == sub),
+                Decimal('0'),
+            )
+            wc_breakdown[sub] = str(net)
+            # For Asset subtypes, increase in balance (positive net) = use of cash
+            if sub in ('Receivable', 'Input_GST', 'TDS_Receivable'):
+                wc_change -= net
+            else:
+                wc_change += net
+
+        operating_cf = net_profit + non_cash + wc_change
+
+        # 4. Investing — fixed asset purchases (cash out) and disposals (cash in)
+        investing_cf = Decimal('0')
+        for l in all_lines:
+            name = (l.account.account_name or '').lower()
+            if any(k in name for k in self.INVESTING_KEYWORDS):
+                # Asset bought (Dr) = outflow, sold (Cr) = inflow
+                investing_cf -= (l.debit - l.credit)
+
+        # 5. Financing — loans + capital
+        financing_cf = Decimal('0')
+        for l in all_lines:
+            name = (l.account.account_name or '').lower()
+            if any(k in name for k in self.FINANCING_KEYWORDS):
+                # Liability/equity increase (Cr) = inflow
+                financing_cf += (l.credit - l.debit)
+
+        # 6. Net change in cash
+        cash_subtypes = ('Cash', 'Bank')
+        opening_cash = sum(
+            (
+                Decimal(str((line.debit - line.credit)))
+                for line in JournalEntryLine.objects.filter(
+                    account__account_subtype__in=cash_subtypes,
+                    entry__is_posted=True, entry__date__lt=start,
+                )
+            ), Decimal('0'),
+        )
+        closing_cash = opening_cash + sum(
+            (Decimal(str((l.debit - l.credit))) for l in all_lines
+             if l.account.account_subtype in cash_subtypes),
+            Decimal('0'),
+        )
+
+        return Response({
+            'start_date': str(start), 'end_date': str(end),
+            'operating': {
+                'net_profit': str(net_profit),
+                'non_cash_addbacks': str(non_cash),
+                'working_capital_change': str(wc_change),
+                'wc_breakdown': wc_breakdown,
+                'subtotal': str(operating_cf),
+            },
+            'investing': {'subtotal': str(investing_cf)},
+            'financing': {'subtotal': str(financing_cf)},
+            'net_change_in_cash': str(operating_cf + investing_cf + financing_cf),
+            'opening_cash': str(opening_cash),
+            'closing_cash': str(closing_cash),
+            'reconciliation_diff': str(
+                (closing_cash - opening_cash) -
+                (operating_cf + investing_cf + financing_cf)
+            ),
         })
