@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import TDSDeduction, TDSChallan, TDSRateConfig
+from .models import TDSDeduction, TDSChallan, TDSRateConfig, TCSCollection, Form26ASEntry
 
 
 class TDSRateConfigSerializer(serializers.ModelSerializer):
@@ -55,3 +55,35 @@ class TDSChallanSerializer(serializers.ModelSerializer):
         if deductions is not None:
             instance.deductions.set(deductions)
         return instance
+
+
+class TCSCollectionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TCSCollection
+        fields = [
+            'id', 'buyer_name', 'buyer_pan', 'buyer_id',
+            'transaction_date', 'fy_label', 'invoice_no',
+            'source_type', 'source_id',
+            'sale_amount', 'cumulative_sales_fy', 'taxable_amount',
+            'tcs_rate', 'tcs_amount',
+            'status', 'challan_no', 'challan_date', 'location_id',
+            'journal_entry', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'cumulative_sales_fy',
+                            'taxable_amount', 'tcs_amount']
+
+
+class Form26ASEntrySerializer(serializers.ModelSerializer):
+    matched_entry_no = serializers.CharField(
+        source='matched_journal_entry.entry_no', read_only=True, default=None,
+    )
+
+    class Meta:
+        model = Form26ASEntry
+        fields = ['id', 'fy_label', 'deductor_tan', 'deductor_name', 'section',
+                  'period', 'transaction_date', 'booking_date',
+                  'gross_amount', 'tds_amount', 'challan_no', 'challan_bsr',
+                  'match_status', 'matched_journal_entry', 'matched_entry_no',
+                  'notes', 'location_id', 'created_at']
+        read_only_fields = ['id', 'match_status', 'matched_journal_entry',
+                            'matched_entry_no', 'created_at']

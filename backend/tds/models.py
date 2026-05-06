@@ -90,3 +90,114 @@ class TDSChallan(models.Model):
 
     def __str__(self):
         return f"Challan {self.challan_no} | {self.period}"
+
+
+class TCSCollection(models.Model):
+    """
+    TCS u/s 206C(1H) — sellers with turnover > ₹10 Cr collect 0.1% TCS on
+    sales > ₹50 L per buyer per FY (on the amount EXCEEDING the threshold).
+
+    Each collected row links back to the source sale (B2BSalesOrder) for
+    traceability. Status tracks the same three-stage lifecycle as TDS:
+    pending → challan_paid → returned.
+    """
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('challan_paid', 'Challan Paid'),
+        ('returned', 'Returned (Form 27EQ)'),
+    ]
+
+    buyer_name = models.CharField(max_length=255)
+    buyer_pan = models.CharField(max_length=10, blank=True)
+    buyer_id = models.PositiveIntegerField(null=True, blank=True,
+        help_text='Inventory CustomerRO id, if known.')
+
+    transaction_date = models.DateField()
+    fy_label = models.CharField(max_length=7, db_index=True,
+        help_text="e.g. '2025-26'")
+    invoice_no = models.CharField(max_length=100, blank=True)
+    source_type = models.CharField(max_length=30, default='B2BSalesOrder')
+    source_id = models.PositiveIntegerField(null=True, blank=True)
+
+    sale_amount = models.DecimalField(max_digits=15, decimal_places=2,
+        help_text='Total sale amount on the invoice (incl. GST per Circular 17/2020).')
+    cumulative_sales_fy = models.DecimalField(
+        max_digits=15, decimal_places=2,
+        help_text='Cumulative sales to this buyer in FY at time of this txn.',
+    )
+    taxable_amount = models.DecimalField(
+        max_digits=15, decimal_places=2,
+        help_text='Portion of this sale exceeding ₹50L FY-cumulative threshold.',
+    )
+    tcs_rate = models.DecimalField(max_digits=5, decimal_places=2,
+                                   default=Decimal('0.10'))
+    tcs_amount = models.DecimalField(max_digits=15, decimal_places=2)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    challan_no = models.CharField(max_length=100, blank=True)
+    challan_date = models.DateField(null=True, blank=True)
+    location_id = models.PositiveIntegerField(null=True, blank=True)
+    journal_entry = models.ForeignKey(
+        'journals.JournalEntry', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='tcs_collections',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-transaction_date']
+        indexes = [
+            models.Index(fields=['fy_label', 'buyer_id']),
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self):
+        return f'TCS u/s 206C(1H) {self.buyer_name} | FY {self.fy_label} | {self.tcs_amount}'
+
+
+class Form26ASEntry(models.Model):
+    """
+    A single TDS-credit row from Form 26AS (the IT Dept's consolidated tax
+    statement showing TDS deducted on payments received by the company).
+    Reconciled against journal entries that booked TDS Receivable.
+    """
+
+    MATCH_STATUS = [
+        ('unmatched', 'Unmatched'),
+        ('matched', 'Matched'),
+        ('partial', 'Partial Match'),
+        ('mismatch', 'Mismatch'),
+    ]
+
+    fy_label = models.CharField(max_length=7, db_index=True)
+    deductor_tan = models.CharField(max_length=10)
+    deductor_name = models.CharField(max_length=255)
+    section = models.CharField(max_length=10)
+    period = models.CharField(max_length=7, blank=True)
+    transaction_date = models.DateField()
+    booking_date = models.DateField(null=True, blank=True)
+
+    gross_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    tds_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    challan_no = models.CharField(max_length=40, blank=True)
+    challan_bsr = models.CharField(max_length=20, blank=True)
+
+    match_status = models.CharField(max_length=15, choices=MATCH_STATUS,
+                                    default='unmatched')
+    matched_journal_entry = models.ForeignKey(
+        'journals.JournalEntry', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='form_26as_entries',
+    )
+    notes = models.CharField(max_length=255, blank=True)
+    location_id = models.PositiveIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-transaction_date']
+        indexes = [
+            models.Index(fields=['fy_label', 'deductor_tan']),
+            models.Index(fields=['match_status']),
+        ]
+
+    def __str__(self):
+        return f'26AS {self.deductor_tan} | {self.section} | ₹{self.tds_amount}'

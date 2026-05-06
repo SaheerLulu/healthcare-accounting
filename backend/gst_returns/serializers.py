@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import GSTR1Entry, GSTR1HSNSummary, GSTR3BSummary, GSTR2BEntry, ITCReconciliation, RCMEntry
+from .models import GSTR1Entry, GSTR1HSNSummary, GSTR3BSummary, GSTR2BEntry, ITCReconciliation, RCMEntry, EWayBill
 
 
 class GSTR1EntrySerializer(serializers.ModelSerializer):
@@ -111,3 +111,26 @@ class RCMEntrySerializer(serializers.ModelSerializer):
             'cgst', 'sgst', 'igst', 'journal_entry', 'created_at',
         ]
         read_only_fields = ['id', 'created_at', 'journal_entry']
+
+
+class EWayBillSerializer(serializers.ModelSerializer):
+    is_inter_state = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = EWayBill
+        fields = [
+            'id', 'eway_bill_no', 'generated_date', 'valid_until',
+            'reference_type', 'reference_id', 'invoice_no', 'invoice_date',
+            'supply_type', 'sub_type', 'doc_type',
+            'from_gstin', 'from_name', 'from_state_code', 'from_pincode',
+            'to_gstin', 'to_name', 'to_state_code', 'to_pincode',
+            'hsn_code', 'product_name', 'quantity', 'unit_qty_code',
+            'taxable_value', 'cgst_rate', 'sgst_rate', 'igst_rate', 'cess_rate',
+            'total_value',
+            'transport_mode', 'distance_km', 'transporter_name', 'transporter_id',
+            'vehicle_no', 'transport_doc_no', 'transport_doc_date',
+            'status', 'cancellation_reason', 'is_inter_state',
+            'location_id', 'notes',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'is_inter_state', 'created_at', 'updated_at']

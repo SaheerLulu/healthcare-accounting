@@ -221,3 +221,189 @@ class RCMEntry(models.Model):
 
     def __str__(self):
         return f"RCM {self.period} | {self.supplier_name} | {self.service_type}"
+
+
+class EWayBill(models.Model):
+    """
+    e-Way Bill — required under CGST Rule 138 for movement of goods of
+    consignment value > ₹50,000 (intra-state thresholds vary by state but
+    inter-state is uniform).
+
+    For pharma chains this is unavoidable on every inter-state stock transfer
+    or B2B sale shipment. We store the bill metadata + a JSON payload that
+    matches the NIC e-Way Bill portal (https://docs.ewaybillgst.gov.in)
+    schema for upload via API or download for manual upload.
+    """
+
+    SUPPLY_TYPE_CHOICES = [
+        ('Outward', 'Outward (Sale / Supply)'),
+        ('Inward', 'Inward (Purchase / Return)'),
+    ]
+    SUB_TYPE_CHOICES = [
+        ('Supply', 'Supply'),
+        ('Export', 'Export'),
+        ('Import', 'Import'),
+        ('JobWork', 'Job Work'),
+        ('ForOwnUse', 'For Own Use'),
+        ('SalesReturn', 'Sales Return'),
+        ('Exhibition', 'Exhibition or Fairs'),
+        ('Lineksales', 'Line Sales'),
+        ('Recipientnotknown', 'Recipient Not Known'),
+        ('Others', 'Others'),
+        ('SKD/CKD', 'SKD/CKD/Lots'),
+    ]
+    DOC_TYPE_CHOICES = [
+        ('INV', 'Tax Invoice'),
+        ('CHL', 'Delivery Challan'),
+        ('BIL', 'Bill of Supply'),
+        ('BOE', 'Bill of Entry'),
+        ('CNT', 'Credit Note'),
+        ('OTH', 'Others'),
+    ]
+    TRANSPORT_MODE = [
+        ('1', 'Road'),
+        ('2', 'Rail'),
+        ('3', 'Air'),
+        ('4', 'Ship'),
+    ]
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('generated', 'Generated (EWB issued)'),
+        ('cancelled', 'Cancelled'),
+        ('expired', 'Expired'),
+    ]
+
+    # Identity
+    eway_bill_no = models.CharField(max_length=20, blank=True,
+        help_text='12-digit e-Way Bill number assigned by NIC portal.')
+    generated_date = models.DateField(null=True, blank=True)
+    valid_until = models.DateField(null=True, blank=True,
+        help_text='1 day per 200 km (CGST Rule 138(10)).')
+
+    # Source linkage
+    reference_type = models.CharField(max_length=30,
+        help_text='B2BSalesOrder, PurchaseOrder, SalesReturn, StockTransfer, Manual')
+    reference_id = models.PositiveIntegerField(null=True, blank=True)
+    invoice_no = models.CharField(max_length=100)
+    invoice_date = models.DateField()
+
+    # Header
+    supply_type = models.CharField(max_length=10, choices=SUPPLY_TYPE_CHOICES,
+                                   default='Outward')
+    sub_type = models.CharField(max_length=20, choices=SUB_TYPE_CHOICES,
+                                default='Supply')
+    doc_type = models.CharField(max_length=10, choices=DOC_TYPE_CHOICES,
+                                default='INV')
+
+    # Parties
+    from_gstin = models.CharField(max_length=15)
+    from_name = models.CharField(max_length=255)
+    from_state_code = models.CharField(max_length=2)
+    from_pincode = models.CharField(max_length=10, blank=True)
+    to_gstin = models.CharField(max_length=15, blank=True,
+        help_text='Blank when consignee is unregistered (URP).')
+    to_name = models.CharField(max_length=255)
+    to_state_code = models.CharField(max_length=2)
+    to_pincode = models.CharField(max_length=10, blank=True)
+
+    # Goods
+    hsn_code = models.CharField(max_length=20, blank=True)
+    product_name = models.CharField(max_length=255, blank=True)
+    quantity = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    unit_qty_code = models.CharField(max_length=10, default='NOS')
+    taxable_value = models.DecimalField(max_digits=15, decimal_places=2)
+    cgst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    sgst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    igst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    cess_rate = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    total_value = models.DecimalField(max_digits=15, decimal_places=2)
+
+    # Transport
+    transport_mode = models.CharField(max_length=2, choices=TRANSPORT_MODE,
+                                      default='1')
+    distance_km = models.PositiveIntegerField(default=0)
+    transporter_name = models.CharField(max_length=120, blank=True)
+    transporter_id = models.CharField(max_length=15, blank=True,
+        help_text='Transporter GSTIN or 15-char Transporter ID.')
+    vehicle_no = models.CharField(max_length=15, blank=True)
+    transport_doc_no = models.CharField(max_length=40, blank=True)
+    transport_doc_date = models.DateField(null=True, blank=True)
+
+    # Lifecycle
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES,
+                              default='draft')
+    cancellation_reason = models.CharField(max_length=255, blank=True)
+    location_id = models.PositiveIntegerField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-invoice_date', '-id']
+        indexes = [
+            models.Index(fields=['status', 'invoice_date']),
+            models.Index(fields=['from_gstin', 'invoice_date']),
+            models.Index(fields=['eway_bill_no']),
+        ]
+
+    def __str__(self):
+        return (f'EWB {self.eway_bill_no or "(draft)"} — {self.invoice_no} '
+                f'({self.from_state_code}→{self.to_state_code})')
+
+    @property
+    def is_inter_state(self) -> bool:
+        return self.from_state_code != self.to_state_code
+
+    def to_nic_payload(self) -> dict:
+        """Convert to the JSON shape the NIC EWB portal accepts.
+
+        Schema reference: https://docs.ewaybillgst.gov.in/Documents/ewbapi/
+        EWBAPIDeveloperGuidelinesv1.0.pdf (post-2018 spec).
+        """
+        return {
+            'supplyType': 'O' if self.supply_type == 'Outward' else 'I',
+            'subSupplyType': self.sub_type,
+            'docType': self.doc_type,
+            'docNo': self.invoice_no,
+            'docDate': self.invoice_date.strftime('%d/%m/%Y'),
+            'fromGstin': self.from_gstin,
+            'fromTrdName': self.from_name,
+            'fromAddr1': '', 'fromAddr2': '',
+            'fromPlace': '', 'fromPincode': int(self.from_pincode or 0),
+            'fromStateCode': int(self.from_state_code),
+            'actFromStateCode': int(self.from_state_code),
+            'toGstin': self.to_gstin or 'URP',
+            'toTrdName': self.to_name,
+            'toAddr1': '', 'toAddr2': '',
+            'toPlace': '', 'toPincode': int(self.to_pincode or 0),
+            'toStateCode': int(self.to_state_code),
+            'actToStateCode': int(self.to_state_code),
+            'transactionType': 1,
+            'totalValue': float(self.taxable_value),
+            'cgstValue': float(self.taxable_value * self.cgst_rate / 100),
+            'sgstValue': float(self.taxable_value * self.sgst_rate / 100),
+            'igstValue': float(self.taxable_value * self.igst_rate / 100),
+            'cessValue': float(self.taxable_value * self.cess_rate / 100),
+            'totInvValue': float(self.total_value),
+            'transMode': self.transport_mode,
+            'transDistance': str(self.distance_km),
+            'transporterName': self.transporter_name,
+            'transporterId': self.transporter_id,
+            'transDocNo': self.transport_doc_no,
+            'transDocDate': (self.transport_doc_date.strftime('%d/%m/%Y')
+                             if self.transport_doc_date else ''),
+            'vehicleNo': self.vehicle_no,
+            'vehicleType': 'R',
+            'itemList': [{
+                'productName': self.product_name,
+                'productDesc': self.product_name,
+                'hsnCode': int(self.hsn_code) if self.hsn_code.isdigit() else 0,
+                'quantity': float(self.quantity),
+                'qtyUnit': self.unit_qty_code,
+                'cgstRate': float(self.cgst_rate),
+                'sgstRate': float(self.sgst_rate),
+                'igstRate': float(self.igst_rate),
+                'cessRate': float(self.cess_rate),
+                'taxableAmount': float(self.taxable_value),
+            }],
+        }
