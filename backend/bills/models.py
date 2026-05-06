@@ -43,6 +43,23 @@ class Bill(models.Model):
         null=True, blank=True, related_name='bills',
     )
 
+    # Maker-checker workflow (kicks in when total_amount > approval_threshold)
+    APPROVAL_STATUS = [
+        ('not_required', 'No approval needed'),
+        ('pending', 'Pending approval'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    approval_status = models.CharField(
+        max_length=15, choices=APPROVAL_STATUS, default='not_required',
+    )
+    approved_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='bills_approved',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(
@@ -57,6 +74,17 @@ class Bill(models.Model):
             models.Index(fields=['status', 'due_date']),
             models.Index(fields=['vendor_id']),
             models.Index(fields=['bill_date']),
+        ]
+        constraints = [
+            # Prevent the same vendor invoice number from being captured twice.
+            # Conditional: only enforced when both vendor_id and bill_no are set
+            # — blank/anonymous bills can repeat (e.g. a stack of utility receipts
+            # without unique numbers).
+            models.UniqueConstraint(
+                fields=['vendor_id', 'bill_no'],
+                condition=models.Q(vendor_id__isnull=False) & ~models.Q(bill_no=''),
+                name='bills_unique_vendor_invoice_no',
+            ),
         ]
 
     def __str__(self):

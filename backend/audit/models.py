@@ -27,6 +27,11 @@ class AuditLog(models.Model):
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     extra = models.JSONField(null=True, blank=True)
 
+    # Tamper-evident hash chain. content_hash covers the row's payload;
+    # prev_hash is the previous row's content_hash so any retro-edit breaks the chain.
+    prev_hash = models.CharField(max_length=64, blank=True)
+    content_hash = models.CharField(max_length=64, blank=True)
+
     class Meta:
         ordering = ['-timestamp']
         indexes = [

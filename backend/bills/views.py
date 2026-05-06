@@ -114,6 +114,83 @@ class BillViewSet(LocationFilterMixin, viewsets.ModelViewSet):
             'outstanding': str(outstanding),
         })
 
+    @action(detail=True, methods=['get'], url_path='pdf')
+    def pdf(self, request, pk=None):
+        """WP 631 — render the bill as a PDF."""
+        from django.http import HttpResponse
+        import io
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib import colors
+        from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+                                        TableStyle)
+        from core.models import AccountingSettings
+
+        bill = self.get_object()
+        company = AccountingSettings.get_settings()
+
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=24, bottomMargin=24,
+                                leftMargin=24, rightMargin=24)
+        styles = getSampleStyleSheet()
+        story = [
+            Paragraph(f'<b>{company.company_name or "Company"}</b>', styles['Title']),
+            Paragraph(
+                f'GSTIN: {company.gstin or "-"} &nbsp;&nbsp; '
+                f'PAN: {company.pan or "-"}',
+                styles['Normal']),
+            Spacer(1, 12),
+            Paragraph(f'<b>Bill {bill.bill_no or bill.id}</b>', styles['Heading2']),
+            Paragraph(
+                f'<b>Vendor:</b> {bill.vendor_name}<br/>'
+                f'<b>Bill date:</b> {bill.bill_date}<br/>'
+                f'<b>Due date:</b> {bill.due_date or "-"}<br/>'
+                f'<b>Status:</b> {bill.get_status_display()}',
+                styles['Normal']),
+            Spacer(1, 12),
+        ]
+
+        data = [['#', 'Account', 'Description', 'Amount']]
+        for i, line in enumerate(bill.lines.all(), start=1):
+            data.append([
+                i,
+                f'{line.account.account_code} — {line.account.account_name}',
+                line.description or '',
+                f'{line.amount:.2f}',
+            ])
+        data.append(['', '', 'Subtotal', f'{bill.subtotal:.2f}'])
+        if bill.tax_cgst:
+            data.append(['', '', 'CGST', f'{bill.tax_cgst:.2f}'])
+        if bill.tax_sgst:
+            data.append(['', '', 'SGST', f'{bill.tax_sgst:.2f}'])
+        if bill.tax_igst:
+            data.append(['', '', 'IGST', f'{bill.tax_igst:.2f}'])
+        data.append(['', '', 'Total', f'{bill.total_amount:.2f}'])
+        data.append(['', '', 'Paid', f'{bill.amount_paid:.2f}'])
+        data.append(['', '', 'Balance Due', f'{bill.balance_due:.2f}'])
+
+        tbl = Table(data, repeatRows=1, colWidths=[24, 200, 200, 100])
+        tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e5e7eb')),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, -3), (-1, -1), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
+            ('ALIGN', (3, 1), (3, -1), 'RIGHT'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ]))
+        story.append(tbl)
+        if bill.notes:
+            story.append(Spacer(1, 12))
+            story.append(Paragraph(f'<i>{bill.notes}</i>', styles['Normal']))
+
+        doc.build(story)
+        response = HttpResponse(buf.getvalue(), content_type='application/pdf')
+        response['Content-Disposition'] = (
+            f'attachment; filename="bill_{bill.bill_no or bill.id}.pdf"'
+        )
+        buf.close()
+        return response
+
     @action(detail=True, methods=['post'], url_path='approve')
     def approve(self, request, pk=None):
         """Post the bill to the books (creates the journal entry)."""
@@ -124,6 +201,63 @@ class BillViewSet(LocationFilterMixin, viewsets.ModelViewSet):
             return Response({'detail': e.messages[0] if hasattr(e, 'messages') else str(e)},
                             status=status.HTTP_400_BAD_REQUEST)
         log_action('POST', 'Bill', bill.pk, f"Approved bill {bill}", request=request)
+        return Response(BillReadSerializer(bill).data)
+
+    @action(detail=True, methods=['post'], url_path='submit-for-approval')
+    def submit_for_approval(self, request, pk=None):
+        """Mark a draft bill as awaiting approver review (maker-checker)."""
+        from core.models import AccountingSettings
+        bill = self.get_object()
+        if bill.status != 'draft':
+            return Response({'detail': 'Only draft bills can be submitted for approval.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        threshold = AccountingSettings.get_settings().bill_approval_threshold or 0
+        if threshold <= 0 or bill.total_amount < threshold:
+            return Response({'detail': 'No approval needed; you can post this bill directly.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        bill.approval_status = 'pending'
+        bill.save(update_fields=['approval_status', 'updated_at'])
+        log_action('UPDATE', 'Bill', bill.pk,
+                   f'Bill {bill} submitted for approval', request=request)
+        return Response(BillReadSerializer(bill).data)
+
+    @action(detail=True, methods=['post'], url_path='approver-approve')
+    def approver_approve(self, request, pk=None):
+        """Maker-checker approval — approver signs off on a pending bill."""
+        from django.utils import timezone
+        bill = self.get_object()
+        if bill.approval_status != 'pending':
+            return Response({'detail': 'Bill is not pending approval.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        # Optional self-approval guard: don't let the same user approve their own bill
+        if (bill.created_by_id and request.user.is_authenticated and
+                bill.created_by_id == request.user.id and
+                not request.user.is_superuser):
+            return Response({'detail': 'You cannot approve a bill you created. '
+                                       'Ask another approver.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        bill.approval_status = 'approved'
+        bill.approved_by = request.user if request.user.is_authenticated else None
+        bill.approved_at = timezone.now()
+        bill.save(update_fields=['approval_status', 'approved_by',
+                                 'approved_at', 'updated_at'])
+        log_action('UPDATE', 'Bill', bill.pk,
+                   f'Bill {bill} approved', request=request)
+        return Response(BillReadSerializer(bill).data)
+
+    @action(detail=True, methods=['post'], url_path='approver-reject')
+    def approver_reject(self, request, pk=None):
+        bill = self.get_object()
+        if bill.approval_status != 'pending':
+            return Response({'detail': 'Bill is not pending approval.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        bill.approval_status = 'rejected'
+        bill.rejection_reason = request.data.get('reason', '')
+        bill.save(update_fields=['approval_status', 'rejection_reason',
+                                 'updated_at'])
+        log_action('UPDATE', 'Bill', bill.pk,
+                   f'Bill {bill} rejected', request=request,
+                   extra={'reason': bill.rejection_reason})
         return Response(BillReadSerializer(bill).data)
 
     @action(detail=True, methods=['post'], url_path='cancel')

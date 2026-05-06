@@ -94,3 +94,64 @@ class PartyOpeningBalance(models.Model):
 
     def __str__(self):
         return f"OB {self.party_type}#{self.party_id} = {self.amount} as of {self.as_of_date}"
+
+
+class PartyMetadata(models.Model):
+    """
+    Augments inventory's read-only Supplier/Customer rows with accounting-
+    specific metadata that doesn't belong in inventory: MSME registration,
+    income-tax PAN, lower-deduction-certificate flags, etc.
+    """
+
+    PARTY_TYPES = [('Supplier', 'Supplier'), ('Customer', 'Customer')]
+
+    MSME_CATEGORIES = [
+        ('', 'Not registered'),
+        ('micro', 'Micro Enterprise'),
+        ('small', 'Small Enterprise'),
+        ('medium', 'Medium Enterprise'),
+    ]
+
+    party_type = models.CharField(max_length=10, choices=PARTY_TYPES)
+    party_id = models.PositiveIntegerField()
+
+    pan = models.CharField(max_length=10, blank=True)
+    msme_category = models.CharField(max_length=10, choices=MSME_CATEGORIES,
+                                     blank=True, default='')
+    msme_udyam_no = models.CharField(max_length=30, blank=True,
+        help_text='UDYAM-XX-00-0000000 — MSME registration number')
+    msme_credit_period_days = models.PositiveSmallIntegerField(
+        default=45,
+        help_text='Per Section 15 of MSMED Act 2006: max 45 days from acceptance.',
+    )
+
+    # Lower deduction certificate u/s 197 IT Act — applies a reduced TDS rate
+    has_lower_deduction_cert = models.BooleanField(default=False)
+    lower_tds_rate_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('0.00'),
+    )
+    lower_cert_valid_from = models.DateField(null=True, blank=True)
+    lower_cert_valid_to = models.DateField(null=True, blank=True)
+
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['party_type', 'party_id'],
+                name='parties_metadata_unique_party',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['msme_category']),
+            models.Index(fields=['party_type', 'party_id']),
+        ]
+
+    def __str__(self):
+        return f'Metadata {self.party_type}#{self.party_id}'
+
+    @property
+    def is_msme(self) -> bool:
+        return bool(self.msme_category and self.msme_udyam_no)

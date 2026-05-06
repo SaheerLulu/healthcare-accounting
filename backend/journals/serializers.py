@@ -44,6 +44,7 @@ class JournalEntrySerializer(serializers.ModelSerializer):
             'reference_id',
             'is_posted',
             'location_id',
+            'cost_center',
             'created_at',
             'created_by',
             'created_by_name',
@@ -94,6 +95,7 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
             'reference_type',
             'reference_id',
             'location_id',
+            'cost_center',
             'lines',
         ]
         read_only_fields = ['id', 'entry_no']
@@ -102,15 +104,21 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         lines = data.get('lines', [])
-        if not lines:
-            raise serializers.ValidationError('At least one journal line is required.')
+        # AC WP 615: at least 2 lines (one debit, one credit).
+        if len(lines) < 2:
+            raise serializers.ValidationError(
+                'A journal entry needs at least two lines (one debit, one credit).'
+            )
 
-        total_debit = sum(line.get('debit', 0) for line in lines)
-        total_credit = sum(line.get('credit', 0) for line in lines)
+        # Sum to paisa precision and compare exactly — no float drift.
+        total_debit = sum((Decimal(str(l.get('debit', 0))) for l in lines), Decimal('0.00'))
+        total_credit = sum((Decimal(str(l.get('credit', 0))) for l in lines), Decimal('0.00'))
         if total_debit != total_credit:
             raise serializers.ValidationError(
                 f'Journal entry is unbalanced: Debit={total_debit}, Credit={total_credit}'
             )
+        if total_debit == 0:
+            raise serializers.ValidationError('Journal entry total cannot be zero.')
 
         line_errors = {}
         for idx, line in enumerate(lines):
@@ -124,6 +132,13 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
                     )
         if line_errors:
             raise serializers.ValidationError({'lines': line_errors})
+
+        # Period lock check — surfaces a clean 400 with the offending date.
+        from core.period_lock import assert_unlocked, PeriodLockedError
+        try:
+            assert_unlocked(data.get('date'))
+        except PeriodLockedError as exc:
+            raise serializers.ValidationError({'date': str(exc)})
 
         return data
 

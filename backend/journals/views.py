@@ -31,10 +31,36 @@ class JournalEntryFilter(django_filters.FilterSet):
     is_posted = django_filters.BooleanFilter(field_name='is_posted')
     narration = django_filters.CharFilter(field_name='narration', lookup_expr='icontains')
     entry_no = django_filters.CharFilter(field_name='entry_no', lookup_expr='icontains')
+    # WP 619 — extra filters
+    account = django_filters.NumberFilter(method='filter_account')
+    party_type = django_filters.CharFilter(method='filter_party')
+    party_id = django_filters.NumberFilter(method='filter_party_id')
+    amount_min = django_filters.NumberFilter(method='filter_amount_min')
+    amount_max = django_filters.NumberFilter(method='filter_amount_max')
+    cost_center = django_filters.CharFilter(field_name='cost_center')
 
     class Meta:
         model = JournalEntry
-        fields = ['date_from', 'date_to', 'voucher_type', 'reference_type', 'is_posted', 'narration', 'entry_no']
+        fields = ['date_from', 'date_to', 'voucher_type', 'reference_type', 'is_posted',
+                  'narration', 'entry_no', 'account', 'party_type', 'party_id',
+                  'amount_min', 'amount_max', 'cost_center']
+
+    def filter_account(self, qs, name, value):
+        return qs.filter(lines__account_id=value).distinct()
+
+    def filter_party(self, qs, name, value):
+        return qs.filter(lines__party_type=value).distinct()
+
+    def filter_party_id(self, qs, name, value):
+        return qs.filter(lines__party_id=value).distinct()
+
+    def filter_amount_min(self, qs, name, value):
+        from django.db.models import Sum
+        return qs.annotate(_total=Sum('lines__debit')).filter(_total__gte=value)
+
+    def filter_amount_max(self, qs, name, value):
+        from django.db.models import Sum
+        return qs.annotate(_total=Sum('lines__debit')).filter(_total__lte=value)
 
 
 class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
@@ -115,11 +141,22 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         """
         Create a reversal journal entry: all debits and credits are swapped.
         The original entry must be posted before it can be reversed.
+        Reversal date cannot fall in a locked period.
+        Each posted entry can be reversed at most once — re-reversing a
+        reversal would just create unbounded ping-pong; reverse the reversal
+        if you really need to undo the undo.
         """
         original = self.get_object()
         if not original.is_posted:
             return Response(
                 {'detail': 'Only posted entries can be reversed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Reverse-once: refuse if a reversal already exists for this entry
+        if hasattr(original, 'reversal_entry'):
+            return Response(
+                {'detail': f'This entry was already reversed by '
+                           f'{original.reversal_entry.entry_no}.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -130,6 +167,12 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
             from django.utils import timezone
             reversal_date = timezone.now().date()
 
+        from core.period_lock import assert_unlocked, PeriodLockedError
+        try:
+            assert_unlocked(reversal_date)
+        except PeriodLockedError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         reversal = JournalEntry.objects.create(
             date=reversal_date,
             narration=f"Reversal of {original.entry_no}: {original.narration}".strip(': '),
@@ -137,6 +180,7 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
             reference_type=original.reference_type,
             reference_id=original.reference_id,
             location_id=original.location_id,
+            reversal_of=original,
             created_by=request.user if request.user.is_authenticated else None,
         )
 
@@ -194,6 +238,148 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
                             status=status.HTTP_201_CREATED)
         except Exception as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'], url_path='provision-bad-debts')
+    def provision_bad_debts(self, request):
+        """Post the provision-for-doubtful-debts adjustment for `as_of` date."""
+        from datetime import date as _d
+        from .bad_debts import post_provision_adjustment
+        try:
+            as_of = (_d.fromisoformat(request.data['as_of'])
+                     if request.data.get('as_of') else _d.today())
+            result = post_provision_adjustment(
+                as_of=as_of,
+                location_id=request.data.get('location_id'),
+                narration=request.data.get('narration', ''),
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        log_action('GENERATE', 'JournalEntry', 'bad-debts',
+                   f"Bad debt provision as of {as_of}", request=request,
+                   extra={'adjustment': result.get('adjustment')})
+        return Response(result)
+
+    @action(detail=False, methods=['get'], url_path='sequence-audit')
+    def sequence_audit(self, request):
+        """Detect gaps in JV-YYYY-NNNNNN sequence — gap-free numbering is an audit requirement."""
+        year = request.query_params.get('year')
+        if not year:
+            return Response({'detail': 'year required'}, status=400)
+        prefix = f'JV-{year}-'
+        nums = sorted(
+            int(en.split('-')[-1])
+            for en in JournalEntry.objects.filter(entry_no__startswith=prefix)
+            .values_list('entry_no', flat=True)
+        )
+        if not nums:
+            return Response({'year': year, 'count': 0, 'gaps': [],
+                             'note': 'No entries found.'})
+        gaps = []
+        for i, n in enumerate(nums):
+            expected = nums[0] + i
+            if n != expected:
+                gaps.append({'expected': expected, 'found': n})
+        return Response({
+            'year': year, 'first': nums[0], 'last': nums[-1],
+            'count': len(nums), 'expected_count': nums[-1] - nums[0] + 1,
+            'gap_count': len(gaps), 'gaps': gaps[:200],
+        })
+
+    @action(detail=False, methods=['post'], url_path='closing-stock')
+    def closing_stock(self, request):
+        """Period-end closing-stock JV. Caller passes the target physical-count value."""
+        from datetime import date as _d
+        from decimal import Decimal as _D
+        try:
+            svc = JournalAutoGenerationService()
+            entry = svc.post_closing_stock_adjustment(
+                date=_d.fromisoformat(request.data.get('date', _d.today().isoformat())),
+                value=_D(str(request.data.get('value', '0'))),
+                location_id=request.data.get('location_id'),
+                narration=request.data.get('narration', ''),
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        if entry is None:
+            return Response(
+                {'detail': 'Closing Stock already at the target value — no JV needed.'},
+                status=status.HTTP_200_OK,
+            )
+        log_action('CREATE', 'JournalEntry', entry.pk, entry.entry_no,
+                   request=request, extra={'voucher_type': 'CLOSING_STOCK'})
+        return Response(JournalEntrySerializer(entry, context={'request': request}).data,
+                        status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='inventory-adjustment')
+    def inventory_adjustment(self, request):
+        """Post a shrinkage / damage / count-variance JV with §17(5)(h) ITC reversal."""
+        from decimal import Decimal as _D
+        try:
+            svc = JournalAutoGenerationService()
+            entry = svc.post_inventory_adjustment(
+                date=request.data.get('date'),
+                location_id=request.data.get('location_id'),
+                value=_D(str(request.data.get('value', '0'))),
+                adjustment_type=request.data.get('adjustment_type', 'shrinkage'),
+                itc_to_reverse=_D(str(request.data.get('itc_to_reverse', '0'))),
+                narration=request.data.get('narration', ''),
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        log_action('CREATE', 'JournalEntry', entry.pk, entry.entry_no,
+                   request=request, extra={'voucher_type': 'INV_ADJ'})
+        return Response(JournalEntrySerializer(entry, context={'request': request}).data,
+                        status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='drug-expiry')
+    def drug_expiry(self, request):
+        """Pharmacy-specific expired-stock write-off with ITC reversal."""
+        from decimal import Decimal as _D
+        try:
+            svc = JournalAutoGenerationService()
+            entry = svc.post_drug_expiry_writeoff(
+                date=request.data.get('date'),
+                location_id=request.data.get('location_id'),
+                value_at_cost=_D(str(request.data.get('value_at_cost', '0'))),
+                itc_to_reverse=_D(str(request.data.get('itc_to_reverse', '0'))),
+                narration=request.data.get('narration', ''),
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        log_action('CREATE', 'JournalEntry', entry.pk, entry.entry_no,
+                   request=request, extra={'voucher_type': 'EXPIRY'})
+        return Response(JournalEntrySerializer(entry, context={'request': request}).data,
+                        status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='stock-transfer')
+    def stock_transfer(self, request):
+        """Inter-branch stock-in-transit JE pair."""
+        from decimal import Decimal as _D
+        try:
+            svc = JournalAutoGenerationService()
+            res = svc.post_stock_transfer(
+                date=request.data.get('date'),
+                value=_D(str(request.data.get('value', '0'))),
+                from_location_id=int(request.data['from_location_id']),
+                to_location_id=int(request.data['to_location_id']),
+                narration=request.data.get('narration', ''),
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        log_action('CREATE', 'JournalEntry', 'transfer-pair',
+                   f'Stock transfer {res["out_entry"].entry_no} ↔ '
+                   f'{res["in_entry"].entry_no}', request=request)
+        return Response({
+            'out_entry': JournalEntrySerializer(res['out_entry'],
+                                                context={'request': request}).data,
+            'in_entry': JournalEntrySerializer(res['in_entry'],
+                                               context={'request': request}).data,
+        }, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['post'], url_path='contra')
     def create_contra(self, request):

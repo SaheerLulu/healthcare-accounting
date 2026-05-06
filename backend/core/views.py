@@ -12,11 +12,13 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import AccountingSettings, ChartOfAccount, AccountMapping
+from .period_lock import LockedPeriod
 from .serializers import (
     AccountingSettingsSerializer,
     ChartOfAccountSerializer,
     ChartOfAccountTreeSerializer,
     AccountMappingSerializer,
+    LockedPeriodSerializer,
 )
 from .mixins import get_active_location
 from audit.utils import log_action
@@ -70,10 +72,37 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
         log_action('CREATE', 'ChartOfAccount', instance.pk, str(instance), request=self.request)
 
     def perform_update(self, serializer):
+        # WP 613 — system accounts (those bound to an AccountMapping) cannot
+        # change account_type or account_code; that would silently break
+        # auto-generation across journals/GST/TDS/payroll.
+        old = self.get_object()
+        new = serializer.validated_data
+        is_system = AccountMapping.objects.filter(account=old).exists()
+        if is_system:
+            for protected in ('account_type', 'account_code'):
+                new_value = new.get(protected, getattr(old, protected))
+                if new_value != getattr(old, protected):
+                    from rest_framework.exceptions import ValidationError
+                    raise ValidationError({
+                        protected: f'Cannot change {protected} on a system-mapped account.',
+                    })
         instance = serializer.save()
         log_action('UPDATE', 'ChartOfAccount', instance.pk, str(instance), request=self.request)
 
     def perform_destroy(self, instance):
+        # WP 612 — cannot delete an account with movements; deactivate instead.
+        if instance.journal_lines.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                'This account has journal entries; deactivate it instead of deleting.'
+            )
+        # WP 613 — system-mapped accounts can't be deleted either (PROTECT FK
+        # would block at DB level, but we want a friendly message).
+        if AccountMapping.objects.filter(account=instance).exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(
+                'This account is bound to a system mapping; remove the mapping first.'
+            )
         log_action('DELETE', 'ChartOfAccount', instance.pk, str(instance), request=self.request)
         instance.delete()
 
@@ -323,3 +352,57 @@ class DashboardView(APIView):
             'financial_year_end': str(fy_end),
             'monthly_data': monthly_data,
         })
+
+
+class LockedPeriodViewSet(viewsets.ModelViewSet):
+    """Manage per-month period locks (block JV mutation in a closed month)."""
+    queryset = LockedPeriod.objects.all().order_by('-period')
+    serializer_class = LockedPeriodSerializer
+    pagination_class = None
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def perform_create(self, serializer):
+        instance = serializer.save(
+            locked_by=self.request.user if self.request.user.is_authenticated else None,
+        )
+        log_action('CREATE', 'LockedPeriod', instance.pk,
+                   f'Locked period {instance.period}', request=self.request,
+                   extra={'reason': instance.reason})
+
+    def perform_destroy(self, instance):
+        log_action('DELETE', 'LockedPeriod', instance.pk,
+                   f'Unlocked period {instance.period}', request=self.request)
+        instance.delete()
+
+
+class CloseFiscalYearView(APIView):
+    """POST {fy_start_year, location_id?, generate_opening?} → close FY + post opening JV."""
+
+    def post(self, request):
+        from .year_end import close_fiscal_year
+
+        fy_start_year = request.data.get('fy_start_year')
+        if not fy_start_year:
+            return Response({'detail': 'fy_start_year is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            fy_start_year = int(fy_start_year)
+        except (TypeError, ValueError):
+            return Response({'detail': 'fy_start_year must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from decimal import Decimal as _D
+        cs_value = request.data.get('closing_stock_value')
+        try:
+            result = close_fiscal_year(
+                fy_start_year,
+                location_id=request.data.get('location_id'),
+                generate_opening=bool(request.data.get('generate_opening', True)),
+                closing_stock_value=_D(str(cs_value)) if cs_value is not None else None,
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        log_action('GENERATE', 'AccountingSettings', 'fy-close',
+                   f"Closed FY {result['fy']}", request=request, extra=result)
+        return Response(result)
+

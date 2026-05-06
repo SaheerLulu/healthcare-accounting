@@ -12,6 +12,11 @@ class AccountingSettings(models.Model):
     pan = models.CharField(max_length=10, blank=True)
     is_fy_closed = models.BooleanField(default=False)
     last_closed_fy = models.CharField(max_length=7, blank=True)  # e.g. "2024-25"
+    bill_approval_threshold = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text='Bills above this amount require approval before posting. '
+                  '0 = no approval required (default).',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -136,6 +141,14 @@ class AccountMapping(models.Model):
         ('NET_SALARY_PAYABLE', 'Net Salary Payable'),
         ('RENT_EXPENSE', 'Rent Expense'),
         ('ELECTRICITY_EXPENSE', 'Electricity Expense'),
+        ('CLOSING_STOCK', 'Closing Stock'),
+        ('INVENTORY_LOSS', 'Inventory Loss / Shrinkage'),
+        ('EXPIRY_LOSS', 'Expired Stock Write-off'),
+        ('STOCK_TRANSFER_TRANSIT', 'Stock In Transit (inter-branch)'),
+        ('TCS_PAYABLE', 'TCS Payable'),
+        ('BAD_DEBTS_EXPENSE', 'Bad Debts Expense (P&L)'),
+        ('PROVISION_BAD_DEBTS', 'Provision for Doubtful Debts (contra-receivable)'),
+        ('PETTY_CASH', 'Petty Cash'),
     ]
 
     # Default mapping from key to account_code for data migration
@@ -167,6 +180,14 @@ class AccountMapping(models.Model):
         'NET_SALARY_PAYABLE': '2200',
         'RENT_EXPENSE': '5410',
         'ELECTRICITY_EXPENSE': '5420',
+        'CLOSING_STOCK': '1190',
+        'INVENTORY_LOSS': '5510',
+        'EXPIRY_LOSS': '5520',
+        'STOCK_TRANSFER_TRANSIT': '1191',
+        'TCS_PAYABLE': '2210',
+        'BAD_DEBTS_EXPENSE': '5530',
+        'PROVISION_BAD_DEBTS': '1131',
+        'PETTY_CASH': '1115',
     }
 
     key = models.CharField(max_length=30, unique=True, choices=KEY_CHOICES)
@@ -194,3 +215,72 @@ class AccountMapping(models.Model):
             return cls.objects.select_related('account').get(key=key).account
         except cls.DoesNotExist:
             raise ValueError(f"Account mapping not configured for key: {key}")
+
+
+class AccountingRole(models.Model):
+    """
+    WP 610 — accounting roles with discrete capability flags.
+
+    These are intentionally **separate from inventory roles** because the
+    accounting system has its own approval/post permissions that don't map
+    cleanly to inventory's role model. An admin assigns one of these roles
+    to a Django user via the admin UI or the seed_roles management command.
+    """
+
+    CODE_CHOICES = [
+        ('READ_ONLY', 'Read-only'),
+        ('BOOKKEEPER', 'Bookkeeper'),
+        ('SENIOR_ACCOUNTANT', 'Senior Accountant'),
+        ('CFO', 'CFO'),
+        ('AUDITOR', 'Auditor'),
+    ]
+
+    code = models.CharField(max_length=30, unique=True, choices=CODE_CHOICES)
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True)
+
+    # Capability flags
+    can_view = models.BooleanField(default=True)
+    can_create_journals = models.BooleanField(default=False)
+    can_post_journals = models.BooleanField(default=False)
+    can_reverse_journals = models.BooleanField(default=False)
+    can_manage_masters = models.BooleanField(default=False)
+    can_manage_settings = models.BooleanField(default=False)
+    can_lock_period = models.BooleanField(default=False)
+    can_close_fy = models.BooleanField(default=False)
+    can_view_audit = models.BooleanField(default=False)
+
+    users = models.ManyToManyField(
+        'auth.User', blank=True, related_name='accounting_roles',
+    )
+
+    DEFAULT_PERMISSIONS = {
+        'READ_ONLY': dict(can_view=True),
+        'BOOKKEEPER': dict(can_view=True, can_create_journals=True),
+        'SENIOR_ACCOUNTANT': dict(
+            can_view=True, can_create_journals=True, can_post_journals=True,
+            can_reverse_journals=True, can_manage_masters=True,
+        ),
+        'CFO': dict(
+            can_view=True, can_create_journals=True, can_post_journals=True,
+            can_reverse_journals=True, can_manage_masters=True,
+            can_manage_settings=True, can_lock_period=True, can_close_fy=True,
+            can_view_audit=True,
+        ),
+        'AUDITOR': dict(can_view=True, can_view_audit=True),
+    }
+
+    class Meta:
+        ordering = ['code']
+
+    def __str__(self):
+        return self.name
+
+    @classmethod
+    def has_capability(cls, user, capability: str) -> bool:
+        """True if `user` is in any role granting `capability`. Superusers always pass."""
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser:
+            return True
+        return cls.objects.filter(users=user, **{capability: True}).exists()

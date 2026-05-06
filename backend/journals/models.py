@@ -33,6 +33,19 @@ class JournalEntry(models.Model):
     reference_id = models.PositiveIntegerField(null=True, blank=True)
     is_posted = models.BooleanField(default=False)
     location_id = models.PositiveIntegerField(null=True, blank=True)  # matches inventory location
+    # Cost center / department tag — used for departmental P&L. Free-form so
+    # the user can introduce new departments without a migration; UI feeds
+    # a recommended list.
+    cost_center = models.CharField(max_length=50, blank=True, db_index=True,
+        help_text='Cost center / department tag, e.g. "OPD", "PHARMACY", "LAB".')
+    # Reverse-once invariant: a posted entry can be reversed exactly once.
+    # The reversing entry points back via reversal_of.
+    reversal_of = models.OneToOneField(
+        'self', null=True, blank=True,
+        on_delete=models.PROTECT,
+        related_name='reversal_entry',
+        help_text='The original posted entry that this reversal cancels (if any).',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
         User,
@@ -52,6 +65,12 @@ class JournalEntry(models.Model):
         ]
 
     def save(self, *args, **kwargs):
+        # Block any save (create or update) into a locked period.
+        # Skip this guard when the model is being loaded from a fixture or
+        # imported via management command that explicitly opts out.
+        if not getattr(self, '_skip_period_lock', False):
+            from core.period_lock import assert_unlocked
+            assert_unlocked(self.date)
         if not self.entry_no:
             self.entry_no = self._generate_entry_no()
         super().save(*args, **kwargs)

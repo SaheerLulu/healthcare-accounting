@@ -1,6 +1,7 @@
 from django.db.models import Count
 from rest_framework import serializers
 from .models import AccountingSettings, ChartOfAccount, AccountMapping
+from .period_lock import LockedPeriod
 
 
 class AccountingSettingsSerializer(serializers.ModelSerializer):
@@ -9,7 +10,7 @@ class AccountingSettingsSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'company_name', 'gstin', 'tan', 'state_code',
             'financial_year_start', 'registered_address', 'pan',
-            'is_fy_closed', 'last_closed_fy',
+            'is_fy_closed', 'last_closed_fy', 'bill_approval_threshold',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -62,3 +63,21 @@ class AccountMappingSerializer(serializers.ModelSerializer):
     class Meta:
         model = AccountMapping
         fields = ['id', 'key', 'account', 'account_code', 'account_name']
+
+
+class LockedPeriodSerializer(serializers.ModelSerializer):
+    locked_by_name = serializers.CharField(source='locked_by.username', read_only=True, default=None)
+
+    class Meta:
+        model = LockedPeriod
+        fields = ['id', 'period', 'locked_at', 'locked_by', 'locked_by_name', 'reason']
+        read_only_fields = ['id', 'locked_at', 'locked_by_name']
+
+    def validate_period(self, value):
+        import re
+        if not re.fullmatch(r'\d{4}-\d{2}', value):
+            raise serializers.ValidationError("Period must be in YYYY-MM format.")
+        month = int(value.split('-')[1])
+        if not 1 <= month <= 12:
+            raise serializers.ValidationError("Month must be 01-12.")
+        return value

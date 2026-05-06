@@ -28,6 +28,14 @@ def post_bill(bill: Bill, user=None) -> JournalEntry:
         raise ValidationError('Bill is already posted.')
     if bill.status == 'cancelled':
         raise ValidationError('Cancelled bills cannot be posted.')
+    # Maker-checker gate: bills above the configured threshold need approval first.
+    from core.models import AccountingSettings
+    threshold = AccountingSettings.get_settings().bill_approval_threshold or Decimal('0')
+    if threshold > 0 and bill.total_amount >= threshold and bill.approval_status != 'approved':
+        raise ValidationError(
+            f'This bill (₹{bill.total_amount}) needs approval first '
+            f'(threshold ₹{threshold}). Submit it for approval.'
+        )
     lines = list(bill.lines.all())
     if not lines:
         raise ValidationError('Add at least one line item before approving.')

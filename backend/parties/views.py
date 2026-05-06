@@ -1,4 +1,6 @@
+import csv
 from datetime import date
+from django.http import HttpResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -156,6 +158,54 @@ class SupplierStatementView(_PartyStatementView):
 
 class CustomerStatementView(_PartyStatementView):
     party_type = 'Customer'
+
+
+class _PartyStatementCSVView(APIView):
+    """WP 646 / WP 648 — CSV export of statement of account."""
+    party_type = ''
+    party_model = None
+
+    def get(self, request, pk: int):
+        get_object_or_404(self.party_model, pk=pk)
+        loc = get_active_location(request)
+        data = services.statement_of_account(
+            self.party_type, pk,
+            location_id=loc.id if loc else None,
+            start_date=_parse_date(request.query_params.get('start_date')),
+            end_date=_parse_date(request.query_params.get('end_date')),
+        )
+
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = (
+            f'attachment; filename="{self.party_type}_{pk}_statement.csv"'
+        )
+        w = csv.writer(response)
+        w.writerow([f'{self.party_type} ID', pk,
+                    'Opening', data.get('opening_balance', 0)])
+        w.writerow([])
+        w.writerow(['Date', 'Voucher', 'Narration', 'Debit', 'Credit', 'Running Balance'])
+        for row in data.get('rows', []):
+            w.writerow([
+                row.get('date', ''),
+                row.get('entry_no', ''),
+                row.get('narration', ''),
+                row.get('debit', ''),
+                row.get('credit', ''),
+                row.get('running_balance', ''),
+            ])
+        w.writerow([])
+        w.writerow(['', '', 'Closing', '', '', data.get('closing_balance', 0)])
+        return response
+
+
+class SupplierStatementCSVView(_PartyStatementCSVView):
+    party_type = 'Supplier'
+    party_model = SupplierRO
+
+
+class CustomerStatementCSVView(_PartyStatementCSVView):
+    party_type = 'Customer'
+    party_model = CustomerRO
 
 
 # ─── Emails / Communications tab ────────────────────────────────────────────

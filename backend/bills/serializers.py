@@ -87,12 +87,14 @@ class BillReadSerializer(serializers.ModelSerializer):
             'total_amount', 'amount_paid', 'balance_due',
             'status', 'notes', 'location_id',
             'journal_entry', 'journal_entry_no',
+            'approval_status', 'approved_by', 'approved_at', 'rejection_reason',
             'lines', 'payments', 'attachments',
             'created_at', 'updated_at',
             'created_by', 'created_by_name',
         ]
         read_only_fields = [
             'id', 'amount_paid', 'status', 'journal_entry', 'journal_entry_no',
+            'approval_status', 'approved_by', 'approved_at', 'rejection_reason',
             'lines', 'payments', 'attachments',
             'created_at', 'updated_at', 'created_by', 'created_by_name',
         ]
