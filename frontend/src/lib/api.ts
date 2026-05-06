@@ -1867,4 +1867,331 @@ export async function getStockValuation(params?: Record<string, string>) {
   return res.data as { as_of_date: string; rows: StockValuationRow[]; total_products: number; total_value: string }
 }
 
+// ─── Wave 6 — Fixed Assets ──────────────────────────────────────────────────
+
+export interface AssetClass {
+  id: number
+  code: string
+  name: string
+  description: string
+  dep_method: 'SLM' | 'WDV'
+  useful_life_years: number
+  salvage_value_pct: string
+  wdv_rate_pct: string
+  asset_account: number
+  asset_account_code?: string
+  accum_dep_account: number
+  accum_dep_account_code?: string
+  dep_expense_account: number
+  dep_expense_account_code?: string
+}
+
+export interface FixedAsset {
+  id: number
+  asset_no: string
+  name: string
+  description: string
+  asset_class: number
+  asset_class_name?: string
+  location_id: number | null
+  serial_no: string
+  vendor_name: string
+  vendor_id: number | null
+  acquisition_date: string
+  acquisition_cost: string
+  salvage_value: string
+  useful_life_months: number
+  status: 'active' | 'disposed' | 'written_off'
+  disposal_date: string | null
+  disposal_proceeds: string | null
+  gain_loss_on_disposal: string | null
+  accumulated_depreciation?: string
+  net_book_value?: string
+  acquisition_entry_no?: string | null
+  notes: string
+  created_at: string
+}
+
+export async function listAssetClasses() {
+  const res = await api.get('/fixed-assets/classes/')
+  return res.data as AssetClass[]
+}
+export async function createAssetClass(data: Partial<AssetClass>) {
+  const res = await api.post('/fixed-assets/classes/', data)
+  return res.data as AssetClass
+}
+export async function listFixedAssets(params?: Record<string, string>) {
+  const res = await api.get('/fixed-assets/assets/', { params })
+  return res.data as { results?: FixedAsset[] } | FixedAsset[]
+}
+export async function getFixedAsset(id: number) {
+  const res = await api.get(`/fixed-assets/assets/${id}/`)
+  return res.data as FixedAsset
+}
+export async function createFixedAsset(data: Partial<FixedAsset>) {
+  const res = await api.post('/fixed-assets/assets/', data)
+  return res.data as FixedAsset
+}
+export async function postAssetAcquisition(id: number, payment_mode = 'bank') {
+  const res = await api.post(`/fixed-assets/assets/${id}/post-acquisition/`,
+                             { payment_mode })
+  return res.data as FixedAsset
+}
+export async function disposeAsset(id: number, payload: { disposal_date: string; proceeds: string; mode?: string }) {
+  const res = await api.post(`/fixed-assets/assets/${id}/dispose/`, payload)
+  return res.data as FixedAsset
+}
+export async function previewDepreciation(period: string, location_id?: number) {
+  const res = await api.get('/fixed-assets/depreciation/',
+                            { params: { period, ...(location_id ? { location_id } : {}) } })
+  return res.data as { period: string; rows: any[]; total: string }
+}
+export async function postDepreciation(period: string, location_id?: number) {
+  const res = await api.post('/fixed-assets/depreciation/',
+                             { period, ...(location_id ? { location_id } : {}) })
+  return res.data as { period: string; posted: any[] }
+}
+
+// ─── Wave 6 — Loans & EMI ───────────────────────────────────────────────────
+
+export interface Loan {
+  id: number
+  loan_no: string
+  lender_name: string
+  lender_id: number | null
+  loan_type: 'term' | 'working_capital' | 'overdraft' | 'vehicle' | 'mortgage'
+  principal_amount: string
+  interest_rate_pct: string
+  tenure_months: number
+  start_date: string
+  end_date: string
+  emi_day: number
+  emi_amount: string
+  status: 'active' | 'closed' | 'written_off'
+  liability_account: number
+  liability_account_code?: string
+  interest_expense_account: number
+  interest_expense_account_code?: string
+  outstanding_principal?: string
+  disbursement_entry_no?: string | null
+  notes: string
+}
+
+export interface EMIRow {
+  id: number
+  loan: number
+  installment_no: number
+  due_date: string
+  principal: string
+  interest: string
+  total_emi?: string
+  balance_principal: string
+  status: 'pending' | 'paid' | 'overdue'
+  paid_date: string | null
+  entry_no?: string | null
+}
+
+export async function listLoans(params?: Record<string, string>) {
+  const res = await api.get('/loans/loans/', { params })
+  return res.data as { results?: Loan[] } | Loan[]
+}
+export async function createLoan(data: Partial<Loan>) {
+  const res = await api.post('/loans/loans/', data)
+  return res.data as Loan
+}
+export async function getLoanSchedule(id: number) {
+  const res = await api.get(`/loans/loans/${id}/schedule/`)
+  return res.data as { rows: EMIRow[]; count: number; outstanding_principal: string }
+}
+export async function disburseLoan(id: number, mode = 'bank') {
+  const res = await api.post(`/loans/loans/${id}/post-disbursement/`, { mode })
+  return res.data as Loan
+}
+export async function payEMI(emi_id: number, payment_date?: string, mode = 'bank') {
+  const res = await api.post('/loans/emi/', { emi_id, payment_date, mode })
+  return res.data as EMIRow
+}
+
+// ─── Wave 6 — Cheques ───────────────────────────────────────────────────────
+
+export interface Cheque {
+  id: number
+  cheque_no: string
+  kind: 'issued' | 'received'
+  bank_account: number
+  bank_account_name?: string
+  cheque_date: string
+  expected_clear_date: string | null
+  amount: string
+  party_type: string
+  party_id: number | null
+  party_name: string
+  status: 'pending' | 'cleared' | 'bounced' | 'cancelled'
+  bounce_reason: string
+  bounce_charge: string | null
+  is_pdc?: boolean
+  entry_no?: string | null
+  bounce_entry_no?: string | null
+  bill_payment: number | null
+  notes: string
+}
+
+export async function listCheques(params?: Record<string, string>) {
+  const res = await api.get('/banking/cheques/', { params })
+  return res.data as { results?: Cheque[] } | Cheque[]
+}
+export async function createCheque(data: Partial<Cheque>) {
+  const res = await api.post('/banking/cheques/', data)
+  return res.data as Cheque
+}
+export async function clearCheque(id: number) {
+  const res = await api.post(`/banking/cheques/${id}/clear/`)
+  return res.data as Cheque
+}
+export async function bounceCheque(id: number, reason: string, bank_charge?: string) {
+  const res = await api.post(`/banking/cheques/${id}/bounce/`,
+                             { reason, ...(bank_charge ? { bank_charge } : {}) })
+  return res.data as Cheque
+}
+
+// ─── Wave 6 — Petty Cash ────────────────────────────────────────────────────
+
+export interface PettyCashFloat {
+  id: number
+  location_id: number
+  location_name: string
+  chart_account: number
+  chart_account_code?: string
+  imprest_amount: string
+  replenishment_threshold: string
+  is_active: boolean
+  custodian_name: string
+  current_balance?: string
+  needs_replenishment?: boolean
+}
+
+export interface PettyCashTxn {
+  id: number
+  float: number
+  date: string
+  kind: 'spend' | 'receipt'
+  amount: string
+  expense_account: number
+  expense_account_code?: string
+  description: string
+  voucher_no: string
+  entry_no?: string | null
+}
+
+export async function listPettyCashFloats() {
+  const res = await api.get('/banking/petty-cash/')
+  return res.data as { results?: PettyCashFloat[] } | PettyCashFloat[]
+}
+export async function createPettyCashFloat(data: Partial<PettyCashFloat>) {
+  const res = await api.post('/banking/petty-cash/', data)
+  return res.data as PettyCashFloat
+}
+export async function spendPettyCash(id: number, payload: { date: string; amount: string; expense_account: number; description: string; voucher_no?: string }) {
+  const res = await api.post(`/banking/petty-cash/${id}/spend/`, payload)
+  return res.data as PettyCashTxn
+}
+export async function replenishPettyCash(id: number, payload: { date: string; amount: string; source?: string }) {
+  const res = await api.post(`/banking/petty-cash/${id}/replenish/`, payload)
+  return res.data as PettyCashTxn
+}
+export async function getPettyCashTxns(id: number) {
+  const res = await api.get(`/banking/petty-cash/${id}/transactions/`)
+  return res.data as { rows: PettyCashTxn[]; count: number; current_balance: string }
+}
+
+// ─── Wave 6 — Notifications ─────────────────────────────────────────────────
+
+export interface Notification {
+  id: number
+  user: number | null
+  role_code: string
+  kind: string
+  title: string
+  body: string
+  priority: 'low' | 'normal' | 'high' | 'critical'
+  link_url: string
+  related_model: string
+  related_id: number | null
+  is_read: boolean
+  read_at: string | null
+  created_at: string
+}
+
+export async function listNotifications(params?: Record<string, string>) {
+  const res = await api.get('/notifications/', { params })
+  return res.data as { results?: Notification[] } | Notification[]
+}
+export async function getNotificationCounts() {
+  const res = await api.get('/notifications/counts/')
+  return res.data as { unread_total: number; by_priority: Record<string, number> }
+}
+export async function markNotificationRead(id: number) {
+  const res = await api.post(`/notifications/${id}/read/`)
+  return res.data as Notification
+}
+export async function markAllNotificationsRead() {
+  const res = await api.post('/notifications/mark-all-read/')
+  return res.data as { marked_read: number }
+}
+
+// ─── Wave 6 — Closing-entries wizard helpers ────────────────────────────────
+
+export interface ClosingStockPayload {
+  date: string
+  value: string
+  location_id?: number
+  narration?: string
+}
+export async function postClosingStock(payload: ClosingStockPayload) {
+  const res = await api.post('/journals/journal-entries/closing-stock/', payload)
+  return res.data
+}
+
+export interface InventoryAdjustmentPayload {
+  date: string
+  location_id: number
+  value: string
+  adjustment_type?: 'shrinkage' | 'damage' | 'count_variance'
+  itc_to_reverse?: string
+  narration?: string
+}
+export async function postInventoryAdjustment(payload: InventoryAdjustmentPayload) {
+  const res = await api.post('/journals/journal-entries/inventory-adjustment/', payload)
+  return res.data
+}
+
+export interface DrugExpiryPayload {
+  date: string
+  location_id: number
+  value_at_cost: string
+  itc_to_reverse?: string
+  narration?: string
+}
+export async function postDrugExpiry(payload: DrugExpiryPayload) {
+  const res = await api.post('/journals/journal-entries/drug-expiry/', payload)
+  return res.data
+}
+
+export interface StockTransferPayload {
+  date: string
+  value: string
+  from_location_id: number
+  to_location_id: number
+  narration?: string
+}
+export async function postStockTransfer(payload: StockTransferPayload) {
+  const res = await api.post('/journals/journal-entries/stock-transfer/', payload)
+  return res.data as { out_entry: any; in_entry: any }
+}
+
+export async function postBadDebtsProvision(payload: { as_of?: string; location_id?: number; narration?: string }) {
+  const res = await api.post('/journals/journal-entries/provision-bad-debts/', payload)
+  return res.data
+}
+
 export default api

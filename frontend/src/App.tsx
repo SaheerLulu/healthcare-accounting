@@ -46,6 +46,12 @@ import AuditLogPage from './pages/AuditLogPage'
 import SuppliersListPage from './pages/parties/SuppliersListPage'
 import CustomersListPage from './pages/parties/CustomersListPage'
 import PartyDetailPage from './pages/parties/PartyDetailPage'
+import FixedAssetsPage from './pages/fixed-assets/FixedAssetsPage'
+import LoansPage from './pages/loans/LoansPage'
+import ChequesPage from './pages/banking/ChequesPage'
+import PettyCashPage from './pages/banking/PettyCashPage'
+import NotificationsPage from './pages/notifications/NotificationsPage'
+import ClosingEntriesPage from './pages/journals/ClosingEntriesPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('token')
@@ -119,6 +125,13 @@ export default function App() {
           <Route path="sync" element={<SyncPage />} />
           <Route path="audit" element={<AuditLogPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          {/* Wave 6 — new pages */}
+          <Route path="fixed-assets" element={<FixedAssetsPage />} />
+          <Route path="loans" element={<LoansPage />} />
+          <Route path="banking/cheques" element={<ChequesPage />} />
+          <Route path="banking/petty-cash" element={<PettyCashPage />} />
+          <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="journals/closing-entries" element={<ClosingEntriesPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

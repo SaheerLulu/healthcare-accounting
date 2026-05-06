@@ -22,6 +22,7 @@ import { useTheme } from 'next-themes'
 import { cn } from '../lib/utils'
 import { useLocation as useAppLocation } from '../contexts/LocationContext'
 import { PageTransition } from './ui/PageTransition'
+import NotificationBell from '../pages/notifications/NotificationBell'
 
 interface MenuItem {
   id: string
@@ -48,6 +49,7 @@ const menuGroups: MenuGroup[] = [
       { id: 'accounts', label: 'Chart of Accounts', to: '/accounts' },
       { id: 'journals', label: 'Journal Entries', to: '/journals' },
       { id: 'recurring-journals', label: 'Recurring Journals', to: '/journals/recurring' },
+      { id: 'closing-entries', label: 'Closing Entries', to: '/journals/closing-entries' },
       { id: 'bills', label: 'Bills', to: '/bills' },
       { id: 'recurring-bills', label: 'Recurring Bills', to: '/bills/recurring' },
       { id: 'expenses', label: 'Expenses', to: '/expenses' },
@@ -66,7 +68,19 @@ const menuGroups: MenuGroup[] = [
   {
     label: 'Banking',
     icon: Landmark,
-    items: [{ id: 'banking', label: 'Bank Accounts', to: '/banking' }],
+    items: [
+      { id: 'banking', label: 'Bank Accounts', to: '/banking' },
+      { id: 'cheques', label: 'Cheques', to: '/banking/cheques' },
+      { id: 'petty-cash', label: 'Petty Cash', to: '/banking/petty-cash' },
+    ],
+  },
+  {
+    label: 'Assets & Loans',
+    icon: Landmark,
+    items: [
+      { id: 'fixed-assets', label: 'Fixed Assets', to: '/fixed-assets' },
+      { id: 'loans', label: 'Loans & EMI', to: '/loans' },
+    ],
   },
   {
     label: 'GST',
@@ -380,6 +394,7 @@ function TopNav() {
 
       {/* Right: Theme + Profile */}
       <div className="flex items-center gap-2 flex-shrink-0">
+        <NotificationBell />
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           className="p-2 rounded-md hover:bg-[var(--color-hover-bg)]"
