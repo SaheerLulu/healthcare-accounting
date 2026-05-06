@@ -33,6 +33,10 @@ urlpatterns = [
     path('api/bills/', include('bills.urls')),
     path('api/banking/', include('banking.urls')),
     path('api/expenses/', include('expenses.urls')),
+    path('api/fixed-assets/', include('fixed_assets.urls')),
+    path('api/loans/', include('loans.urls')),
+    path('api/notifications/', include('notifications.urls')),
+    path('api/budgets/', include('budgets.urls')),
 ]
 
 if settings.DEBUG:

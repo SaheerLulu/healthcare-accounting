@@ -233,3 +233,47 @@ class InventorySyncService:
             'purchase_returns': purchase_return_count,
             'total': total,
         }
+
+
+# Reference types that come from the inventory pipeline. Hand-edited 'Manual'
+# JVs are NOT in this list and never get touched by full re-sync.
+AUTO_GEN_REF_TYPES = (
+    'PurchaseOrder', 'POSOrder', 'B2BSalesOrder',
+    'SalesReturn', 'PurchaseReturn',
+)
+
+
+@transaction.atomic
+def full_resync(*, dry_run: bool = False) -> dict:
+    """
+    WP 668 — full re-sync. Wipes all auto-generated JVs (and their lines via
+    CASCADE), resets every SyncLog cursor, then re-runs sync from scratch.
+
+    `dry_run=True` returns the count that would be wiped without touching
+    anything. The caller (UI button) should always show a confirmation
+    dialog *plus* surface the dry-run count first.
+    """
+    qs = JournalEntry.objects.filter(reference_type__in=AUTO_GEN_REF_TYPES)
+    target_count = qs.count()
+
+    if dry_run:
+        return {
+            'dry_run': True,
+            'would_delete_journals': target_count,
+            'would_reset_cursors': SyncLog.objects.count(),
+        }
+
+    # Defensive — never wipe Manual entries even if the filter is somehow off.
+    deleted, _ = qs.exclude(reference_type='Manual').delete()
+    SyncLog.objects.update(last_synced_id=0)
+    SyncError.objects.update(resolved=True)  # archive old errors before re-run
+
+    # Re-run sync
+    svc = InventorySyncService()
+    result = svc.sync_all()
+
+    return {
+        'dry_run': False,
+        'wiped_entries': deleted,
+        'resync': result,
+    }

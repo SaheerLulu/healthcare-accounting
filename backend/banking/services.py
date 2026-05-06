@@ -67,12 +67,14 @@ def _resolve_columns(headers: list[str]) -> dict:
     return out
 
 
-@transaction.atomic
 def import_csv(account: BankAccount, raw_bytes: bytes, *, user=None) -> dict:
     """Parse and persist transactions from a CSV bank statement.
 
     Returns {'imported': N, 'duplicates': M, 'errors': [...]}.
     Duplicates are skipped using the (account, date, amount, description) constraint.
+
+    Each row gets its own savepoint so a single duplicate doesn't poison the
+    enclosing transaction.
     """
     text = raw_bytes.decode('utf-8-sig', errors='replace')
     sample = text[:2048]
@@ -122,21 +124,23 @@ def import_csv(account: BankAccount, raw_bytes: bytes, *, user=None) -> dict:
                 continue
 
             try:
-                BankTransaction.objects.create(
-                    bank_account=account,
-                    date=txn_date,
-                    description=description,
-                    reference=reference,
-                    amount=amount,
-                    running_balance=balance,
-                    status='unmatched',
-                    source='imported',
-                    imported_at=now,
-                    created_by=user,
-                )
+                # Per-row savepoint — IntegrityError on one row should NOT
+                # poison the rest of the import.
+                with transaction.atomic():
+                    BankTransaction.objects.create(
+                        bank_account=account,
+                        date=txn_date,
+                        description=description,
+                        reference=reference,
+                        amount=amount,
+                        running_balance=balance,
+                        status='unmatched',
+                        source='imported',
+                        imported_at=now,
+                        created_by=user,
+                    )
                 imported += 1
             except Exception as exc:
-                # Treat unique-constraint violation as duplicate; anything else bubbles
                 if 'banking_transaction_dedupe' in str(exc) or 'UNIQUE' in str(exc).upper():
                     duplicates += 1
                 else:
@@ -303,6 +307,140 @@ def categorize_transaction(txn: BankTransaction, *, account_id: int,
 
 
 # ─── Balances ──────────────────────────────────────────────────────────────
+
+@transaction.atomic
+def mark_cheque_cleared(cheque, *, clear_date=None):
+    """Move a pending cheque to cleared. No new JE — the original JE already
+    posted Dr/Cr Bank; clearing is just the bank's confirmation."""
+    if cheque.status != 'pending':
+        raise ValidationError(f'Cheque is {cheque.status}, cannot clear.')
+    cheque.status = 'cleared'
+    cheque.save(update_fields=['status', 'updated_at'])
+    return cheque
+
+
+@transaction.atomic
+def mark_cheque_bounced(cheque, *, reason: str = '', bank_charge=None,
+                       reverse_je: bool = True, user=None):
+    """
+    Mark cheque bounced. If `reverse_je` (default), post a reversing JE that
+    backs out the original cheque-issuance/receipt entry, plus an optional
+    bank-charge JE.
+    """
+    if cheque.status != 'pending':
+        raise ValidationError(f'Cheque is {cheque.status}, cannot bounce.')
+
+    cheque.status = 'bounced'
+    cheque.bounce_reason = reason
+    cheque.bounce_charge = Decimal(str(bank_charge)) if bank_charge else None
+
+    if reverse_je and cheque.journal_entry_id and cheque.journal_entry.is_posted:
+        original = cheque.journal_entry
+        if hasattr(original, 'reversal_entry'):
+            # Already reversed for some other reason — don't double-reverse
+            pass
+        else:
+            reversal = JournalEntry.objects.create(
+                date=date_cls.today(),
+                narration=f'Cheque {cheque.cheque_no} bounced: '
+                          f'{reason or "no reason given"}',
+                voucher_type=original.voucher_type,
+                reference_type='Manual',
+                location_id=original.location_id,
+                reversal_of=original,
+                created_by=user,
+            )
+            for line in original.lines.all():
+                JournalEntryLine.objects.create(
+                    entry=reversal, account=line.account,
+                    debit=line.credit, credit=line.debit,
+                    narration=line.narration,
+                    party_type=line.party_type, party_id=line.party_id,
+                )
+            reversal.post()
+            cheque.bounce_journal_entry = reversal
+
+            # Roll back BillPayment if linked
+            if cheque.bill_payment_id:
+                bp = cheque.bill_payment
+                bp.bill.amount_paid = max(
+                    (bp.bill.amount_paid or Decimal('0')) - bp.amount, Decimal('0'),
+                )
+                bp.bill.status = bp.bill.recalc_status()
+                bp.bill.save(update_fields=['amount_paid', 'status', 'updated_at'])
+
+    cheque.save(update_fields=['status', 'bounce_reason', 'bounce_charge',
+                               'bounce_journal_entry', 'updated_at'])
+    return cheque
+
+
+# ─── Petty cash ────────────────────────────────────────────────────────────
+
+@transaction.atomic
+def post_petty_cash_spend(*, float_obj, date, amount, expense_account,
+                         description: str = '', voucher_no: str = '',
+                         user=None):
+    """Dr expense, Cr petty-cash GL."""
+    from .models import PettyCashTransaction
+    amount = Decimal(str(amount))
+    if amount <= 0:
+        raise ValidationError('Amount must be positive.')
+
+    je = JournalEntry.objects.create(
+        date=date,
+        narration=f'Petty cash spend: {description or "—"}',
+        voucher_type='PAYMENT', reference_type='Manual',
+        location_id=float_obj.location_id,
+        created_by=user,
+    )
+    JournalEntryLine.objects.create(entry=je, account=expense_account, debit=amount)
+    JournalEntryLine.objects.create(entry=je, account=float_obj.chart_account,
+                                    credit=amount)
+    je.post()
+
+    return PettyCashTransaction.objects.create(
+        float=float_obj, date=date, kind='spend', amount=amount,
+        expense_account=expense_account, description=description,
+        voucher_no=voucher_no, journal_entry=je, created_by=user,
+    )
+
+
+@transaction.atomic
+def replenish_petty_cash(*, float_obj, date, amount, source: str = 'bank',
+                        user=None):
+    """Top up float — Dr petty-cash, Cr bank/cash."""
+    from core.models import AccountMapping
+    from .models import PettyCashTransaction
+    amount = Decimal(str(amount))
+    src_acct = (AccountMapping.get_account('BANK') if source == 'bank'
+                else AccountMapping.get_account('CASH'))
+    je = JournalEntry.objects.create(
+        date=date, narration=f'Replenish petty cash @ location {float_obj.location_id}',
+        voucher_type='CONTRA', reference_type='Manual',
+        location_id=float_obj.location_id,
+        created_by=user,
+    )
+    JournalEntryLine.objects.create(entry=je, account=float_obj.chart_account,
+                                    debit=amount)
+    JournalEntryLine.objects.create(entry=je, account=src_acct, credit=amount)
+    je.post()
+    return PettyCashTransaction.objects.create(
+        float=float_obj, date=date, kind='receipt', amount=amount,
+        expense_account=float_obj.chart_account,
+        description=f'Replenishment from {source}',
+        journal_entry=je, created_by=user,
+    )
+
+
+def petty_cash_balance(float_obj) -> Decimal:
+    """Current cash on hand for this float."""
+    from django.db.models import Sum
+    agg = JournalEntryLine.objects.filter(
+        account=float_obj.chart_account, entry__is_posted=True,
+        entry__location_id=float_obj.location_id,
+    ).aggregate(d=Sum('debit'), c=Sum('credit'))
+    return (agg['d'] or Decimal('0')) - (agg['c'] or Decimal('0'))
+
 
 def book_balance(account: BankAccount) -> Decimal:
     """Net balance from posted journal entry lines on the linked GL account."""

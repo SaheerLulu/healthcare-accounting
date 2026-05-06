@@ -56,6 +56,10 @@ INSTALLED_APPS = [
     'bills',
     'banking',
     'expenses',
+    'fixed_assets',
+    'loans',
+    'notifications',
+    'budgets',
 ]
 
 MIDDLEWARE = [

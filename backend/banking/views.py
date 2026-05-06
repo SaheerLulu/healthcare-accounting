@@ -8,10 +8,11 @@ from rest_framework.response import Response
 from audit.utils import log_action
 from journals.models import JournalEntry
 
-from .models import BankAccount, BankTransaction
+from .models import BankAccount, BankTransaction, Cheque, PettyCashFloat, PettyCashTransaction
 from .serializers import (
-    BankAccountSerializer, BankTransactionSerializer,
+    BankAccountSerializer, BankTransactionSerializer, ChequeSerializer,
     CategorizePayloadSerializer, MatchPayloadSerializer,
+    PettyCashFloatSerializer, PettyCashTransactionSerializer,
 )
 from . import services
 
@@ -169,3 +170,120 @@ class BankTransactionViewSet(viewsets.ModelViewSet):
         log_action('CREATE', 'JournalEntry', entry.pk,
                    f"Categorized bank txn {txn.pk} → {entry.entry_no}", request=request)
         return Response(BankTransactionSerializer(txn).data, status=status.HTTP_201_CREATED)
+
+
+class ChequeViewSet(viewsets.ModelViewSet):
+    """Cheque register: PDC + clearance + bounce tracking (issued + received)."""
+    queryset = Cheque.objects.select_related('bank_account', 'journal_entry',
+                                             'bounce_journal_entry')
+    serializer_class = ChequeSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        params = self.request.query_params
+        if (k := params.get('kind')):
+            qs = qs.filter(kind=k)
+        if (s := params.get('status')):
+            qs = qs.filter(status__in=[x.strip() for x in s.split(',')])
+        if (acc := params.get('bank_account')):
+            qs = qs.filter(bank_account_id=acc)
+        if params.get('pdc') == 'true':
+            from datetime import date as _d
+            qs = qs.filter(expected_clear_date__gt=_d.today(), status='pending')
+        return qs
+
+    def perform_create(self, serializer):
+        instance = serializer.save(
+            created_by=self.request.user if self.request.user.is_authenticated else None,
+        )
+        log_action('CREATE', 'Cheque', instance.pk, str(instance), request=self.request)
+
+    @action(detail=True, methods=['post'], url_path='clear')
+    def clear(self, request, pk=None):
+        cheque = self.get_object()
+        try:
+            services.mark_cheque_cleared(cheque)
+        except DjangoValidationError as e:
+            return Response({'detail': e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        log_action('UPDATE', 'Cheque', cheque.pk, f'Cheque {cheque.cheque_no} cleared',
+                   request=request)
+        return Response(ChequeSerializer(cheque).data)
+
+    @action(detail=True, methods=['post'], url_path='bounce')
+    def bounce(self, request, pk=None):
+        cheque = self.get_object()
+        try:
+            services.mark_cheque_bounced(
+                cheque,
+                reason=request.data.get('reason', ''),
+                bank_charge=request.data.get('bank_charge'),
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except DjangoValidationError as e:
+            return Response({'detail': e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        log_action('UPDATE', 'Cheque', cheque.pk,
+                   f'Cheque {cheque.cheque_no} bounced',
+                   request=request,
+                   extra={'reason': cheque.bounce_reason})
+        return Response(ChequeSerializer(cheque).data)
+
+
+class PettyCashFloatViewSet(viewsets.ModelViewSet):
+    queryset = PettyCashFloat.objects.select_related('chart_account')
+    serializer_class = PettyCashFloatSerializer
+    pagination_class = None
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        log_action('CREATE', 'PettyCashFloat', instance.pk, str(instance), request=self.request)
+
+    @action(detail=True, methods=['post'], url_path='spend')
+    def spend(self, request, pk=None):
+        from datetime import date as _d
+        from decimal import Decimal as _D
+        from core.models import ChartOfAccount
+        float_obj = self.get_object()
+        try:
+            txn = services.post_petty_cash_spend(
+                float_obj=float_obj,
+                date=_d.fromisoformat(request.data.get('date', _d.today().isoformat())),
+                amount=_D(str(request.data.get('amount', '0'))),
+                expense_account=ChartOfAccount.objects.get(pk=request.data['expense_account']),
+                description=request.data.get('description', ''),
+                voucher_no=request.data.get('voucher_no', ''),
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except (DjangoValidationError, KeyError, ChartOfAccount.DoesNotExist) as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        log_action('CREATE', 'PettyCashTransaction', txn.pk, str(txn), request=request)
+        return Response(PettyCashTransactionSerializer(txn).data,
+                        status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='replenish')
+    def replenish(self, request, pk=None):
+        from datetime import date as _d
+        from decimal import Decimal as _D
+        float_obj = self.get_object()
+        try:
+            txn = services.replenish_petty_cash(
+                float_obj=float_obj,
+                date=_d.fromisoformat(request.data.get('date', _d.today().isoformat())),
+                amount=_D(str(request.data.get('amount', '0'))),
+                source=request.data.get('source', 'bank'),
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except DjangoValidationError as e:
+            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        log_action('CREATE', 'PettyCashTransaction', txn.pk, str(txn), request=request)
+        return Response(PettyCashTransactionSerializer(txn).data,
+                        status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'], url_path='transactions')
+    def transactions(self, request, pk=None):
+        float_obj = self.get_object()
+        qs = float_obj.transactions.all()[:200]
+        return Response({
+            'rows': PettyCashTransactionSerializer(qs, many=True).data,
+            'count': float_obj.transactions.count(),
+            'current_balance': str(services.petty_cash_balance(float_obj)),
+        })

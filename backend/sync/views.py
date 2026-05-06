@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import serializers
-from .services import InventorySyncService
+from .services import InventorySyncService, full_resync
 from .models import SyncLog, SyncError
 from audit.utils import log_action
 
@@ -46,3 +46,29 @@ class SyncErrorListView(APIView):
         errors = SyncError.objects.filter(resolved=False)[:50]
         serializer = SyncErrorSerializer(errors, many=True)
         return Response(serializer.data)
+
+
+class FullResyncView(APIView):
+    """
+    WP 668 — full re-sync.
+
+    GET  /api/sync/full-resync/  → dry-run count (safe, read-only).
+    POST /api/sync/full-resync/  → wipe + regenerate. Requires `confirm=true`
+                                   in the body to defeat accidental clicks.
+    """
+
+    def get(self, request):
+        return Response(full_resync(dry_run=True))
+
+    def post(self, request):
+        if not str(request.data.get('confirm', '')).lower() in ('true', '1', 'yes'):
+            return Response(
+                {'detail': 'Pass {"confirm": true} to actually run a full re-sync.',
+                 'preview': full_resync(dry_run=True)},
+                status=400,
+            )
+        result = full_resync(dry_run=False)
+        log_action('SYNC', 'JournalEntry', 'full-resync',
+                   f"Full re-sync wiped {result['wiped_entries']} entries",
+                   request=request, extra=result)
+        return Response(result)
