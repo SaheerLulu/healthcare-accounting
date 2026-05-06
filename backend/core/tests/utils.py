@@ -1,0 +1,118 @@
+"""Shared test fixtures and helpers."""
+from datetime import date
+from decimal import Decimal
+
+from django.contrib.auth.models import User
+
+from core.models import AccountingSettings, AccountMapping, ChartOfAccount
+
+
+def make_user(**kwargs) -> User:
+    defaults = dict(username='tester', email='tester@example.com',
+                    is_active=True, is_staff=False)
+    defaults.update(kwargs)
+    user, _ = User.objects.get_or_create(
+        username=defaults['username'], defaults=defaults
+    )
+    user.set_password('test-pass-123')
+    user.save()
+    return user
+
+
+def make_admin() -> User:
+    user, _ = User.objects.get_or_create(
+        username='admin',
+        defaults={'is_superuser': True, 'is_staff': True, 'email': 'a@b.com'},
+    )
+    user.set_password('test-pass-123')
+    user.save()
+    return user
+
+
+def make_settings(**kw) -> AccountingSettings:
+    defaults = dict(
+        company_name='Test Co', gstin='27AABCT1234A1Z5', tan='ABCD12345E',
+        pan='AABCT1234A', state_code='27', financial_year_start=4,
+        registered_address='Mumbai, Maharashtra',
+    )
+    defaults.update(kw)
+    s = AccountingSettings.get_settings()
+    for k, v in defaults.items():
+        setattr(s, k, v)
+    s.save()
+    return s
+
+
+def seed_chart_and_mappings():
+    """Create the minimum CoA + mappings every JV/post test needs."""
+    accounts = {
+        '1110': ('Cash in Hand', 'ASSET', 'Cash'),
+        '1120': ('Bank', 'ASSET', 'Bank'),
+        '1130': ('Trade Receivables', 'ASSET', 'Receivable'),
+        '1140': ('Input CGST', 'ASSET', 'Input_GST'),
+        '1150': ('Input SGST', 'ASSET', 'Input_GST'),
+        '1160': ('Input IGST', 'ASSET', 'Input_GST'),
+        '1170': ('TDS Receivable', 'ASSET', 'TDS_Receivable'),
+        '2110': ('Trade Payables', 'LIABILITY', 'Payable'),
+        '2120': ('Output CGST', 'LIABILITY', 'Output_GST'),
+        '2130': ('Output SGST', 'LIABILITY', 'Output_GST'),
+        '2140': ('Output IGST', 'LIABILITY', 'Output_GST'),
+        '2150': ('TDS Payable', 'LIABILITY', 'TDS_Payable'),
+        '2160': ('RCM GST Liability', 'LIABILITY', 'Output_GST'),
+        '2170': ('PF Payable', 'LIABILITY', 'Payable'),
+        '2180': ('ESI Payable', 'LIABILITY', 'Payable'),
+        '2190': ('Professional Tax Payable', 'LIABILITY', 'Payable'),
+        '2200': ('Net Salary Payable', 'LIABILITY', 'Payable'),
+        '3200': ('Retained Earnings', 'EQUITY', 'Retained_Earnings'),
+        '4100': ('Sales POS', 'REVENUE', 'Sales'),
+        '4200': ('Sales B2B', 'REVENUE', 'Sales'),
+        '5100': ('Purchases', 'EXPENSE', 'Purchases'),
+        '5200': ('Sales Returns', 'EXPENSE', 'Sales'),
+        '5300': ('Purchase Returns', 'EXPENSE', 'Purchases'),
+        '5400': ('Salary Expense', 'EXPENSE', 'Other_Expense'),
+        '5410': ('Rent Expense', 'EXPENSE', 'Other_Expense'),
+        '5420': ('Electricity Expense', 'EXPENSE', 'Other_Expense'),
+        '6100': ('Round Off', 'EXPENSE', 'Other_Expense'),
+    }
+    coa = {}
+    for code, (name, atype, sub) in accounts.items():
+        obj, _ = ChartOfAccount.objects.get_or_create(
+            account_code=code,
+            defaults=dict(account_name=name, account_type=atype,
+                          account_subtype=sub, is_leaf=True, is_active=True),
+        )
+        coa[code] = obj
+
+    for key, code in AccountMapping.DEFAULT_CODES.items():
+        if code in coa:
+            AccountMapping.objects.get_or_create(
+                key=key, defaults={'account': coa[code]},
+            )
+    return coa
+
+
+def make_journal_entry(d=None, lines=None, post=True, **kw):
+    """Quick way to create a balanced JE for tests."""
+    from journals.models import JournalEntry, JournalEntryLine
+    defaults = dict(
+        date=d or date(2026, 4, 15),
+        narration='Test entry',
+        voucher_type='JOURNAL', reference_type='Manual',
+        location_id=1,
+    )
+    defaults.update(kw)
+    entry = JournalEntry.objects.create(**defaults)
+
+    if lines is None:
+        cash = ChartOfAccount.objects.get(account_code='1110')
+        sales = ChartOfAccount.objects.get(account_code='4100')
+        lines = [
+            (cash, Decimal('100.00'), Decimal('0.00')),
+            (sales, Decimal('0.00'), Decimal('100.00')),
+        ]
+    for acct, dr, cr in lines:
+        JournalEntryLine.objects.create(entry=entry, account=acct,
+                                        debit=dr, credit=cr)
+    if post:
+        entry.post()
+    return entry
