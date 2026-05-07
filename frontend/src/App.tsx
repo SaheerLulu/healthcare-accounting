@@ -4,10 +4,19 @@ import Layout from './components/Layout'
 import { LocationProvider } from './contexts/LocationContext'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
+import GatewayPage from './pages/GatewayPage'
 import AccountsPage from './pages/AccountsPage'
 import JournalsPage from './pages/JournalsPage'
 import JournalEditorPage from './pages/journals/JournalEditorPage'
 import JournalDetailPage from './pages/journals/JournalDetailPage'
+import PaymentVoucherPage from './pages/vouchers/PaymentVoucherPage'
+import ReceiptVoucherPage from './pages/vouchers/ReceiptVoucherPage'
+import ContraVoucherPage from './pages/vouchers/ContraVoucherPage'
+import JournalVoucherPage from './pages/vouchers/JournalVoucherPage'
+import SalesVoucherPage from './pages/vouchers/SalesVoucherPage'
+import PurchaseVoucherPage from './pages/vouchers/PurchaseVoucherPage'
+import CreditNoteVoucherPage from './pages/vouchers/CreditNoteVoucherPage'
+import DebitNoteVoucherPage from './pages/vouchers/DebitNoteVoucherPage'
 import RecurringJournalsListPage from './pages/journals/RecurringJournalsListPage'
 import RecurringJournalEditorPage from './pages/journals/RecurringJournalEditorPage'
 import RecurringJournalDetailPage from './pages/journals/RecurringJournalDetailPage'
@@ -75,11 +84,27 @@ export default function App() {
             </ProtectedRoute>
           }
         >
-          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route index element={<GatewayPage />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="accounts" element={<AccountsPage />} />
           <Route path="journals" element={<JournalsPage />} />
           <Route path="journals/new" element={<JournalEditorPage />} />
+          <Route path="vouchers/payment" element={<PaymentVoucherPage />} />
+          <Route path="vouchers/payment/:id/edit" element={<PaymentVoucherPage />} />
+          <Route path="vouchers/receipt" element={<ReceiptVoucherPage />} />
+          <Route path="vouchers/receipt/:id/edit" element={<ReceiptVoucherPage />} />
+          <Route path="vouchers/contra" element={<ContraVoucherPage />} />
+          <Route path="vouchers/contra/:id/edit" element={<ContraVoucherPage />} />
+          <Route path="vouchers/journal" element={<JournalVoucherPage />} />
+          <Route path="vouchers/journal/:id/edit" element={<JournalVoucherPage />} />
+          <Route path="vouchers/sales" element={<SalesVoucherPage />} />
+          <Route path="vouchers/sales/:id/edit" element={<SalesVoucherPage />} />
+          <Route path="vouchers/purchase" element={<PurchaseVoucherPage />} />
+          <Route path="vouchers/purchase/:id/edit" element={<PurchaseVoucherPage />} />
+          <Route path="vouchers/credit-note" element={<CreditNoteVoucherPage />} />
+          <Route path="vouchers/credit-note/:id/edit" element={<CreditNoteVoucherPage />} />
+          <Route path="vouchers/debit-note" element={<DebitNoteVoucherPage />} />
+          <Route path="vouchers/debit-note/:id/edit" element={<DebitNoteVoucherPage />} />
           <Route path="journals/recurring" element={<RecurringJournalsListPage />} />
           <Route path="journals/recurring/new" element={<RecurringJournalEditorPage />} />
           <Route path="journals/recurring/:id" element={<RecurringJournalDetailPage />} />

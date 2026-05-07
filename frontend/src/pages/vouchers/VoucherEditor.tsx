@@ -1,0 +1,541 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft, Loader2, Plus, Save, Send, History, Check } from 'lucide-react'
+import { toast } from 'sonner'
+import {
+  getChartOfAccounts, getJournalEntry, getJournalEntries, getSuppliers, getCustomers,
+  createJournalEntry, updateJournalEntry, postEntry,
+  type Account, type JournalEntry, type Party,
+} from '../../lib/api'
+import { formatCurrency } from '../../lib/utils'
+import { Button } from '../../components/ui/button'
+import { Input } from '../../components/ui/input'
+import { Card } from '../../components/ui/card'
+import { Badge } from '../../components/ui/badge'
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
+import { useLocation as useActiveLocation } from '../../contexts/LocationContext'
+import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
+import { VoucherLineRow, type VoucherLine } from './VoucherLineRow'
+import { CreateLedgerModal } from './CreateLedgerModal'
+import { voucherConfigs, type VoucherConfig, type VoucherType } from './voucherConfig'
+
+function uid() {
+  return Math.random().toString(36).slice(2)
+}
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function makeLine(side: 'Dr' | 'Cr'): VoucherLine {
+  return { uid: uid(), side, account: null, amount: '', narration: '' }
+}
+
+interface VoucherEditorProps {
+  voucherType: VoucherType
+}
+
+export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
+  const config: VoucherConfig = voucherConfigs[voucherType]
+  const { id } = useParams<{ id?: string }>()
+  const navigate = useNavigate()
+  const editingId = id ? Number(id) : null
+  const { activeLocationId } = useActiveLocation()
+
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [parties, setParties] = useState<Party[]>([])
+  const [partyId, setPartyId] = useState<number | ''>('')
+  const [date, setDate] = useState(todayStr())
+  const [referenceId, setReferenceId] = useState('')
+  const [narration, setNarration] = useState(config.narrationTemplate)
+  const [lines, setLines] = useState<VoucherLine[]>([
+    makeLine(config.firstLineSide),
+    makeLine(config.secondLineSide),
+  ])
+  const [loading, setLoading] = useState(!!editingId)
+  const [saving, setSaving] = useState(false)
+  const [posting, setPosting] = useState(false)
+  const [originalEntry, setOriginalEntry] = useState<JournalEntry | null>(null)
+  const [escConfirmOpen, setEscConfirmOpen] = useState(false)
+  const [createLedgerOpen, setCreateLedgerOpen] = useState(false)
+  const altCLineUidRef = useRef<string | null>(null)
+
+  // ─── Initial load ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const [accs] = await Promise.all([getChartOfAccounts()])
+        if (!cancelled) setAccounts(accs)
+      } catch { /* ignore */ }
+      if (config.partyType) {
+        try {
+          const ps = config.partyType === 'Supplier' ? await getSuppliers() : await getCustomers()
+          if (!cancelled) setParties(ps)
+        } catch { /* ignore */ }
+      }
+      if (editingId) {
+        try {
+          const entry = await getJournalEntry(editingId)
+          if (cancelled) return
+          if (entry.is_posted) {
+            toast.error('Posted entries cannot be edited — reverse it instead')
+            navigate(`/journals/${editingId}`, { replace: true })
+            return
+          }
+          setOriginalEntry(entry)
+          setDate(entry.date)
+          setReferenceId(entry.reference_id ? String(entry.reference_id) : '')
+          setNarration(entry.narration || '')
+          setLines(
+            entry.lines.length > 0
+              ? entry.lines.map((l): VoucherLine => {
+                  const dr = parseFloat(l.debit) || 0
+                  return {
+                    uid: uid(),
+                    side: dr > 0 ? 'Dr' : 'Cr',
+                    account: l.account,
+                    amount: dr > 0 ? l.debit : l.credit,
+                    narration: l.narration || '',
+                  }
+                })
+              : [makeLine(config.firstLineSide), makeLine(config.secondLineSide)]
+          )
+        } catch {
+          toast.error('Failed to load voucher')
+        }
+      }
+      if (!cancelled) setLoading(false)
+    }
+    load()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId, voucherType])
+
+  // ─── Derived totals ────────────────────────────────────────────────────────
+  const totals = useMemo(() => {
+    let dr = 0, cr = 0
+    for (const l of lines) {
+      const amt = parseFloat(l.amount) || 0
+      if (l.side === 'Dr') dr += amt
+      else cr += amt
+    }
+    return { dr, cr, diff: dr - cr }
+  }, [lines])
+
+  const isBalanced = Math.abs(totals.diff) < 0.005 && totals.dr > 0
+
+  // ─── Line manipulation ─────────────────────────────────────────────────────
+  function patchLine(uid: string, patch: Partial<VoucherLine>) {
+    setLines((ls) => ls.map((l) => l.uid === uid ? { ...l, ...patch } : l))
+  }
+  function addLine() {
+    setLines((ls) => {
+      // alternate sides for convenience: copy last line's side flipped
+      const last = ls[ls.length - 1]
+      const next = last ? (last.side === 'Dr' ? 'Cr' : 'Dr') : 'Dr'
+      return [...ls, makeLine(next)]
+    })
+  }
+  function removeLine(uid: string) {
+    setLines((ls) => ls.length <= 1 ? ls : ls.filter((l) => l.uid !== uid))
+  }
+
+  // ─── Save / post ───────────────────────────────────────────────────────────
+  function payload() {
+    const cleanLines = lines
+      .filter((l) => l.account && parseFloat(l.amount) > 0)
+      .map((l) => ({
+        account: l.account!,
+        debit: l.side === 'Dr' ? l.amount : '0',
+        credit: l.side === 'Cr' ? l.amount : '0',
+        narration: l.narration || '',
+      }))
+    return {
+      date,
+      narration,
+      voucher_type: voucherType,
+      reference_type: 'Manual',
+      reference_id: referenceId ? Number(referenceId) : null,
+      location_id: activeLocationId as number,
+      lines: cleanLines,
+    }
+  }
+
+  function validate(): string | null {
+    if (activeLocationId === null) return 'Select a specific location before saving a voucher'
+    const data = payload()
+    if (data.lines.length < 2) return 'At least two lines are required'
+    if (!isBalanced) return `Debit ${formatCurrency(totals.dr)} ≠ Credit ${formatCurrency(totals.cr)}`
+    return null
+  }
+
+  const handleSave = useCallback(async function handleSave(thenPost = false) {
+    const err = validate()
+    if (err) { toast.error(err); return }
+    setSaving(true)
+    try {
+      let entry: JournalEntry
+      if (editingId) {
+        entry = await updateJournalEntry(editingId, payload())
+      } else {
+        entry = await createJournalEntry(payload())
+      }
+      if (thenPost) {
+        setPosting(true)
+        try {
+          await postEntry(entry.id)
+          toast.success(`${entry.entry_no} posted`)
+          // Tally users expect to land back on Gateway after posting.
+          navigate('/')
+          return
+        } catch (err) {
+          const e = err as { response?: { data?: { detail?: string } } }
+          toast.error(e.response?.data?.detail || 'Saved as draft, but post failed')
+        } finally { setPosting(false) }
+      } else {
+        toast.success(editingId ? `${entry.entry_no} saved` : `${entry.entry_no} created as draft`)
+      }
+      navigate(`/journals/${entry.id}`)
+    } catch (err) {
+      const e = err as { response?: { data?: Record<string, unknown> } }
+      const data = e.response?.data
+      const msg = data
+        ? Object.entries(data).map(([k, v]) =>
+            `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`).join(' • ')
+        : 'Failed to save'
+      toast.error(msg)
+    } finally {
+      setSaving(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, narration, voucherType, referenceId, activeLocationId, lines, editingId])
+
+  // ─── Repeat last (Ctrl+H) ──────────────────────────────────────────────────
+  const handleRepeatLast = useCallback(async () => {
+    if (editingId) {
+      toast.info('Ctrl+H only applies when creating a new voucher')
+      return
+    }
+    try {
+      const res = await getJournalEntries({
+        voucher_type: voucherType,
+        is_posted: 'true',
+      })
+      const last = res.results?.[0]
+      if (!last) {
+        toast.info(`No previous ${config.label} voucher to repeat`)
+        return
+      }
+      setNarration(last.narration || '')
+      setLines(
+        last.lines.map((l): VoucherLine => {
+          const dr = parseFloat(l.debit) || 0
+          return {
+            uid: uid(),
+            side: dr > 0 ? 'Dr' : 'Cr',
+            account: l.account,
+            amount: dr > 0 ? l.debit : l.credit,
+            narration: l.narration || '',
+          }
+        })
+      )
+      toast.success(`Repeated ${last.entry_no} (${last.date})`)
+    } catch {
+      toast.error('Failed to fetch previous voucher')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voucherType, editingId])
+
+  // ─── Esc with confirm ──────────────────────────────────────────────────────
+  const handleEsc = useCallback(() => {
+    const dirty = lines.some((l) => l.account || l.amount)
+      || (narration && narration !== config.narrationTemplate)
+    if (dirty) {
+      setEscConfirmOpen(true)
+    } else {
+      navigate('/')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, narration, navigate])
+
+  // ─── Alt+C ledger create ───────────────────────────────────────────────────
+  const handleAltCFromLine = useCallback((lineUid: string) => {
+    altCLineUidRef.current = lineUid
+    setCreateLedgerOpen(true)
+  }, [])
+
+  const handleAltCGlobal = useCallback(() => {
+    altCLineUidRef.current = null
+    setCreateLedgerOpen(true)
+  }, [])
+
+  function handleLedgerCreated(acc: Account) {
+    setAccounts((prev) => [acc, ...prev])
+    const target = altCLineUidRef.current
+    if (target) {
+      patchLine(target, { account: acc.id })
+    }
+  }
+
+  // ─── Hotkey wiring ─────────────────────────────────────────────────────────
+  const handlers = useMemo<HotkeyHandler[]>(() => [
+    { chord: 'Ctrl+A', preventDefault: true, handler: () => handleSave(true) },
+    { chord: 'Ctrl+H', preventDefault: true, handler: handleRepeatLast },
+    { chord: 'Alt+C', preventDefault: true, handler: handleAltCGlobal },
+    { chord: 'Escape', preventDefault: false, handler: handleEsc },
+  ], [handleSave, handleRepeatLast, handleAltCGlobal, handleEsc])
+
+  useHotkeys(handlers)
+
+  const hints = useMemo<HotkeyHint[]>(() => [
+    { chord: 'Ctrl+A', label: 'Save & Post' },
+    { chord: 'Ctrl+H', label: 'Repeat Last' },
+    { chord: 'Alt+C', label: 'New Ledger' },
+    { chord: 'Esc', label: 'Cancel' },
+  ], [])
+  useHintRegister(hints)
+
+  // ─── Render ────────────────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="p-12 text-center">
+        <Loader2 className="animate-spin inline text-teal-600" size={24} />
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-4 pb-32">
+      <button
+        onClick={handleEsc}
+        className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-1"
+      >
+        <ArrowLeft size={14} /> Gateway
+      </button>
+
+      <div className="flex items-start justify-between mb-3 gap-3 flex-wrap">
+        <div className="flex items-baseline gap-3">
+          <span
+            className="mono text-xs font-bold px-2 py-0.5 rounded"
+            style={{
+              background: 'rgba(15,157,154,0.12)',
+              color: 'var(--brand)',
+              border: '1px solid rgba(15,157,154,0.25)',
+            }}
+          >
+            {config.fKey}
+          </span>
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+            {editingId ? `Edit ${originalEntry?.entry_no ?? config.label}` : `${config.label} Voucher`}
+          </h1>
+          <span className="text-sm" style={{ color: 'var(--ink-2)' }}>· {config.description}</span>
+        </div>
+        {originalEntry && <Badge variant="warning">Draft</Badge>}
+      </div>
+
+      <Card className="p-5">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <Field label="Date" required>
+            <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+          </Field>
+          {config.partyType ? (
+            <Field label={config.partyType} hint="Pick to pre-fill account & narration">
+              <select
+                value={partyId}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v) {
+                    setPartyId(Number(v))
+                    const p = parties.find((x) => x.id === Number(v))
+                    if (p && narration === config.narrationTemplate) {
+                      setNarration(`${config.narrationTemplate}${p.name}`)
+                    }
+                  } else {
+                    setPartyId('')
+                  }
+                }}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+              >
+                <option value="">— Optional —</option>
+                {parties.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </Field>
+          ) : (
+            <Field label="Reference #" hint="Optional">
+              <Input value={referenceId} onChange={(e) => setReferenceId(e.target.value)} />
+            </Field>
+          )}
+          <Field label="Voucher #" hint="Auto-generated">
+            <Input value={originalEntry?.entry_no || '— assigned on save —'} readOnly className="bg-slate-50 font-mono text-xs" />
+          </Field>
+          <Field label="Voucher Type">
+            <Input value={config.label} readOnly className="bg-slate-50" />
+          </Field>
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden p-0">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+          <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Particulars</h2>
+          <div className="flex items-center gap-3 text-xs" style={{ color: 'var(--ink-2)' }}>
+            <span>By = Dr · To = Cr</span>
+            <span>·</span>
+            <span>Total Dr & Cr must match</span>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 border-b border-slate-100">
+              <tr>
+                <th className="text-left text-[10px] font-semibold text-slate-500 px-2 py-2 uppercase tracking-wide w-20">By/To</th>
+                <th className="text-left text-[10px] font-semibold text-slate-500 px-2 py-2 uppercase tracking-wide" style={{ width: '32%' }}>Particulars (Ledger)</th>
+                <th className="text-left text-[10px] font-semibold text-slate-500 px-2 py-2 uppercase tracking-wide">Narration</th>
+                <th className="text-right text-[10px] font-semibold text-slate-500 px-2 py-2 uppercase tracking-wide w-36">Amount</th>
+                <th className="w-8" />
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((line) => (
+                <VoucherLineRow
+                  key={line.uid}
+                  line={line}
+                  accounts={accounts}
+                  accountFilter={config.accountFilter}
+                  onChange={(p) => patchLine(line.uid, p)}
+                  onRemove={() => removeLine(line.uid)}
+                  onAltC={handleAltCFromLine}
+                  removeDisabled={lines.length <= 1}
+                />
+              ))}
+            </tbody>
+            <tfoot className="bg-slate-50 border-t border-slate-200">
+              <tr>
+                <td className="px-2 py-2" colSpan={2}>
+                  <button
+                    type="button"
+                    onClick={addLine}
+                    className="inline-flex items-center gap-1.5 text-sm hover:opacity-90"
+                    style={{ color: 'var(--brand)' }}
+                  >
+                    <Plus size={14} /> Add line
+                  </button>
+                </td>
+                <td className="px-2 py-2 text-right text-xs" style={{ color: 'var(--ink-2)' }}>
+                  Total
+                </td>
+                <td className="px-2 py-2 text-right">
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span className="font-mono text-sm font-semibold" style={{ color: 'var(--ink)' }}>
+                      Dr {formatCurrency(totals.dr)}
+                    </span>
+                    <span className="font-mono text-sm font-semibold" style={{ color: 'var(--ink)' }}>
+                      Cr {formatCurrency(totals.cr)}
+                    </span>
+                  </div>
+                </td>
+                <td />
+              </tr>
+              <tr>
+                <td colSpan={5} className="px-4 py-2 text-right">
+                  {totals.dr > 0 && !isBalanced ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: 'var(--danger)' }}>
+                      Difference {formatCurrency(Math.abs(totals.diff))}
+                    </span>
+                  ) : isBalanced ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: 'var(--success)' }}>
+                      <Check size={12} /> Balanced
+                    </span>
+                  ) : (
+                    <span className="text-xs" style={{ color: 'var(--ink-3)' }}>
+                      Enter amounts to balance
+                    </span>
+                  )}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <Field label="Narration" hint="Shown in Day Book and reports">
+          <textarea
+            value={narration}
+            onChange={(e) => setNarration(e.target.value)}
+            rows={2}
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+          />
+        </Field>
+      </Card>
+
+      {/* Sticky save bar */}
+      <div
+        className="fixed left-0 right-0 z-20 px-6 py-3 flex items-center justify-end gap-2"
+        style={{
+          bottom: 36,
+          background: 'var(--surface-0)',
+          borderTop: '1px solid var(--line)',
+          boxShadow: '0 -4px 12px rgba(0,0,0,0.04)',
+        }}
+      >
+        <Button variant="ghost" onClick={handleRepeatLast} disabled={!!editingId}>
+          <History size={14} /> <span className="hidden sm:inline">Repeat Last</span>
+          <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Ctrl+H</kbd>
+        </Button>
+        <Button variant="secondary" onClick={handleEsc}>
+          Cancel <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Esc</kbd>
+        </Button>
+        <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving || posting}>
+          {saving && !posting ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
+          Save Draft
+        </Button>
+        <Button onClick={() => handleSave(true)} disabled={saving || posting || !isBalanced}>
+          {posting ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
+          Save & Post
+          <kbd className="hidden md:inline mono text-[10px] ml-1 text-white/80">Ctrl+A</kbd>
+        </Button>
+      </div>
+
+      <ConfirmDialog
+        open={escConfirmOpen}
+        onOpenChange={setEscConfirmOpen}
+        title="Discard this voucher?"
+        description="Any unsaved changes will be lost."
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        tone="danger"
+        onConfirm={() => {
+          setEscConfirmOpen(false)
+          navigate('/')
+        }}
+      />
+
+      <CreateLedgerModal
+        open={createLedgerOpen}
+        onOpenChange={setCreateLedgerOpen}
+        parents={accounts}
+        onCreated={handleLedgerCreated}
+      />
+    </div>
+  )
+}
+
+function Field({ label, required, hint, children }: {
+  label: string
+  required?: boolean
+  hint?: string
+  children: React.ReactNode
+}) {
+  return (
+    <label className="block">
+      <span className="block text-xs font-medium text-slate-600 mb-1.5">
+        {label} {required && <span className="text-rose-500">*</span>}
+      </span>
+      {children}
+      {hint && <span className="block text-xs text-slate-400 mt-1">{hint}</span>}
+    </label>
+  )
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Loader2, Plus, Trash2, Save, Send, Layers } from 'lucide-react'
 import { toast } from 'sonner'
@@ -12,7 +12,10 @@ import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Card } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { AccountPicker } from '../journals/AccountPicker'
+import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
+import { voucherConfigs } from '../vouchers/voucherConfig'
 
 interface Item {
   uid: string
@@ -57,6 +60,7 @@ export default function ExpenseEditorPage() {
 
   const [original, setOriginal] = useState<Expense | null>(null)
   const [saving, setSaving] = useState(false)
+  const [escConfirmOpen, setEscConfirmOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -191,7 +195,7 @@ export default function ExpenseEditorPage() {
     return null
   }
 
-  async function handleSave(thenRecord = false) {
+  const handleSave = useCallback(async function handleSave(thenRecord = false) {
     const err = validate()
     if (err) { toast.error(err); return }
     setSaving(true)
@@ -220,27 +224,55 @@ export default function ExpenseEditorPage() {
         : 'Failed to save'
       toast.error(msg)
     } finally { setSaving(false) }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId, expenseDate, paidThrough, vendorId, vendorName, reference, itemize, items, singleAccount, singleAmount, singleDescription, taxCgst, taxSgst, taxIgst, notes, totals.subtotal, totals.total, navigate])
+
+  const handleEsc = useCallback(() => {
+    const dirty = vendorName || singleAmount || singleAccount || items.some((it) => it.account || it.amount) || notes
+    if (dirty && !editingId) setEscConfirmOpen(true)
+    else navigate('/expenses')
+  }, [vendorName, singleAmount, singleAccount, items, notes, editingId, navigate])
+
+  // Tally-style hotkeys: Ctrl+A save+record, Esc cancel.
+  const handlers = useMemo<HotkeyHandler[]>(() => [
+    { chord: 'Ctrl+A', preventDefault: true, handler: () => handleSave(true) },
+    { chord: 'Escape', preventDefault: false, handler: handleEsc },
+  ], [handleSave, handleEsc])
+  useHotkeys(handlers)
+
+  const hints = useMemo<HotkeyHint[]>(() => [
+    { chord: 'Ctrl+A', label: 'Save & Record' },
+    { chord: 'Esc', label: 'Cancel' },
+  ], [])
+  useHintRegister(hints)
 
   if (loading) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-5 pb-24">
-      <button onClick={() => navigate('/expenses')}
+    <div className="max-w-6xl mx-auto space-y-5 pb-32">
+      <button onClick={handleEsc}
         className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3">
         <ArrowLeft size={14} /> Back to Expenses
       </button>
 
       <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
-        <div>
+        <div className="flex items-baseline gap-3">
+          <span
+            className="mono text-xs font-bold px-2 py-0.5 rounded"
+            style={{
+              background: 'rgba(15,157,154,0.12)',
+              color: 'var(--brand)',
+              border: '1px solid rgba(15,157,154,0.25)',
+            }}
+            title="Expenses are stored as Payment vouchers"
+          >
+            {voucherConfigs.PAYMENT.fKey}
+          </span>
           <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
-            {editingId ? `Edit expense #${editingId}` : 'New Expense'}
+            {editingId ? `Edit expense #${editingId}` : 'New Expense (Payment Voucher)'}
           </h1>
-          <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>
-            Record a daily-operations expense paid out of bank, cash, or credit card.
-          </p>
         </div>
         {original && <Badge variant="default">Draft</Badge>}
       </div>
@@ -420,17 +452,42 @@ export default function ExpenseEditorPage() {
         </Field>
       </Card>
 
-      <div className="sticky bottom-0 -mx-6 px-6 py-3 bg-white border-t border-slate-200 shadow-[0_-4px_12px_rgba(0,0,0,0.04)] flex items-center justify-end gap-2 mt-4">
-        <Button variant="secondary" onClick={() => navigate('/expenses')}>Cancel</Button>
+      <div
+        className="fixed left-0 right-0 z-20 px-6 py-3 flex items-center justify-end gap-2"
+        style={{
+          bottom: 36,
+          background: 'var(--surface-0)',
+          borderTop: '1px solid var(--line)',
+          boxShadow: '0 -4px 12px rgba(0,0,0,0.04)',
+        }}
+      >
+        <Button variant="secondary" onClick={handleEsc}>
+          Cancel <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Esc</kbd>
+        </Button>
         <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
-          Save as Draft
+          Save Draft
         </Button>
         <Button onClick={() => handleSave(true)} disabled={saving}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
-          Save and Record
+          Save & Record
+          <kbd className="hidden md:inline mono text-[10px] ml-1 text-white/80">Ctrl+A</kbd>
         </Button>
       </div>
+
+      <ConfirmDialog
+        open={escConfirmOpen}
+        onOpenChange={setEscConfirmOpen}
+        title="Discard this expense?"
+        description="Any unsaved changes will be lost."
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        tone="danger"
+        onConfirm={() => {
+          setEscConfirmOpen(false)
+          navigate('/expenses')
+        }}
+      />
     </div>
   )
 }

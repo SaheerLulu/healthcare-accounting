@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   Plus, Loader2, Search, Banknote, Receipt, ArrowLeftRight,
-  X, Calendar,
+  X, Calendar, ChevronDown,
 } from 'lucide-react'
+import { voucherList } from './vouchers/voucherConfig'
 import { toast } from 'sonner'
 import {
   getJournalEntries,
@@ -135,9 +136,7 @@ export default function JournalsPage() {
           <PaymentSheet suppliers={suppliers} onSuccess={load} />
           <ReceiptSheet customers={customers} onSuccess={load} />
           <ContraSheet onSuccess={load} />
-          <Button onClick={() => navigate('/journals/new')}>
-            <Plus size={16} /> New Journal
-          </Button>
+          <NewVoucherDropdown />
         </div>
       </div>
 
@@ -239,6 +238,65 @@ export default function JournalsPage() {
             </Tbody>
           </Table>
         </Card>
+      )}
+    </div>
+  )
+}
+
+// ─── New Voucher dropdown ────────────────────────────────────────────────────
+
+function NewVoucherDropdown() {
+  const navigate = useNavigate()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function handle(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [open])
+
+  return (
+    <div className="relative" ref={ref}>
+      <Button onClick={() => setOpen((o) => !o)}>
+        <Plus size={14} /> New Voucher <ChevronDown size={12} />
+      </Button>
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-1 rounded-lg shadow-lg py-1 min-w-[260px] z-50 dropdown-animate"
+          style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
+        >
+          <div
+            className="px-3 py-2 mono uppercase"
+            style={{ fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.1em', fontWeight: 600 }}
+          >
+            Tally Vouchers
+          </div>
+          {voucherList.map((v) => (
+            <button
+              key={v.type}
+              onClick={() => { navigate(v.routePath); setOpen(false) }}
+              className="w-full px-3 py-2 text-left flex items-center gap-2 hover:bg-slate-50 text-sm"
+              style={{ color: 'var(--ink)' }}
+            >
+              <span
+                className="mono text-[10px] font-bold px-1.5 py-0.5 rounded w-14 text-center flex-shrink-0"
+                style={{
+                  background: 'rgba(15,157,154,0.10)',
+                  color: 'var(--brand)',
+                  border: '1px solid rgba(15,157,154,0.20)',
+                }}
+              >
+                {v.fKey}
+              </span>
+              <span className="flex-1">{v.label}</span>
+              <span className="text-xs" style={{ color: 'var(--ink-3)' }}>{v.description}</span>
+            </button>
+          ))}
+        </div>
       )}
     </div>
   )

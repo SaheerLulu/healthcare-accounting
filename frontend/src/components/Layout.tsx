@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate, useLocation as useRouterLocation } from 'react-router-dom'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import {
   LayoutDashboard,
   BookOpen,
@@ -17,12 +17,15 @@ import {
   Globe,
   Users,
   Landmark,
+  Home,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { cn } from '../lib/utils'
 import { useLocation as useAppLocation } from '../contexts/LocationContext'
 import { PageTransition } from './ui/PageTransition'
 import NotificationBell from '../pages/notifications/NotificationBell'
+import { HotkeyProvider, useHotkeys, type HotkeyHandler } from '../contexts/HotkeyContext'
+import { HotkeyBar } from './HotkeyBar'
 
 interface MenuItem {
   id: string
@@ -37,6 +40,11 @@ interface MenuGroup {
 }
 
 const menuGroups: MenuGroup[] = [
+  {
+    label: 'Gateway',
+    icon: Home,
+    items: [{ id: 'gateway', label: 'Gateway of Tally', to: '/' }],
+  },
   {
     label: 'Dashboard',
     icon: LayoutDashboard,
@@ -298,7 +306,11 @@ function TopNav() {
   }
 
   function isGroupActive(group: MenuGroup) {
-    return group.items.some((item) => routerLoc.pathname.startsWith(item.to))
+    return group.items.some((item) =>
+      item.to === '/'
+        ? routerLoc.pathname === '/'
+        : routerLoc.pathname.startsWith(item.to)
+    )
   }
 
   function handleGroupClick(group: MenuGroup) {
@@ -461,15 +473,36 @@ function TopNav() {
   )
 }
 
+function GlobalNavShortcuts() {
+  const navigate = useNavigate()
+  const handlers = useMemo<HotkeyHandler[]>(() => [
+    { chord: 'F4', preventDefault: true, handler: () => navigate('/vouchers/contra') },
+    { chord: 'F5', preventDefault: true, handler: () => navigate('/vouchers/payment') },
+    { chord: 'F6', preventDefault: true, handler: () => navigate('/vouchers/receipt') },
+    { chord: 'F7', preventDefault: true, handler: () => navigate('/vouchers/journal') },
+    { chord: 'F8', preventDefault: true, handler: () => navigate('/vouchers/sales') },
+    { chord: 'F9', preventDefault: true, handler: () => navigate('/vouchers/purchase') },
+    { chord: 'Ctrl+F8', preventDefault: true, handler: () => navigate('/vouchers/credit-note') },
+    { chord: 'Ctrl+F9', preventDefault: true, handler: () => navigate('/vouchers/debit-note') },
+    { chord: 'F11', preventDefault: true, handler: () => navigate('/settings') },
+  ], [navigate])
+  useHotkeys(handlers)
+  return null
+}
+
 export default function Layout() {
   return (
-    <div className="min-h-screen" style={{ backgroundColor: 'var(--surface-1)' }}>
-      <TopNav />
-      <main className="px-6 pb-6 pt-20">
-        <PageTransition>
-          <Outlet />
-        </PageTransition>
-      </main>
-    </div>
+    <HotkeyProvider>
+      <div className="min-h-screen" style={{ backgroundColor: 'var(--surface-1)' }}>
+        <TopNav />
+        <GlobalNavShortcuts />
+        <main className="px-6 pb-14 pt-20">
+          <PageTransition>
+            <Outlet />
+          </PageTransition>
+        </main>
+        <HotkeyBar />
+      </div>
+    </HotkeyProvider>
   )
 }
