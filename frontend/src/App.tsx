@@ -5,6 +5,9 @@ import { LocationProvider } from './contexts/LocationContext'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import GatewayPage from './pages/GatewayPage'
+import SetupChecklistPage from './pages/SetupChecklistPage'
+import CostCentresPage from './pages/CostCentresPage'
+import VoucherTypesPage from './pages/VoucherTypesPage'
 import AccountsPage from './pages/AccountsPage'
 import JournalsPage from './pages/JournalsPage'
 import JournalEditorPage from './pages/journals/JournalEditorPage'
@@ -150,6 +153,9 @@ export default function App() {
           <Route path="sync" element={<SyncPage />} />
           <Route path="audit" element={<AuditLogPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="setup" element={<SetupChecklistPage />} />
+          <Route path="cost-centres" element={<CostCentresPage />} />
+          <Route path="voucher-types" element={<VoucherTypesPage />} />
           {/* Wave 6 — new pages */}
           <Route path="fixed-assets" element={<FixedAssetsPage />} />
           <Route path="loans" element={<LoansPage />} />

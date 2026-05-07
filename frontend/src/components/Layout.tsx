@@ -26,6 +26,7 @@ import { PageTransition } from './ui/PageTransition'
 import NotificationBell from '../pages/notifications/NotificationBell'
 import { HotkeyProvider, useHotkeys, type HotkeyHandler } from '../contexts/HotkeyContext'
 import { HotkeyBar } from './HotkeyBar'
+import { CommandPalette } from './CommandPalette'
 
 interface MenuItem {
   id: string
@@ -55,6 +56,8 @@ const menuGroups: MenuGroup[] = [
     icon: BookOpen,
     items: [
       { id: 'accounts', label: 'Chart of Accounts', to: '/accounts' },
+      { id: 'cost-centres', label: 'Cost Centres', to: '/cost-centres' },
+      { id: 'voucher-types', label: 'Voucher Types', to: '/voucher-types' },
       { id: 'journals', label: 'Journal Entries', to: '/journals' },
       { id: 'recurring-journals', label: 'Recurring Journals', to: '/journals/recurring' },
       { id: 'closing-entries', label: 'Closing Entries', to: '/journals/closing-entries' },
@@ -128,6 +131,7 @@ const menuGroups: MenuGroup[] = [
     label: 'More',
     icon: Ellipsis,
     items: [
+      { id: 'setup', label: 'Setup Checklist', to: '/setup' },
       { id: 'sync', label: 'Sync', to: '/sync' },
       { id: 'audit', label: 'Audit Log', to: '/audit' },
       { id: 'settings', label: 'Settings', to: '/settings' },
@@ -270,6 +274,23 @@ function LocationSelector() {
   )
 }
 
+function findActiveItemId(path: string): string | null {
+  let bestId: string | null = null
+  let bestLen = -1
+  for (const g of menuGroups) {
+    for (const item of g.items) {
+      if (item.to === '/') {
+        if (path === '/' && bestLen < 1) { bestId = item.id; bestLen = 1 }
+        continue
+      }
+      if (path === item.to || path.startsWith(item.to + '/')) {
+        if (item.to.length > bestLen) { bestId = item.id; bestLen = item.to.length }
+      }
+    }
+  }
+  return bestId
+}
+
 function TopNav() {
   const navigate = useNavigate()
   const routerLoc = useRouterLocation()
@@ -277,6 +298,7 @@ function TopNav() {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [showProfile, setShowProfile] = useState(false)
   const navRef = useRef<HTMLElement>(null)
+  const activeItemId = useMemo(() => findActiveItemId(routerLoc.pathname), [routerLoc.pathname])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -306,11 +328,7 @@ function TopNav() {
   }
 
   function isGroupActive(group: MenuGroup) {
-    return group.items.some((item) =>
-      item.to === '/'
-        ? routerLoc.pathname === '/'
-        : routerLoc.pathname.startsWith(item.to)
-    )
+    return activeItemId !== null && group.items.some((item) => item.id === activeItemId)
   }
 
   function handleGroupClick(group: MenuGroup) {
@@ -377,26 +395,28 @@ function TopNav() {
                   className="absolute top-full left-1/2 -translate-x-1/2 mt-1 rounded-lg shadow-lg py-1 min-w-[220px] z-50 dropdown-animate"
                   style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
                 >
-                  {group.items.map((item) => (
-                    <NavLink
-                      key={item.id}
-                      to={item.to}
-                      onClick={() => setOpenMenu(null)}
-                      className={({ isActive }) =>
-                        cn(
+                  {group.items.map((item) => {
+                    const itemActive = item.id === activeItemId
+                    return (
+                      <NavLink
+                        key={item.id}
+                        to={item.to}
+                        end={item.to === '/'}
+                        onClick={() => setOpenMenu(null)}
+                        className={cn(
                           'block w-full text-left px-4 py-2 text-sm hover:translate-x-0.5 transition-transform',
-                          isActive && 'font-medium'
-                        )
-                      }
-                      style={({ isActive }) =>
-                        isActive
-                          ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)' }
-                          : { color: 'var(--ink)' }
-                      }
-                    >
-                      {item.label}
-                    </NavLink>
-                  ))}
+                          itemActive && 'font-medium'
+                        )}
+                        style={
+                          itemActive
+                            ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)' }
+                            : { color: 'var(--ink)' }
+                        }
+                      >
+                        {item.label}
+                      </NavLink>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -484,7 +504,7 @@ function GlobalNavShortcuts() {
     { chord: 'F9', preventDefault: true, handler: () => navigate('/vouchers/purchase') },
     { chord: 'Ctrl+F8', preventDefault: true, handler: () => navigate('/vouchers/credit-note') },
     { chord: 'Ctrl+F9', preventDefault: true, handler: () => navigate('/vouchers/debit-note') },
-    { chord: 'F11', preventDefault: true, handler: () => navigate('/settings') },
+    { chord: 'F11', preventDefault: true, handler: () => navigate('/setup') },
   ], [navigate])
   useHotkeys(handlers)
   return null
@@ -502,6 +522,7 @@ export default function Layout() {
           </PageTransition>
         </main>
         <HotkeyBar />
+        <CommandPalette />
       </div>
     </HotkeyProvider>
   )

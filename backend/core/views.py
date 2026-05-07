@@ -11,7 +11,7 @@ from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import AccountingSettings, ChartOfAccount, AccountMapping
+from .models import AccountingSettings, ChartOfAccount, AccountMapping, CostCategory, CostCentre
 from .period_lock import LockedPeriod
 from .serializers import (
     AccountingSettingsSerializer,
@@ -19,6 +19,8 @@ from .serializers import (
     ChartOfAccountTreeSerializer,
     AccountMappingSerializer,
     LockedPeriodSerializer,
+    CostCategorySerializer,
+    CostCentreSerializer,
 )
 from .mixins import get_active_location
 from audit.utils import log_action
@@ -405,4 +407,57 @@ class CloseFiscalYearView(APIView):
         log_action('GENERATE', 'AccountingSettings', 'fy-close',
                    f"Closed FY {result['fy']}", request=request, extra=result)
         return Response(result)
+
+
+class CostCategoryViewSet(viewsets.ModelViewSet):
+    queryset = CostCategory.objects.all()
+    serializer_class = CostCategorySerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.request.query_params.get('active_only') == 'true':
+            qs = qs.filter(is_active=True)
+        return qs
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        log_action('CREATE', 'CostCategory', instance.pk, str(instance), request=self.request)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        log_action('UPDATE', 'CostCategory', instance.pk, str(instance), request=self.request)
+
+    def perform_destroy(self, instance):
+        log_action('DELETE', 'CostCategory', instance.pk, str(instance), request=self.request)
+        instance.delete()
+
+
+class CostCentreViewSet(viewsets.ModelViewSet):
+    queryset = CostCentre.objects.select_related('category', 'parent').all()
+    serializer_class = CostCentreSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        params = self.request.query_params
+        if params.get('active_only') == 'true':
+            qs = qs.filter(is_active=True)
+        if params.get('category'):
+            qs = qs.filter(category_id=params.get('category'))
+        if params.get('search'):
+            qs = qs.filter(name__icontains=params.get('search'))
+        return qs
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        log_action('CREATE', 'CostCentre', instance.pk, str(instance), request=self.request)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        log_action('UPDATE', 'CostCentre', instance.pk, str(instance), request=self.request)
+
+    def perform_destroy(self, instance):
+        log_action('DELETE', 'CostCentre', instance.pk, str(instance), request=self.request)
+        instance.delete()
 

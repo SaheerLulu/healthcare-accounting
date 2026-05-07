@@ -1,7 +1,36 @@
 from django.db.models import Count
 from rest_framework import serializers
-from .models import AccountingSettings, ChartOfAccount, AccountMapping
+from .models import AccountingSettings, ChartOfAccount, AccountMapping, CostCategory, CostCentre
 from .period_lock import LockedPeriod
+
+
+class CostCategorySerializer(serializers.ModelSerializer):
+    centre_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CostCategory
+        fields = [
+            'id', 'name', 'description',
+            'allocate_revenue', 'allocate_non_revenue',
+            'is_active', 'centre_count',
+        ]
+
+    def get_centre_count(self, obj):
+        return obj.centres.count()
+
+
+class CostCentreSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    parent_name = serializers.CharField(source='parent.name', read_only=True, default=None)
+
+    class Meta:
+        model = CostCentre
+        fields = [
+            'id', 'name', 'code',
+            'category', 'category_name',
+            'parent', 'parent_name',
+            'location_id', 'is_active', 'description',
+        ]
 
 
 class AccountingSettingsSerializer(serializers.ModelSerializer):

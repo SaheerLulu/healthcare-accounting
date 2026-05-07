@@ -37,7 +37,35 @@ class JournalEntry(models.Model):
     # the user can introduce new departments without a migration; UI feeds
     # a recommended list.
     cost_center = models.CharField(max_length=50, blank=True, db_index=True,
-        help_text='Cost center / department tag, e.g. "OPD", "PHARMACY", "LAB".')
+        help_text='Free-form cost-center label (legacy). New code should use cost_centre FK.')
+    cost_centre = models.ForeignKey(
+        'core.CostCentre', null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='journal_entries',
+        help_text='Tally-style cost-centre allocation (master).',
+    )
+    voucher_type_profile = models.ForeignKey(
+        'VoucherTypeProfile', null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='journal_entries',
+        help_text='Optional custom voucher-type profile (e.g. "Cash Sales").',
+    )
+    is_optional = models.BooleanField(
+        default=False,
+        help_text='Optional vouchers do not affect ledger balances (Tally semantics).',
+    )
+    is_memorandum = models.BooleanField(
+        default=False,
+        help_text='Memorandum vouchers are tracked outside the books.',
+    )
+    reversal_date = models.DateField(
+        null=True, blank=True, db_index=True,
+        help_text='If set, an auto-reversal entry will be created on this date.',
+    )
+    auto_reversed = models.BooleanField(
+        default=False,
+        help_text='Set once the auto-reverse run has created the reversal.',
+    )
     # Reverse-once invariant: a posted entry can be reversed exactly once.
     # The reversing entry points back via reversal_of.
     reversal_of = models.OneToOneField(
@@ -228,3 +256,94 @@ class JournalEntryLine(models.Model):
 
     def __str__(self):
         return f"{self.entry.entry_no} | {self.account} | Dr:{self.debit} Cr:{self.credit}"
+
+
+# ─── Tally Bill-wise Allocations ────────────────────────────────────────────
+
+
+class BillReference(models.Model):
+    """Tally bill-wise tracking. Each allocation links a journal-entry line
+    to a specific bill (or marks the line as a new bill / advance / on-account).
+
+    `kind`:
+      NEW       — this line *is* a brand-new bill (e.g. Purchase voucher for PI-001).
+      AGAINST   — this line settles or partially settles an existing bill.
+      ADVANCE   — this line is an advance not yet matched to any bill.
+      ON_ACCOUNT — generic adjustment with no specific bill reference.
+    """
+
+    KIND_CHOICES = [
+        ('NEW', 'New Reference'),
+        ('AGAINST', 'Against Reference'),
+        ('ADVANCE', 'Advance'),
+        ('ON_ACCOUNT', 'On Account'),
+    ]
+
+    line = models.ForeignKey(
+        JournalEntryLine, on_delete=models.CASCADE,
+        related_name='bill_references',
+    )
+    kind = models.CharField(max_length=15, choices=KIND_CHOICES)
+    ref_no = models.CharField(max_length=100, blank=True,
+        help_text='Bill / invoice number this line refers to.')
+    ref_date = models.DateField(null=True, blank=True)
+    amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    # Optional FK to a Bill row when the bill exists in our `bills` app. Allows
+    # outstanding-by-bill drilldowns to use real FKs instead of free-form ref_no.
+    bill_id = models.PositiveIntegerField(
+        null=True, blank=True, db_index=True,
+        help_text='If linked to a bill row in the bills app.',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['ref_no']),
+            models.Index(fields=['bill_id']),
+        ]
+
+    def clean(self):
+        if self.amount < 0:
+            raise ValidationError('Bill allocation amount must be non-negative.')
+        if self.kind in ('NEW', 'AGAINST') and not (self.ref_no or self.bill_id):
+            raise ValidationError('NEW and AGAINST allocations require a ref_no or bill_id.')
+
+    def __str__(self):
+        return f'{self.kind} {self.ref_no or "—"} {self.amount}'
+
+
+# ─── Tally Custom Voucher Types ─────────────────────────────────────────────
+
+
+class VoucherTypeProfile(models.Model):
+    """User-defined voucher types layered on top of the 8 system types.
+    Examples: 'Cash Sales' (under SALE), 'Credit Purchase' (under PURCHASE),
+    'Bank Payment' (under PAYMENT). Each profile carries its own numbering.
+    """
+
+    NUMBERING_METHODS = [
+        ('AUTO', 'Auto (sequential)'),
+        ('MANUAL', 'Manual'),
+    ]
+
+    name = models.CharField(max_length=100, unique=True,
+        help_text='User-facing name, e.g. "Cash Sales" or "Lab Purchase".')
+    base_type = models.CharField(max_length=20, choices=JournalEntry.VOUCHER_TYPES,
+        help_text='Maps to one of the 8 system voucher types.')
+    prefix = models.CharField(max_length=10, blank=True,
+        help_text='Voucher number prefix, e.g. "CS-" → CS-2026-000001.')
+    numbering_method = models.CharField(max_length=10, choices=NUMBERING_METHODS, default='AUTO')
+    restart_yearly = models.BooleanField(
+        default=True,
+        help_text='Reset the sequence at the start of each fiscal year.',
+    )
+    default_narration = models.CharField(max_length=500, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['base_type', 'name']
+
+    def __str__(self):
+        return self.name

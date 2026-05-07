@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Loader2, Plus, Trash2, Save, Send, Layers } from 'lucide-react'
+import { ArrowLeft, Loader2, Plus, Trash2, Save, Send, Layers, Globe } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getChartOfAccounts, getSuppliers,
@@ -15,6 +15,7 @@ import { Badge } from '../../components/ui/badge'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { AccountPicker } from '../journals/AccountPicker'
 import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
+import { useLocation as useActiveLocation } from '../../contexts/LocationContext'
 import { voucherConfigs } from '../vouchers/voucherConfig'
 
 interface Item {
@@ -35,6 +36,7 @@ export default function ExpenseEditorPage() {
   const { id } = useParams<{ id?: string }>()
   const navigate = useNavigate()
   const editingId = id ? Number(id) : null
+  const { activeLocationId } = useActiveLocation()
 
   const [accounts, setAccounts] = useState<Account[]>([])
   const [suppliers, setSuppliers] = useState<Party[]>([])
@@ -180,11 +182,13 @@ export default function ExpenseEditorPage() {
       tax_igst: taxIgst || '0',
       total_amount: totals.total.toFixed(2),
       notes,
+      location_id: activeLocationId,
       items: outItems,
     }
   }
 
   function validate(): string | null {
+    if (activeLocationId === null) return 'Switch to a specific store from the top-nav selector to record this expense'
     if (!expenseDate) return 'Date is required'
     if (!paidThrough) return 'Pick a paid-through account'
     const data = payload()
@@ -194,6 +198,8 @@ export default function ExpenseEditorPage() {
     if (totals.total <= 0) return 'Total must be > 0'
     return null
   }
+
+  const allStores = activeLocationId === null
 
   const handleSave = useCallback(async function handleSave(thenRecord = false) {
     const err = validate()
@@ -256,6 +262,23 @@ export default function ExpenseEditorPage() {
         className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3">
         <ArrowLeft size={14} /> Back to Expenses
       </button>
+
+      {allStores && (
+        <div
+          className="px-4 py-2.5 rounded-lg flex items-center gap-2.5 text-sm"
+          style={{
+            background: 'rgba(245, 158, 11, 0.08)',
+            border: '1px solid rgba(245, 158, 11, 0.30)',
+            color: 'var(--ink)',
+          }}
+        >
+          <Globe size={14} style={{ color: 'rgb(180,110,0)' }} />
+          <span className="font-medium">All Stores is read-only.</span>
+          <span style={{ color: 'var(--ink-2)' }}>
+            Switch to a specific store from the selector at the top to record this expense.
+          </span>
+        </div>
+      )}
 
       <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
         <div className="flex items-baseline gap-3">
@@ -464,11 +487,11 @@ export default function ExpenseEditorPage() {
         <Button variant="secondary" onClick={handleEsc}>
           Cancel <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Esc</kbd>
         </Button>
-        <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving}>
+        <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving || allStores}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
           Save Draft
         </Button>
-        <Button onClick={() => handleSave(true)} disabled={saving}>
+        <Button onClick={() => handleSave(true)} disabled={saving || allStores}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
           Save & Record
           <kbd className="hidden md:inline mono text-[10px] ml-1 text-white/80">Ctrl+A</kbd>

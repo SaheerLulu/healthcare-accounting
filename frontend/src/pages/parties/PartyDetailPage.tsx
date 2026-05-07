@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { ArrowLeft, Loader2, Mail, Phone, MapPin, Plus, Trash2, Download, Pencil, Wallet } from 'lucide-react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft, Loader2, Mail, Phone, MapPin, Plus, Trash2, Download, Pencil, Wallet, Banknote, Receipt as ReceiptIcon, FileStack } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getSupplierDetail, getCustomerDetail,
@@ -28,6 +28,7 @@ function isCustomer(d: Detail): d is CustomerDetail & { _kind: 'Customer' } {
 
 export default function PartyDetailPage({ partyType }: { partyType: PartyType }) {
   const { id } = useParams<{ id: string }>()
+  const navigate = useNavigate()
   const partyId = Number(id)
   const [detail, setDetail] = useState<Detail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -77,6 +78,52 @@ export default function PartyDetailPage({ partyType }: { partyType: PartyType })
               <Badge variant="info">{detail.customer_type}</Badge>
             )}
           </div>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {partyType === 'Supplier' ? (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => navigate(`/vouchers/payment?party_id=${partyId}`)}
+              >
+                <Banknote size={14} /> Make Payment
+                <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>F5</kbd>
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => navigate(`/vouchers/payment?party_id=${partyId}&alloc=1`)}
+              >
+                <FileStack size={14} /> Pay Bills
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => navigate(`/vouchers/purchase?party_id=${partyId}`)}
+              >
+                <Plus size={14} /> Purchase
+                <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>F9</kbd>
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                size="sm"
+                onClick={() => navigate(`/vouchers/receipt?party_id=${partyId}`)}
+              >
+                <ReceiptIcon size={14} /> Record Receipt
+                <kbd className="hidden md:inline mono text-[10px] ml-1 text-white/80">F6</kbd>
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => navigate(`/vouchers/sales?party_id=${partyId}`)}
+              >
+                <Plus size={14} /> Sales
+                <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>F8</kbd>
+              </Button>
+            </>
+          )}
         </div>
       </div>
 

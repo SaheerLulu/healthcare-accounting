@@ -6,6 +6,8 @@ router = DefaultRouter()
 router.register('chart-of-accounts', views.ChartOfAccountViewSet)
 router.register('account-mappings', views.AccountMappingViewSet)
 router.register('locked-periods', views.LockedPeriodViewSet)
+router.register('cost-categories', views.CostCategoryViewSet)
+router.register('cost-centres', views.CostCentreViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

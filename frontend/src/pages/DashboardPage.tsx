@@ -133,6 +133,7 @@ export default function DashboardPage() {
               : undefined
           }
           sparklineData={hasMonthly ? revenueSeries : undefined}
+          onClick={() => navigate('/reports/profit-loss')}
         />
         <KpiCard
           title="Expenses"
@@ -147,6 +148,7 @@ export default function DashboardPage() {
               : undefined
           }
           sparklineData={hasMonthly ? expenseSeries : undefined}
+          onClick={() => navigate('/reports/profit-loss')}
         />
         <KpiCard
           title="Net profit"
@@ -161,6 +163,7 @@ export default function DashboardPage() {
               : undefined
           }
           sparklineData={hasMonthly ? profitSeries : undefined}
+          onClick={() => navigate('/reports/profit-loss')}
         />
         <KpiCard
           title="Receivables"

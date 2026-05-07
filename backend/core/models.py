@@ -92,7 +92,13 @@ class ChartOfAccount(models.Model):
     def get_balance(self, start_date=None, end_date=None):
         from journals.models import JournalEntryLine
 
-        qs = JournalEntryLine.objects.filter(account=self, entry__is_posted=True)
+        # Optional/memorandum vouchers do not affect the books.
+        qs = JournalEntryLine.objects.filter(
+            account=self,
+            entry__is_posted=True,
+            entry__is_optional=False,
+            entry__is_memorandum=False,
+        )
 
         if start_date:
             qs = qs.filter(entry__date__gte=start_date)
@@ -284,3 +290,62 @@ class AccountingRole(models.Model):
         if user.is_superuser:
             return True
         return cls.objects.filter(users=user, **{capability: True}).exists()
+
+
+# ─── Tally Cost Categories & Cost Centres ───────────────────────────────────
+
+
+class CostCategory(models.Model):
+    """Tally-style cost-category — groups related cost centres (Department,
+    Doctor, Project, etc.). One voucher line may carry one cost centre per
+    category (multiple categories = multi-dimensional allocation)."""
+
+    name = models.CharField(max_length=100, unique=True)
+    description = models.CharField(max_length=255, blank=True)
+    allocate_revenue = models.BooleanField(
+        default=True,
+        help_text='Whether this category applies to revenue ledgers (Tally semantics).',
+    )
+    allocate_non_revenue = models.BooleanField(
+        default=True,
+        help_text='Whether this category applies to non-revenue ledgers.',
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name_plural = 'Cost Categories'
+
+    def __str__(self):
+        return self.name
+
+
+class CostCentre(models.Model):
+    """Hierarchical cost centre under a category (e.g. Department > OPD)."""
+
+    name = models.CharField(max_length=100)
+    code = models.CharField(max_length=20, blank=True, help_text='Short label')
+    category = models.ForeignKey(
+        CostCategory, on_delete=models.CASCADE, related_name='centres'
+    )
+    parent = models.ForeignKey(
+        'self', null=True, blank=True,
+        on_delete=models.CASCADE, related_name='children',
+    )
+    location_id = models.IntegerField(
+        null=True, blank=True,
+        help_text='Optional inventory-system location to scope this centre.',
+    )
+    is_active = models.BooleanField(default=True)
+    description = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['category__name', 'name']
+        unique_together = [('category', 'name')]
+
+    def __str__(self):
+        return f'{self.category.name} > {self.name}'

@@ -5,7 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
-from .models import JournalEntry, JournalEntryLine, RecurringJournal
+from .models import JournalEntry, JournalEntryLine, RecurringJournal, BillReference, VoucherTypeProfile
 from .serializers import (
     JournalEntrySerializer,
     JournalEntryCreateSerializer,
@@ -14,6 +14,8 @@ from .serializers import (
     ContraVoucherSerializer,
     RecurringJournalReadSerializer,
     RecurringJournalWriteSerializer,
+    BillReferenceSerializer,
+    VoucherTypeProfileSerializer,
 )
 from .services import (
     JournalAutoGenerationService,
@@ -489,3 +491,62 @@ class RecurringJournalViewSet(viewsets.ModelViewSet):
                    f"Recurring-journal run: created {result['created']}, errors {len(result['errors'])}",
                    request=request, extra=result)
         return Response(result)
+
+
+# ─── Bill References ────────────────────────────────────────────────────────
+
+
+class BillReferenceViewSet(viewsets.ModelViewSet):
+    queryset = BillReference.objects.select_related('line', 'line__entry').all()
+    serializer_class = BillReferenceSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        params = self.request.query_params
+        if params.get('line'):
+            qs = qs.filter(line_id=params.get('line'))
+        if params.get('entry'):
+            qs = qs.filter(line__entry_id=params.get('entry'))
+        if params.get('ref_no'):
+            qs = qs.filter(ref_no__icontains=params.get('ref_no'))
+        if params.get('bill_id'):
+            qs = qs.filter(bill_id=params.get('bill_id'))
+        return qs
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        log_action('CREATE', 'BillReference', instance.pk, str(instance), request=self.request)
+
+    def perform_destroy(self, instance):
+        log_action('DELETE', 'BillReference', instance.pk, str(instance), request=self.request)
+        instance.delete()
+
+
+# ─── Custom Voucher Type Profiles ───────────────────────────────────────────
+
+
+class VoucherTypeProfileViewSet(viewsets.ModelViewSet):
+    queryset = VoucherTypeProfile.objects.all()
+    serializer_class = VoucherTypeProfileSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.request.query_params.get('active_only') == 'true':
+            qs = qs.filter(is_active=True)
+        if self.request.query_params.get('base_type'):
+            qs = qs.filter(base_type=self.request.query_params.get('base_type'))
+        return qs
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        log_action('CREATE', 'VoucherTypeProfile', instance.pk, str(instance), request=self.request)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        log_action('UPDATE', 'VoucherTypeProfile', instance.pk, str(instance), request=self.request)
+
+    def perform_destroy(self, instance):
+        log_action('DELETE', 'VoucherTypeProfile', instance.pk, str(instance), request=self.request)
+        instance.delete()

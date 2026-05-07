@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
-  ArrowLeft, Loader2, Pencil, Send, Undo2, Trash2, Copy, FileText,
+  ArrowLeft, Loader2, Pencil, Send, Undo2, Trash2, Copy, FileText, Printer,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -15,6 +15,8 @@ import { Button } from '../../components/ui/button'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '../../components/ui/dialog'
+import { PrintVoucherView } from '../../components/PrintVoucherView'
+import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
 
 const VOUCHER_BG: Record<string, string> = {
   JOURNAL:     'bg-slate-100 text-slate-700',
@@ -38,6 +40,7 @@ export default function JournalDetailPage() {
   const [busy, setBusy] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmReverse, setConfirmReverse] = useState(false)
+  const [printOpen, setPrintOpen] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -92,6 +95,32 @@ export default function JournalDetailPage() {
       setBusy(false)
     }
   }
+
+  // Hotkeys: Alt+P print, Alt+E edit (drafts), Alt+R reverse (posted), Esc back.
+  const handleEdit = useCallback(() => {
+    if (entry && !entry.is_posted) navigate(`/journals/${entry.id}/edit`)
+  }, [entry, navigate])
+  const handleReverseChord = useCallback(() => {
+    if (entry?.is_posted) setConfirmReverse(true)
+  }, [entry])
+  const handleHotkeys = useMemo<HotkeyHandler[]>(() => [
+    { chord: 'Alt+P', preventDefault: true, handler: () => setPrintOpen(true) },
+    { chord: 'Alt+E', preventDefault: true, handler: handleEdit },
+    { chord: 'Alt+R', preventDefault: true, handler: handleReverseChord },
+    { chord: 'Escape', preventDefault: false, handler: () => navigate('/journals') },
+  ], [handleEdit, handleReverseChord, navigate])
+  useHotkeys(handleHotkeys)
+
+  const hints = useMemo<HotkeyHint[]>(() => {
+    const out: HotkeyHint[] = [
+      { chord: 'Alt+P', label: 'Print' },
+      { chord: 'Esc', label: 'Back' },
+    ]
+    if (entry?.is_posted) out.splice(1, 0, { chord: 'Alt+R', label: 'Reverse' })
+    if (entry && !entry.is_posted) out.splice(1, 0, { chord: 'Alt+E', label: 'Edit' })
+    return out
+  }, [entry])
+  useHintRegister(hints)
 
   if (loading || !entry) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
@@ -153,6 +182,10 @@ export default function JournalDetailPage() {
           )}
           <Button variant="ghost" size="sm" onClick={() => duplicateLink(entry, navigate)}>
             <Copy size={14} /> Duplicate
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setPrintOpen(true)}>
+            <Printer size={14} /> Print
+            <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Alt+P</kbd>
           </Button>
         </div>
       </div>
@@ -254,6 +287,8 @@ export default function JournalDetailPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <PrintVoucherView open={printOpen} onOpenChange={setPrintOpen} entry={entry} />
     </div>
   )
 }

@@ -57,6 +57,17 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const registerHandlers = useCallback((handlers: HotkeyHandler[]) => {
+    if ((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV) {
+      const existing = new Set(handlersRef.current.map((h) => h.chord.toLowerCase()))
+      for (const h of handlers) {
+        if (existing.has(h.chord.toLowerCase())) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[Hotkeys] Chord "${h.chord}" registered twice — only the most recently registered handler fires first.`
+          )
+        }
+      }
+    }
     handlersRef.current = [...handlersRef.current, ...handlers]
     return () => {
       handlersRef.current = handlersRef.current.filter((h) => !handlers.includes(h))
@@ -70,7 +81,10 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
       const candidates = handlersRef.current
       if (candidates.length === 0) return
       if (shouldIgnoreEvent(e, GLOBAL_ALLOW_LIST)) return
-      for (const h of candidates) {
+      // Iterate in reverse so most-recently-registered (typically page-scoped)
+      // wins over earlier registrations (global navigation).
+      for (let i = candidates.length - 1; i >= 0; i--) {
+        const h = candidates[i]
         if (chordMatches(h.chord, e)) {
           if (h.preventDefault !== false) e.preventDefault()
           h.handler(e)

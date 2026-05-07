@@ -1,11 +1,25 @@
 from rest_framework import serializers
 from decimal import Decimal
-from .models import JournalEntry, JournalEntryLine, RecurringJournal, RecurringJournalLine
+from .models import (
+    JournalEntry, JournalEntryLine, RecurringJournal, RecurringJournalLine,
+    BillReference, VoucherTypeProfile,
+)
+
+
+class BillReferenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BillReference
+        fields = [
+            'id', 'line', 'kind', 'ref_no', 'ref_date',
+            'amount', 'bill_id', 'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
 
 
 class JournalEntryLineSerializer(serializers.ModelSerializer):
     account_name = serializers.CharField(source='account.account_name', read_only=True)
     account_code = serializers.CharField(source='account.account_code', read_only=True)
+    bill_references = BillReferenceSerializer(many=True, read_only=True)
 
     class Meta:
         model = JournalEntryLine
@@ -20,6 +34,7 @@ class JournalEntryLineSerializer(serializers.ModelSerializer):
             'narration',
             'party_type',
             'party_id',
+            'bill_references',
         ]
         read_only_fields = ['id']
 
@@ -39,18 +54,24 @@ class JournalEntrySerializer(serializers.ModelSerializer):
             'narration',
             'voucher_type',
             'voucher_type_display',
+            'voucher_type_profile',
             'reference_type',
             'reference_type_display',
             'reference_id',
             'is_posted',
+            'is_optional',
+            'is_memorandum',
+            'reversal_date',
+            'auto_reversed',
             'location_id',
             'cost_center',
+            'cost_centre',
             'created_at',
             'created_by',
             'created_by_name',
             'lines',
         ]
-        read_only_fields = ['id', 'entry_no', 'created_at', 'is_posted']
+        read_only_fields = ['id', 'entry_no', 'created_at', 'is_posted', 'auto_reversed']
 
     def get_created_by_name(self, obj):
         if obj.created_by:
@@ -92,10 +113,15 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
             'date',
             'narration',
             'voucher_type',
+            'voucher_type_profile',
             'reference_type',
             'reference_id',
             'location_id',
             'cost_center',
+            'cost_centre',
+            'is_optional',
+            'is_memorandum',
+            'reversal_date',
             'lines',
         ]
         read_only_fields = ['id', 'entry_no']
@@ -334,3 +360,15 @@ class RecurringJournalWriteSerializer(serializers.ModelSerializer):
             for l in lines:
                 RecurringJournalLine.objects.create(recurring_journal=instance, **l)
         return instance
+
+
+class VoucherTypeProfileSerializer(serializers.ModelSerializer):
+    base_type_display = serializers.CharField(source='get_base_type_display', read_only=True)
+
+    class Meta:
+        model = VoucherTypeProfile
+        fields = [
+            'id', 'name', 'base_type', 'base_type_display',
+            'prefix', 'numbering_method', 'restart_yearly',
+            'default_narration', 'is_active',
+        ]

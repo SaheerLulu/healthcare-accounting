@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Loader2, Plus, Save, Send, History, Check } from 'lucide-react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, Loader2, Plus, Save, Send, History, Check, FileStack, Layers, Globe } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getChartOfAccounts, getJournalEntry, getJournalEntries, getSuppliers, getCustomers,
   createJournalEntry, updateJournalEntry, postEntry,
+  createBillReference,
   type Account, type JournalEntry, type Party,
 } from '../../lib/api'
 import { formatCurrency } from '../../lib/utils'
@@ -17,6 +18,9 @@ import { useLocation as useActiveLocation } from '../../contexts/LocationContext
 import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
 import { VoucherLineRow, type VoucherLine } from './VoucherLineRow'
 import { CreateLedgerModal } from './CreateLedgerModal'
+import { BillAllocationSheet } from './BillAllocationSheet'
+import { CostCenterPopup } from './CostCenterPopup'
+import { PartySearchPicker } from '../parties/PartySearchPicker'
 import { voucherConfigs, type VoucherConfig, type VoucherType } from './voucherConfig'
 
 function uid() {
@@ -39,8 +43,13 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
   const config: VoucherConfig = voucherConfigs[voucherType]
   const { id } = useParams<{ id?: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const editingId = id ? Number(id) : null
   const { activeLocationId } = useActiveLocation()
+  const initialPartyId = searchParams.get('party_id')
+    ? Number(searchParams.get('party_id'))
+    : null
+  const autoOpenAlloc = searchParams.get('alloc') === '1'
 
   const [accounts, setAccounts] = useState<Account[]>([])
   const [parties, setParties] = useState<Party[]>([])
@@ -48,6 +57,12 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
   const [date, setDate] = useState(todayStr())
   const [referenceId, setReferenceId] = useState('')
   const [narration, setNarration] = useState(config.narrationTemplate)
+  const [costCenter, setCostCenter] = useState('')
+  const [costCentreId, setCostCentreId] = useState<number | null>(null)
+  const [voucherTypeProfileId, setVoucherTypeProfileId] = useState<number | null>(null)
+  const [isOptional, setIsOptional] = useState(false)
+  const [isMemorandum, setIsMemorandum] = useState(false)
+  const [reversalDate, setReversalDate] = useState('')
   const [lines, setLines] = useState<VoucherLine[]>([
     makeLine(config.firstLineSide),
     makeLine(config.secondLineSide),
@@ -58,6 +73,11 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
   const [originalEntry, setOriginalEntry] = useState<JournalEntry | null>(null)
   const [escConfirmOpen, setEscConfirmOpen] = useState(false)
   const [createLedgerOpen, setCreateLedgerOpen] = useState(false)
+  const [allocOpen, setAllocOpen] = useState(false)
+  const [costCenterOpen, setCostCenterOpen] = useState(false)
+  const [pendingAllocations, setPendingAllocations] = useState<{
+    bill_id: number; ref_no: string; ref_date: string | null; amount: string
+  }[]>([])
   const altCLineUidRef = useRef<string | null>(null)
 
   // ─── Initial load ──────────────────────────────────────────────────────────
@@ -71,7 +91,22 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
       if (config.partyType) {
         try {
           const ps = config.partyType === 'Supplier' ? await getSuppliers() : await getCustomers()
-          if (!cancelled) setParties(ps)
+          if (!cancelled) {
+            setParties(ps)
+            // Pre-select if ?party_id=… was passed (from PartyDetailPage quick action).
+            if (initialPartyId && !editingId) {
+              const p = ps.find((x) => x.id === initialPartyId)
+              if (p) {
+                setPartyId(p.id)
+                if (narration === config.narrationTemplate) {
+                  setNarration(`${config.narrationTemplate}${p.name}`)
+                }
+                if (autoOpenAlloc && voucherType === 'PAYMENT') {
+                  setAllocOpen(true)
+                }
+              }
+            }
+          }
         } catch { /* ignore */ }
       }
       if (editingId) {
@@ -87,6 +122,12 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
           setDate(entry.date)
           setReferenceId(entry.reference_id ? String(entry.reference_id) : '')
           setNarration(entry.narration || '')
+          setCostCenter(entry.cost_center || '')
+          setCostCentreId(entry.cost_centre ?? null)
+          setVoucherTypeProfileId(entry.voucher_type_profile ?? null)
+          setIsOptional(entry.is_optional || false)
+          setIsMemorandum(entry.is_memorandum || false)
+          setReversalDate(entry.reversal_date || '')
           setLines(
             entry.lines.length > 0
               ? entry.lines.map((l): VoucherLine => {
@@ -155,20 +196,28 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
       date,
       narration,
       voucher_type: voucherType,
+      voucher_type_profile: voucherTypeProfileId,
       reference_type: 'Manual',
       reference_id: referenceId ? Number(referenceId) : null,
+      cost_center: costCenter,
+      cost_centre: costCentreId,
+      is_optional: isOptional,
+      is_memorandum: isMemorandum,
+      reversal_date: reversalDate || null,
       location_id: activeLocationId as number,
       lines: cleanLines,
     }
   }
 
   function validate(): string | null {
-    if (activeLocationId === null) return 'Select a specific location before saving a voucher'
+    if (activeLocationId === null) return 'Switch to a specific store from the top-nav selector to record vouchers'
     const data = payload()
     if (data.lines.length < 2) return 'At least two lines are required'
     if (!isBalanced) return `Debit ${formatCurrency(totals.dr)} ≠ Credit ${formatCurrency(totals.cr)}`
     return null
   }
+
+  const allStores = activeLocationId === null
 
   const handleSave = useCallback(async function handleSave(thenPost = false) {
     const err = validate()
@@ -181,6 +230,27 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
       } else {
         entry = await createJournalEntry(payload())
       }
+
+      // Write Tally bill-wise allocations against the Dr line of the saved JE.
+      if (pendingAllocations.length > 0 && entry.lines?.length > 0) {
+        const drLine = entry.lines.find((l) => parseFloat(l.debit) > 0)
+        if (drLine?.id) {
+          for (const a of pendingAllocations) {
+            try {
+              await createBillReference({
+                line: drLine.id,
+                kind: 'AGAINST',
+                ref_no: a.ref_no,
+                ref_date: a.ref_date,
+                amount: a.amount,
+                bill_id: a.bill_id,
+              })
+            } catch { /* ignore individual ref errors so save still succeeds */ }
+          }
+          setPendingAllocations([])
+        }
+      }
+
       if (thenPost) {
         setPosting(true)
         try {
@@ -209,7 +279,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
       setSaving(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, narration, voucherType, referenceId, activeLocationId, lines, editingId])
+  }, [date, narration, voucherType, referenceId, activeLocationId, lines, editingId, costCenter, costCentreId, voucherTypeProfileId, isOptional, isMemorandum, reversalDate, pendingAllocations])
 
   // ─── Repeat last (Ctrl+H) ──────────────────────────────────────────────────
   const handleRepeatLast = useCallback(async () => {
@@ -278,11 +348,29 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
     }
   }
 
+  function handleAllocation({ amount, narration: alloc, items }: {
+    amount: string; narration: string; billIds: number[];
+    items: { bill_id: number; ref_no: string; ref_date: string | null; amount: string }[]
+  }) {
+    // Mirror the allocation amount onto the first Dr and first Cr lines, so
+    // both sides balance to the bill total. Anything beyond two lines stays.
+    let drSet = false
+    let crSet = false
+    setLines((ls) => ls.map((l) => {
+      if (l.side === 'Dr' && !drSet) { drSet = true; return { ...l, amount } }
+      if (l.side === 'Cr' && !crSet) { crSet = true; return { ...l, amount } }
+      return l
+    }))
+    setNarration(alloc)
+    setPendingAllocations(items)
+  }
+
   // ─── Hotkey wiring ─────────────────────────────────────────────────────────
   const handlers = useMemo<HotkeyHandler[]>(() => [
     { chord: 'Ctrl+A', preventDefault: true, handler: () => handleSave(true) },
     { chord: 'Ctrl+H', preventDefault: true, handler: handleRepeatLast },
     { chord: 'Alt+C', preventDefault: true, handler: handleAltCGlobal },
+    { chord: 'Ctrl+L', preventDefault: true, handler: () => setCostCenterOpen(true) },
     { chord: 'Escape', preventDefault: false, handler: handleEsc },
   ], [handleSave, handleRepeatLast, handleAltCGlobal, handleEsc])
 
@@ -292,6 +380,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
     { chord: 'Ctrl+A', label: 'Save & Post' },
     { chord: 'Ctrl+H', label: 'Repeat Last' },
     { chord: 'Alt+C', label: 'New Ledger' },
+    { chord: 'Ctrl+L', label: 'Cost Centre' },
     { chord: 'Esc', label: 'Cancel' },
   ], [])
   useHintRegister(hints)
@@ -314,8 +403,25 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
         <ArrowLeft size={14} /> Gateway
       </button>
 
+      {allStores && (
+        <div
+          className="mb-3 px-4 py-2.5 rounded-lg flex items-center gap-2.5 text-sm"
+          style={{
+            background: 'rgba(245, 158, 11, 0.08)',
+            border: '1px solid rgba(245, 158, 11, 0.30)',
+            color: 'var(--ink)',
+          }}
+        >
+          <Globe size={14} style={{ color: 'rgb(180,110,0)' }} />
+          <span className="font-medium">All Stores is read-only.</span>
+          <span style={{ color: 'var(--ink-2)' }}>
+            Switch to a specific store from the selector at the top to record this voucher.
+          </span>
+        </div>
+      )}
+
       <div className="flex items-start justify-between mb-3 gap-3 flex-wrap">
-        <div className="flex items-baseline gap-3">
+        <div className="flex items-baseline gap-3 flex-wrap">
           <span
             className="mono text-xs font-bold px-2 py-0.5 rounded"
             style={{
@@ -330,8 +436,36 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
             {editingId ? `Edit ${originalEntry?.entry_no ?? config.label}` : `${config.label} Voucher`}
           </h1>
           <span className="text-sm" style={{ color: 'var(--ink-2)' }}>· {config.description}</span>
+          {(costCenter || costCentreId) && (
+            <button
+              type="button"
+              onClick={() => setCostCenterOpen(true)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] mono uppercase tracking-wide hover:opacity-90"
+              style={{
+                background: 'rgba(15,157,154,0.10)',
+                color: 'var(--brand)',
+                border: '1px solid rgba(15,157,154,0.25)',
+              }}
+              title="Cost Centre — Ctrl+L to change"
+            >
+              <Layers size={10} /> {costCenter || `Centre #${costCentreId}`}
+            </button>
+          )}
         </div>
-        {originalEntry && <Badge variant="warning">Draft</Badge>}
+        <div className="flex items-center gap-2">
+          {voucherType === 'PAYMENT' && partyId && (
+            <Button variant="secondary" size="sm" onClick={() => setAllocOpen(true)}>
+              <FileStack size={14} /> Allocate Bills
+            </Button>
+          )}
+          {!costCenter && !costCentreId && (
+            <Button variant="ghost" size="sm" onClick={() => setCostCenterOpen(true)}>
+              <Layers size={14} /> Cost Centre
+              <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Ctrl+L</kbd>
+            </Button>
+          )}
+          {originalEntry && <Badge variant="warning">Draft</Badge>}
+        </div>
       </div>
 
       <Card className="p-5">
@@ -340,28 +474,22 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
             <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
           </Field>
           {config.partyType ? (
-            <Field label={config.partyType} hint="Pick to pre-fill account & narration">
-              <select
+            <Field label={config.partyType} hint="Type letters to narrow · ↑↓ Enter">
+              <PartySearchPicker
+                parties={parties}
                 value={partyId}
-                onChange={(e) => {
-                  const v = e.target.value
-                  if (v) {
-                    setPartyId(Number(v))
-                    const p = parties.find((x) => x.id === Number(v))
+                onChange={(id) => {
+                  setPartyId(id)
+                  if (id) {
+                    const p = parties.find((x) => x.id === Number(id))
                     if (p && narration === config.narrationTemplate) {
                       setNarration(`${config.narrationTemplate}${p.name}`)
                     }
-                  } else {
-                    setPartyId('')
                   }
                 }}
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
-              >
-                <option value="">— Optional —</option>
-                {parties.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
+                storageKey={config.partyType}
+                placeholder={`Search ${config.partyType.toLowerCase()}…`}
+              />
             </Field>
           ) : (
             <Field label="Reference #" hint="Optional">
@@ -376,6 +504,47 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
           </Field>
         </div>
       </Card>
+
+      {/* Tally voucher modes */}
+      <div
+        className="flex items-center gap-3 flex-wrap px-1 text-xs"
+        style={{ color: 'var(--ink-2)' }}
+      >
+        <ModeToggle
+          label="Optional"
+          checked={isOptional}
+          onChange={setIsOptional}
+          help="Saved but excluded from ledger balances"
+        />
+        <ModeToggle
+          label="Memorandum"
+          checked={isMemorandum}
+          onChange={setIsMemorandum}
+          help="Tracked outside the books"
+        />
+        <label className="inline-flex items-center gap-1.5">
+          <span className="mono uppercase text-[10px] tracking-wider" style={{ color: 'var(--ink-3)' }}>
+            Reverse on
+          </span>
+          <input
+            type="date"
+            value={reversalDate}
+            onChange={(e) => setReversalDate(e.target.value)}
+            className="text-xs px-2 py-1 rounded-md outline-none"
+            style={{ border: '1px solid var(--line)', background: 'var(--surface-0)', color: 'var(--ink)' }}
+          />
+          {reversalDate && (
+            <button
+              type="button"
+              onClick={() => setReversalDate('')}
+              className="text-[11px] hover:underline"
+              style={{ color: 'var(--ink-3)' }}
+            >
+              clear
+            </button>
+          )}
+        </label>
+      </div>
 
       <Card className="overflow-hidden p-0">
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
@@ -488,11 +657,11 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
         <Button variant="secondary" onClick={handleEsc}>
           Cancel <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Esc</kbd>
         </Button>
-        <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving || posting}>
+        <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving || posting || allStores}>
           {saving && !posting ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
           Save Draft
         </Button>
-        <Button onClick={() => handleSave(true)} disabled={saving || posting || !isBalanced}>
+        <Button onClick={() => handleSave(true)} disabled={saving || posting || !isBalanced || allStores}>
           {posting ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
           Save & Post
           <kbd className="hidden md:inline mono text-[10px] ml-1 text-white/80">Ctrl+A</kbd>
@@ -519,7 +688,59 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
         parents={accounts}
         onCreated={handleLedgerCreated}
       />
+
+      {voucherType === 'PAYMENT' && partyId && (
+        <BillAllocationSheet
+          open={allocOpen}
+          onOpenChange={setAllocOpen}
+          vendorId={Number(partyId)}
+          vendorName={parties.find((p) => p.id === Number(partyId))?.name || ''}
+          onAllocate={handleAllocation}
+        />
+      )}
+
+      <CostCenterPopup
+        open={costCenterOpen}
+        onOpenChange={setCostCenterOpen}
+        currentId={costCentreId}
+        currentLabel={costCenter}
+        onPick={({ id, label }) => {
+          setCostCentreId(id)
+          setCostCenter(label)
+        }}
+      />
     </div>
+  )
+}
+
+function ModeToggle({ label, checked, onChange, help }: {
+  label: string
+  checked: boolean
+  onChange: (next: boolean) => void
+  help?: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-colors"
+      style={{
+        background: checked ? 'rgba(15,157,154,0.10)' : 'var(--surface-0)',
+        border: `1px solid ${checked ? 'rgba(15,157,154,0.30)' : 'var(--line)'}`,
+        color: checked ? 'var(--brand)' : 'var(--ink-2)',
+        fontWeight: checked ? 600 : 400,
+      }}
+      title={help}
+    >
+      <span
+        className="inline-block w-3 h-3 rounded-full"
+        style={{
+          background: checked ? 'var(--brand)' : 'var(--surface-1)',
+          border: `1px solid ${checked ? 'var(--brand)' : 'var(--line)'}`,
+        }}
+      />
+      {label}
+    </button>
   )
 }
 

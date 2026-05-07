@@ -188,6 +188,13 @@ export interface JournalEntry {
   voucher_type: string
   reference_type: string
   reference_id: number | null
+  cost_center?: string
+  cost_centre?: number | null
+  voucher_type_profile?: number | null
+  is_optional?: boolean
+  is_memorandum?: boolean
+  reversal_date?: string | null
+  auto_reversed?: boolean
   is_posted: boolean
   lines: JournalLine[]
   created_at: string
@@ -212,8 +219,14 @@ export async function createJournalEntry(data: {
   date: string
   narration: string
   voucher_type: string
+  voucher_type_profile?: number | null
   reference_type?: string
   reference_id?: number | null
+  cost_center?: string
+  cost_centre?: number | null
+  is_optional?: boolean
+  is_memorandum?: boolean
+  reversal_date?: string | null
   location_id: number
   lines: JournalLine[]
 }) {
@@ -235,8 +248,14 @@ export async function updateJournalEntry(id: number, data: {
   date?: string
   narration?: string
   voucher_type?: string
+  voucher_type_profile?: number | null
   reference_type?: string
   reference_id?: number | null
+  cost_center?: string
+  cost_centre?: number | null
+  is_optional?: boolean
+  is_memorandum?: boolean
+  reversal_date?: string | null
   location_id: number
   lines?: JournalLine[]
 }) {
@@ -2192,6 +2211,127 @@ export async function postStockTransfer(payload: StockTransferPayload) {
 export async function postBadDebtsProvision(payload: { as_of?: string; location_id?: number; narration?: string }) {
   const res = await api.post('/journals/journal-entries/provision-bad-debts/', payload)
   return res.data
+}
+
+// ─── Tally: Cost Categories & Cost Centres ──────────────────────────────────
+
+export interface CostCategory {
+  id: number
+  name: string
+  description: string
+  allocate_revenue: boolean
+  allocate_non_revenue: boolean
+  is_active: boolean
+  centre_count?: number
+}
+
+export interface CostCentre {
+  id: number
+  name: string
+  code: string
+  category: number
+  category_name?: string
+  parent: number | null
+  parent_name?: string | null
+  location_id: number | null
+  is_active: boolean
+  description: string
+}
+
+export async function listCostCategories(params?: Record<string, string>) {
+  const res = await api.get('/accounts/cost-categories/', { params })
+  return res.data as CostCategory[]
+}
+export async function createCostCategory(data: Partial<CostCategory>) {
+  const res = await api.post('/accounts/cost-categories/', data)
+  return res.data as CostCategory
+}
+export async function updateCostCategory(id: number, data: Partial<CostCategory>) {
+  const res = await api.patch(`/accounts/cost-categories/${id}/`, data)
+  return res.data as CostCategory
+}
+export async function deleteCostCategory(id: number) {
+  await api.delete(`/accounts/cost-categories/${id}/`)
+}
+
+export async function listCostCentres(params?: Record<string, string>) {
+  const res = await api.get('/accounts/cost-centres/', { params })
+  return res.data as CostCentre[]
+}
+export async function createCostCentre(data: Partial<CostCentre>) {
+  const res = await api.post('/accounts/cost-centres/', data)
+  return res.data as CostCentre
+}
+export async function updateCostCentre(id: number, data: Partial<CostCentre>) {
+  const res = await api.patch(`/accounts/cost-centres/${id}/`, data)
+  return res.data as CostCentre
+}
+export async function deleteCostCentre(id: number) {
+  await api.delete(`/accounts/cost-centres/${id}/`)
+}
+
+// ─── Tally: Voucher-Type Profiles ───────────────────────────────────────────
+
+export interface VoucherTypeProfile {
+  id: number
+  name: string
+  base_type: string
+  base_type_display?: string
+  prefix: string
+  numbering_method: 'AUTO' | 'MANUAL'
+  restart_yearly: boolean
+  default_narration: string
+  is_active: boolean
+}
+
+export async function listVoucherTypeProfiles(params?: Record<string, string>) {
+  const res = await api.get('/journals/voucher-types/', { params })
+  return res.data as VoucherTypeProfile[]
+}
+export async function createVoucherTypeProfile(data: Partial<VoucherTypeProfile>) {
+  const res = await api.post('/journals/voucher-types/', data)
+  return res.data as VoucherTypeProfile
+}
+export async function updateVoucherTypeProfile(id: number, data: Partial<VoucherTypeProfile>) {
+  const res = await api.patch(`/journals/voucher-types/${id}/`, data)
+  return res.data as VoucherTypeProfile
+}
+export async function deleteVoucherTypeProfile(id: number) {
+  await api.delete(`/journals/voucher-types/${id}/`)
+}
+
+// ─── Tally: Bill References (bill-wise allocations) ─────────────────────────
+
+export type BillReferenceKind = 'NEW' | 'AGAINST' | 'ADVANCE' | 'ON_ACCOUNT'
+
+export interface BillReference {
+  id: number
+  line: number
+  kind: BillReferenceKind
+  ref_no: string
+  ref_date: string | null
+  amount: string
+  bill_id: number | null
+  created_at: string
+}
+
+export async function listBillReferences(params?: Record<string, string>) {
+  const res = await api.get('/journals/bill-references/', { params })
+  return res.data as BillReference[]
+}
+export async function createBillReference(data: {
+  line: number
+  kind: BillReferenceKind
+  ref_no?: string
+  ref_date?: string | null
+  amount: string
+  bill_id?: number | null
+}) {
+  const res = await api.post('/journals/bill-references/', data)
+  return res.data as BillReference
+}
+export async function deleteBillReference(id: number) {
+  await api.delete(`/journals/bill-references/${id}/`)
 }
 
 export default api
