@@ -26,15 +26,21 @@ DialogOverlay.displayName = 'DialogOverlay'
 const DialogContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, style, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md rounded-xl bg-white border border-slate-200 shadow-lg p-6 animate-slide-up max-h-[90vh] overflow-y-auto',
+        'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md rounded-xl border shadow-lg p-6 animate-slide-up max-h-[90vh] overflow-y-auto',
         className
       )}
+      style={{
+        backgroundColor: 'var(--surface-0)',
+        borderColor: 'var(--line)',
+        color: 'var(--ink)',
+        ...style,
+      }}
       {...props}
     >
       {children}
@@ -53,7 +59,10 @@ const DialogHeader = ({
     {...props}
   >
     {children}
-    <DialogClose className="text-slate-400 hover:text-slate-900 transition-colors">
+    <DialogClose
+      className="transition-colors hover:opacity-80"
+      style={{ color: 'var(--ink-3)' }}
+    >
       <X size={18} />
     </DialogClose>
   </div>
@@ -62,10 +71,11 @@ const DialogHeader = ({
 const DialogTitle = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Title>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Title>
->(({ className, ...props }, ref) => (
+>(({ className, style, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn('text-base font-semibold text-slate-900', className)}
+    className={cn('text-base font-semibold', className)}
+    style={{ color: 'var(--ink)', ...style }}
     {...props}
   />
 ))

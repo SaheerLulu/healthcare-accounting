@@ -190,32 +190,40 @@ export function AccountPicker({
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          'w-full flex items-center justify-between gap-2 px-3 py-2 text-sm border rounded-lg bg-white text-left',
-          'hover:border-slate-300 transition-colors',
-          open ? 'border-teal-500 ring-2 ring-teal-100' : 'border-slate-200',
+          'w-full flex items-center justify-between gap-2 px-3 py-2 text-sm border rounded-lg text-left transition-colors',
           disabled && 'opacity-50 cursor-not-allowed'
         )}
+        style={{
+          backgroundColor: 'var(--surface-0)',
+          borderColor: open ? 'var(--brand)' : 'var(--line)',
+          boxShadow: open ? '0 0 0 3px rgba(15,157,154,0.18)' : undefined,
+          color: 'var(--ink)',
+        }}
       >
         {selected ? (
           <span className="flex items-center gap-2 min-w-0">
             <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', TYPE_DOT[selected.account_type])} />
-            <span className="truncate text-slate-900">{selected.account_name}</span>
-            <span className="text-xs text-slate-400 font-mono flex-shrink-0">{selected.account_code}</span>
+            <span className="truncate" style={{ color: 'var(--ink)' }}>{selected.account_name}</span>
+            <span className="text-xs font-mono flex-shrink-0" style={{ color: 'var(--ink-3)' }}>{selected.account_code}</span>
           </span>
         ) : (
-          <span className="text-slate-400">Select ledger…</span>
+          <span style={{ color: 'var(--ink-3)' }}>Select ledger…</span>
         )}
-        <ChevronDown size={14} className={cn('text-slate-400 transition-transform', open && 'rotate-180')} />
+        <ChevronDown size={14} className={cn('transition-transform', open && 'rotate-180')} style={{ color: 'var(--ink-3)' }} />
       </button>
 
       {open && pos && createPortal(
         <div
           ref={dropdownRef}
-          className="fixed z-[60] rounded-lg border border-slate-200 bg-white shadow-lg overflow-hidden dropdown-animate"
-          style={{ top: pos.top, left: pos.left, width: pos.width }}
+          className="fixed z-[60] rounded-lg border shadow-lg overflow-hidden dropdown-animate"
+          style={{
+            top: pos.top, left: pos.left, width: pos.width,
+            backgroundColor: 'var(--surface-0)',
+            borderColor: 'var(--line)',
+          }}
         >
-          <div className="relative border-b border-slate-100">
-            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <div className="relative border-b" style={{ borderColor: 'var(--line)' }}>
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
             <input
               ref={inputRef}
               type="text"
@@ -223,7 +231,8 @@ export function AccountPicker({
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onInputKey}
               placeholder="Type letters to narrow… (↑↓ Enter)"
-              className="w-full pl-9 pr-3 py-2 text-sm focus:outline-none"
+              className="w-full pl-9 pr-3 py-2 text-sm bg-transparent focus:outline-none"
+              style={{ color: 'var(--ink)' }}
             />
           </div>
           <div className="max-h-72 overflow-y-auto">
@@ -240,7 +249,7 @@ export function AccountPicker({
                   />
                 ))}
                 {filtered.length > 0 && (
-                  <div className="border-t border-slate-100 my-0.5" />
+                  <div className="border-t my-0.5" style={{ borderColor: 'var(--line)' }} />
                 )}
               </>
             )}
@@ -257,7 +266,7 @@ export function AccountPicker({
               )
             })}
             {navList.length === 0 && (
-              <div className="text-center py-6 text-xs text-slate-400">
+              <div className="text-center py-6 text-xs" style={{ color: 'var(--ink-3)' }}>
                 {accounts.length === 0
                   ? 'No accounts available'
                   : query
@@ -267,7 +276,10 @@ export function AccountPicker({
             )}
           </div>
           {onAltC && (
-            <div className="border-t border-slate-100 px-3 py-1.5 flex items-center justify-between bg-slate-50">
+            <div
+              className="border-t px-3 py-1.5 flex items-center justify-between"
+              style={{ borderColor: 'var(--line)', backgroundColor: 'var(--surface-1)' }}
+            >
               <span className="text-[11px]" style={{ color: 'var(--ink-3)' }}>
                 Press <kbd className="mono font-semibold" style={{ color: 'var(--brand)' }}>Alt+C</kbd> to create a new ledger
               </span>
@@ -313,16 +325,22 @@ function Row({ account, selected, highlighted, onSelect }: {
     <button
       type="button"
       onMouseDown={(e) => { e.preventDefault(); onSelect() }}
-      className={cn(
-        'w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left',
-        highlighted ? 'bg-teal-50' : 'hover:bg-slate-50'
-      )}
+      className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors"
+      style={{
+        backgroundColor: highlighted ? 'rgba(15,157,154,0.10)' : 'transparent',
+      }}
+      onMouseEnter={(e) => {
+        if (!highlighted) e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)'
+      }}
+      onMouseLeave={(e) => {
+        if (!highlighted) e.currentTarget.style.backgroundColor = 'transparent'
+      }}
     >
       <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', TYPE_DOT[account.account_type])} />
-      <span className="font-mono text-xs text-slate-400 w-14 flex-shrink-0">{account.account_code}</span>
-      <span className="flex-1 truncate text-slate-900">{account.account_name}</span>
-      <span className="text-[10px] text-slate-400 uppercase tracking-wide flex-shrink-0">{account.account_type}</span>
-      {selected && <Check size={14} className="text-teal-600 flex-shrink-0" />}
+      <span className="font-mono text-xs w-14 flex-shrink-0" style={{ color: 'var(--ink-3)' }}>{account.account_code}</span>
+      <span className="flex-1 truncate" style={{ color: 'var(--ink)' }}>{account.account_name}</span>
+      <span className="text-[10px] uppercase tracking-wide flex-shrink-0" style={{ color: 'var(--ink-3)' }}>{account.account_type}</span>
+      {selected && <Check size={14} className="flex-shrink-0" style={{ color: 'var(--brand)' }} />}
     </button>
   )
 }

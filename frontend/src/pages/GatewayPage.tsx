@@ -257,10 +257,10 @@ export default function GatewayPage() {
               ) : (
                 <ul>
                   {recent.map((e) => (
-                    <li key={e.id} className="border-b border-slate-100 last:border-0">
+                    <li key={e.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
                       <Link
                         to={`/journals/${e.id}`}
-                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 text-sm"
+                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-hover-bg)] text-sm"
                       >
                         <span className="text-xs mono w-20 flex-shrink-0" style={{ color: 'var(--ink-3)' }}>
                           {formatDate(e.date)}
@@ -281,8 +281,8 @@ export default function GatewayPage() {
               )}
               <Link
                 to="/journals"
-                className="block px-4 py-2.5 text-xs hover:bg-slate-50 border-t border-slate-100"
-                style={{ color: 'var(--brand)' }}
+                className="block px-4 py-2.5 text-xs hover:bg-[var(--color-hover-bg)] border-t"
+                style={{ color: 'var(--brand)', borderColor: 'var(--line)' }}
               >
                 View all journals <ArrowRight size={11} className="inline ml-0.5" />
               </Link>
@@ -298,7 +298,7 @@ export default function GatewayPage() {
                   <Link
                     key={m.label}
                     to={m.to}
-                    className="flex items-center gap-2 px-2 py-2 rounded text-sm hover:bg-slate-50"
+                    className="flex items-center gap-2 px-2 py-2 rounded text-sm hover:bg-[var(--color-hover-bg)]"
                     style={{ color: 'var(--ink)' }}
                   >
                     <m.icon size={14} style={{ color: 'var(--ink-3)' }} />
@@ -345,7 +345,7 @@ export default function GatewayPage() {
                   <Link
                     key={r.to}
                     to={r.to}
-                    className="px-2 py-1.5 rounded text-sm hover:bg-slate-50"
+                    className="px-2 py-1.5 rounded text-sm hover:bg-[var(--color-hover-bg)]"
                     style={{ color: 'var(--ink)' }}
                   >
                     {r.label}

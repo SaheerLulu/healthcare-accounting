@@ -123,7 +123,7 @@ export default function JournalDetailPage() {
   useHintRegister(hints)
 
   if (loading || !entry) {
-    return <div className="p-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
+    return <div className="p-12 text-center"><Loader2 className="animate-spin inline" size={24} style={{ color: 'var(--brand)' }} /></div>
   }
 
   const totals = entry.lines.reduce(
@@ -260,7 +260,7 @@ export default function JournalDetailPage() {
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <DialogContent>
           <DialogHeader><DialogTitle>Delete this draft?</DialogTitle></DialogHeader>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
             Delete <span className="font-mono font-semibold">{entry.entry_no}</span>? This cannot be undone.
           </p>
           <div className="flex gap-2 justify-end pt-4">
@@ -276,7 +276,7 @@ export default function JournalDetailPage() {
       <Dialog open={confirmReverse} onOpenChange={setConfirmReverse}>
         <DialogContent>
           <DialogHeader><DialogTitle>Reverse this entry?</DialogTitle></DialogHeader>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
             Create a reversal entry that flips all debits and credits. The original entry remains posted.
           </p>
           <div className="flex gap-2 justify-end pt-4">

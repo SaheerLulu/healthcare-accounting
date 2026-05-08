@@ -7,7 +7,6 @@ import { Button } from '../../components/ui/button'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose,
 } from '../../components/ui/sheet'
-import { cn } from '../../lib/utils'
 
 export interface BillAllocation {
   bill_id: number
@@ -135,19 +134,26 @@ export function BillAllocationSheet({ open, onOpenChange, vendorId, vendorName, 
                       <tr
                         key={b.id}
                         onClick={() => toggle(b.id)}
-                        className={cn(
-                          'border-b cursor-pointer hover:bg-slate-50',
-                          isSel && 'bg-teal-50/50'
-                        )}
-                        style={{ borderColor: 'var(--line)' }}
+                        className="border-b cursor-pointer transition-colors"
+                        style={{
+                          borderColor: 'var(--line)',
+                          backgroundColor: isSel ? 'rgba(15,157,154,0.08)' : 'transparent',
+                        }}
+                        onMouseEnter={(e) => {
+                          if (!isSel) e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)'
+                        }}
+                        onMouseLeave={(e) => {
+                          if (!isSel) e.currentTarget.style.backgroundColor = 'transparent'
+                        }}
                       >
                         <td className="px-2 py-2">
                           <span
-                            className={cn(
-                              'inline-flex items-center justify-center w-4 h-4 rounded border',
-                              isSel ? 'border-teal-600 text-white' : 'border-slate-300'
-                            )}
-                            style={isSel ? { background: 'var(--brand)' } : undefined}
+                            className="inline-flex items-center justify-center w-4 h-4 rounded border"
+                            style={{
+                              borderColor: isSel ? 'var(--brand)' : 'var(--line)',
+                              background: isSel ? 'var(--brand)' : 'transparent',
+                              color: '#fff',
+                            }}
                           >
                             {isSel && <Check size={10} />}
                           </span>

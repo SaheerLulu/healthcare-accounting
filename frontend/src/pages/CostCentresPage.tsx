@@ -51,7 +51,7 @@ export default function CostCentresPage() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-5">
+    <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-baseline gap-2">
           <Layers size={18} style={{ color: 'var(--brand)' }} />
@@ -81,7 +81,7 @@ export default function CostCentresPage() {
         <>
           {/* Categories */}
           <Card className="p-0 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+            <div className="px-5 py-3 border-b" style={{ borderColor: 'var(--line)' }}>
               <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Categories ({categories.length})</h2>
             </div>
             {categories.length === 0 ? (
@@ -90,7 +90,7 @@ export default function CostCentresPage() {
               </div>
             ) : (
               <table className="w-full text-sm">
-                <thead className="bg-slate-50 border-b border-slate-100">
+                <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
                   <tr>
                     <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Name</th>
                     <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Description</th>
@@ -101,7 +101,7 @@ export default function CostCentresPage() {
                 </thead>
                 <tbody>
                   {categories.map((c) => (
-                    <tr key={c.id} className="border-b border-slate-100 last:border-0">
+                    <tr key={c.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
                       <td className="px-4 py-2.5 font-medium" style={{ color: 'var(--ink)' }}>{c.name}</td>
                       <td className="px-4 py-2.5" style={{ color: 'var(--ink-2)' }}>{c.description || '—'}</td>
                       <td className="px-4 py-2.5 text-center mono" style={{ color: 'var(--ink-2)' }}>
@@ -115,13 +115,19 @@ export default function CostCentresPage() {
                       <td className="px-2 py-2.5">
                         <div className="flex items-center justify-end gap-1">
                           <button
-                            className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-teal-600"
+                            className="p-1.5 rounded transition-colors"
+                            style={{ color: 'var(--ink-3)' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
                             onClick={() => { setEditingCategory(c); setShowCategoryForm(true) }}
                           >
                             <Pencil size={13} />
                           </button>
                           <button
-                            className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-rose-600"
+                            className="p-1.5 rounded transition-colors"
+                            style={{ color: 'var(--ink-3)' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--danger)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
                             onClick={() => removeCategory(c)}
                           >
                             <Trash2 size={13} />
@@ -137,7 +143,7 @@ export default function CostCentresPage() {
 
           {/* Centres */}
           <Card className="p-0 overflow-hidden">
-            <div className="px-5 py-3 border-b border-slate-100">
+            <div className="px-5 py-3 border-b" style={{ borderColor: 'var(--line)' }}>
               <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Cost Centres ({centres.length})</h2>
             </div>
             {centres.length === 0 ? (
@@ -146,7 +152,7 @@ export default function CostCentresPage() {
               </div>
             ) : (
               <table className="w-full text-sm">
-                <thead className="bg-slate-50 border-b border-slate-100">
+                <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
                   <tr>
                     <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Centre</th>
                     <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Code</th>
@@ -158,7 +164,7 @@ export default function CostCentresPage() {
                 </thead>
                 <tbody>
                   {centres.map((c) => (
-                    <tr key={c.id} className="border-b border-slate-100 last:border-0">
+                    <tr key={c.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
                       <td className="px-4 py-2.5 font-medium" style={{ color: 'var(--ink)' }}>{c.name}</td>
                       <td className="px-4 py-2.5 mono text-xs" style={{ color: 'var(--ink-3)' }}>{c.code || '—'}</td>
                       <td className="px-4 py-2.5" style={{ color: 'var(--ink-2)' }}>{c.category_name || '—'}</td>
@@ -171,13 +177,19 @@ export default function CostCentresPage() {
                       <td className="px-2 py-2.5">
                         <div className="flex items-center justify-end gap-1">
                           <button
-                            className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-teal-600"
+                            className="p-1.5 rounded transition-colors"
+                            style={{ color: 'var(--ink-3)' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
                             onClick={() => { setEditingCentre(c); setShowCentreForm(true) }}
                           >
                             <Pencil size={13} />
                           </button>
                           <button
-                            className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-rose-600"
+                            className="p-1.5 rounded transition-colors"
+                            style={{ color: 'var(--ink-3)' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--danger)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
                             onClick={() => removeCentre(c)}
                           >
                             <Trash2 size={13} />
@@ -356,7 +368,8 @@ function CentreForm({ open, onOpenChange, editing, categories, centres, onSaved 
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value ? Number(e.target.value) : '')}
-          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+          className="w-full h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+          style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
         >
           <option value="">— Select —</option>
           {categories.map((c) => (
@@ -368,7 +381,8 @@ function CentreForm({ open, onOpenChange, editing, categories, centres, onSaved 
         <select
           value={parent}
           onChange={(e) => setParent(e.target.value ? Number(e.target.value) : '')}
-          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+          className="w-full h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+          style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
         >
           <option value="">— None —</option>
           {eligibleParents.map((p) => (
@@ -408,7 +422,7 @@ function FormDialog({ open, onOpenChange, title, onSubmit, saving, children }: {
           </div>
           <form onSubmit={onSubmit} className="space-y-3">
             {children}
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 mt-4">
+            <div className="flex justify-end gap-2 pt-3 border-t mt-4" style={{ borderColor: 'var(--line)' }}>
               <Button type="button" variant="secondary" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
               <Button type="submit" disabled={saving}>
                 {saving && <Loader2 size={14} className="animate-spin" />} Save
@@ -424,8 +438,8 @@ function FormDialog({ open, onOpenChange, title, onSubmit, saving, children }: {
 function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-slate-600 mb-1">
-        {label} {required && <span className="text-rose-500">*</span>}
+      <span className="block text-xs font-medium mb-1" style={{ color: 'var(--ink-2)' }}>
+        {label} {required && <span style={{ color: 'var(--danger)' }}>*</span>}
       </span>
       {children}
     </label>

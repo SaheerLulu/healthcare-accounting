@@ -389,7 +389,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
   if (loading) {
     return (
       <div className="p-12 text-center">
-        <Loader2 className="animate-spin inline text-teal-600" size={24} />
+        <Loader2 className="animate-spin inline" size={24} style={{ color: 'var(--brand)' }} />
       </div>
     )
   }
@@ -398,7 +398,8 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
     <div className="max-w-6xl mx-auto space-y-4 pb-32">
       <button
         onClick={handleEsc}
-        className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-1"
+        className="inline-flex items-center gap-1 text-sm hover:opacity-80 mb-1"
+        style={{ color: 'var(--ink-2)' }}
       >
         <ArrowLeft size={14} /> Gateway
       </button>
@@ -497,10 +498,17 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
             </Field>
           )}
           <Field label="Voucher #" hint="Auto-generated">
-            <Input value={originalEntry?.entry_no || '— assigned on save —'} readOnly className="bg-slate-50 font-mono text-xs" />
+            <Input
+              value={originalEntry?.entry_no || '— assigned on save —'}
+              readOnly className="font-mono text-xs"
+              style={{ backgroundColor: 'var(--surface-1)', color: 'var(--ink-2)' }}
+            />
           </Field>
           <Field label="Voucher Type">
-            <Input value={config.label} readOnly className="bg-slate-50" />
+            <Input
+              value={config.label} readOnly
+              style={{ backgroundColor: 'var(--surface-1)', color: 'var(--ink-2)' }}
+            />
           </Field>
         </div>
       </Card>
@@ -547,7 +555,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
       </div>
 
       <Card className="overflow-hidden p-0">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--line)' }}>
           <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Particulars</h2>
           <div className="flex items-center gap-3 text-xs" style={{ color: 'var(--ink-2)' }}>
             <span>By = Dr · To = Cr</span>
@@ -557,12 +565,12 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-100">
+            <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
               <tr>
-                <th className="text-left text-[10px] font-semibold text-slate-500 px-2 py-2 uppercase tracking-wide w-20">By/To</th>
-                <th className="text-left text-[10px] font-semibold text-slate-500 px-2 py-2 uppercase tracking-wide" style={{ width: '32%' }}>Particulars (Ledger)</th>
-                <th className="text-left text-[10px] font-semibold text-slate-500 px-2 py-2 uppercase tracking-wide">Narration</th>
-                <th className="text-right text-[10px] font-semibold text-slate-500 px-2 py-2 uppercase tracking-wide w-36">Amount</th>
+                <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide w-20" style={{ color: 'var(--ink-2)' }}>By/To</th>
+                <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ width: '32%', color: 'var(--ink-2)' }}>Particulars (Ledger)</th>
+                <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>Narration</th>
+                <th className="text-right text-[10px] font-semibold px-2 py-2 uppercase tracking-wide w-36" style={{ color: 'var(--ink-2)' }}>Amount</th>
                 <th className="w-8" />
               </tr>
             </thead>
@@ -580,7 +588,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
                 />
               ))}
             </tbody>
-            <tfoot className="bg-slate-50 border-t border-slate-200">
+            <tfoot className="border-t" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
               <tr>
                 <td className="px-2 py-2" colSpan={2}>
                   <button
@@ -635,7 +643,8 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
             value={narration}
             onChange={(e) => setNarration(e.target.value)}
             rows={2}
-            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+            className="w-full px-3 py-2 text-sm border rounded-lg outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+            style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
           />
         </Field>
       </Card>
@@ -752,11 +761,11 @@ function Field({ label, required, hint, children }: {
 }) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-slate-600 mb-1.5">
-        {label} {required && <span className="text-rose-500">*</span>}
+      <span className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>
+        {label} {required && <span style={{ color: 'var(--danger)' }}>*</span>}
       </span>
       {children}
-      {hint && <span className="block text-xs text-slate-400 mt-1">{hint}</span>}
+      {hint && <span className="block text-xs mt-1" style={{ color: 'var(--ink-3)' }}>{hint}</span>}
     </label>
   )
 }

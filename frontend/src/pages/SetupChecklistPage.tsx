@@ -242,7 +242,11 @@ function SectionList({ title, items, navigate }: {
       <Card className="p-0 overflow-hidden">
         <ul>
           {items.map((c, i) => (
-            <li key={c.id} className={i < items.length - 1 ? 'border-b border-slate-100' : ''}>
+            <li
+              key={c.id}
+              className={i < items.length - 1 ? 'border-b' : ''}
+              style={i < items.length - 1 ? { borderColor: 'var(--line)' } : undefined}
+            >
               <div className="flex items-center gap-3 px-4 py-3">
                 <div
                   className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"

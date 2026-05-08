@@ -31,12 +31,14 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
   const totalCredit = entry.lines.reduce((s, l) => s + Number(l.credit), 0)
 
   return (
-    <div className="border-b border-slate-100 last:border-b-0">
+    <div className="border-b last:border-b-0" style={{ borderColor: 'var(--line)' }}>
       <div
-        className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors"
+        className="flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors"
         onClick={() => setExpanded((e) => !e)}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
       >
-        <span className="text-slate-400">{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+        <span style={{ color: 'var(--ink-3)' }}>{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); navigate(`/journals/${entry.id}`) }}
@@ -51,15 +53,15 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
         >
           {voucherLabel(entry.voucher_type)}
         </span>
-        <span className="text-sm text-slate-700 flex-1 truncate">{entry.narration || '—'}</span>
-        <span className="text-sm font-mono text-slate-900 w-28 text-right">{formatCurrency(totalDebit)}</span>
-        <span className="text-sm font-mono text-slate-900 w-28 text-right">{formatCurrency(totalCredit)}</span>
+        <span className="text-sm flex-1 truncate" style={{ color: 'var(--ink)' }}>{entry.narration || '—'}</span>
+        <span className="text-sm font-mono w-28 text-right" style={{ color: 'var(--ink)' }}>{formatCurrency(totalDebit)}</span>
+        <span className="text-sm font-mono w-28 text-right" style={{ color: 'var(--ink)' }}>{formatCurrency(totalCredit)}</span>
       </div>
       {expanded && (
-        <div className="px-12 pb-3 bg-slate-50/40">
+        <div className="px-12 pb-3" style={{ background: 'var(--surface-1)' }}>
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-slate-500">
+              <tr style={{ color: 'var(--ink-2)' }}>
                 <th className="text-left pb-1 font-medium pt-1">Account</th>
                 <th className="text-right pb-1 font-medium">Debit</th>
                 <th className="text-right pb-1 font-medium">Credit</th>
@@ -68,14 +70,14 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
             <tbody>
               {entry.lines.map((line, i) => (
                 <tr key={i}>
-                  <td className="py-0.5 text-slate-600">
-                    <span className="font-mono text-slate-400 mr-2">{line.account_code}</span>
+                  <td className="py-0.5" style={{ color: 'var(--ink-2)' }}>
+                    <span className="font-mono mr-2" style={{ color: 'var(--ink-3)' }}>{line.account_code}</span>
                     {line.account_name}
                   </td>
-                  <td className="py-0.5 text-right font-mono text-slate-900">
+                  <td className="py-0.5 text-right font-mono" style={{ color: 'var(--ink)' }}>
                     {Number(line.debit) > 0 ? formatCurrency(line.debit) : '—'}
                   </td>
-                  <td className="py-0.5 text-right font-mono text-slate-900">
+                  <td className="py-0.5 text-right font-mono" style={{ color: 'var(--ink)' }}>
                     {Number(line.credit) > 0 ? formatCurrency(line.credit) : '—'}
                   </td>
                 </tr>
@@ -197,7 +199,7 @@ export default function DaybookPage() {
       {/* Date range */}
       <div className="flex items-center gap-3 mb-3 flex-wrap">
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500 font-medium">From</label>
+          <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>From</label>
           <Input
             ref={dateFromRef}
             type="date"
@@ -207,7 +209,7 @@ export default function DaybookPage() {
           />
         </div>
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500 font-medium">To</label>
+          <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>To</label>
           <Input
             type="date"
             value={dateTo}

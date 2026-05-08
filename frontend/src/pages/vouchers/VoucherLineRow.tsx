@@ -1,7 +1,6 @@
 import { Trash2 } from 'lucide-react'
 import { AccountPicker } from '../journals/AccountPicker'
 import { Input } from '../../components/ui/input'
-import { cn } from '../../lib/utils'
 import type { Account } from '../../lib/api'
 import type { LineSide } from './voucherConfig'
 
@@ -41,9 +40,9 @@ export function VoucherLineRow({
   const filteredAccounts = accounts.filter((a) => accountFilter(a, line.side))
 
   return (
-    <tr className="border-b border-slate-100 last:border-0">
+    <tr className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
       <td className="px-2 py-2 align-top w-20">
-        <div className="flex gap-0.5 rounded-md border border-slate-200 overflow-hidden">
+        <div className="flex gap-0.5 rounded-md border overflow-hidden" style={{ borderColor: 'var(--line)' }}>
           <SideButton
             label="Dr"
             active={line.side === 'Dr'}
@@ -87,8 +86,19 @@ export function VoucherLineRow({
           type="button"
           onClick={onRemove}
           disabled={removeDisabled}
-          className="text-slate-400 hover:text-rose-600 disabled:opacity-30 disabled:cursor-not-allowed p-1.5 rounded hover:bg-slate-100"
+          className="disabled:opacity-30 disabled:cursor-not-allowed p-1.5 rounded transition-colors"
           title="Remove line"
+          style={{ color: 'var(--ink-3)' }}
+          onMouseEnter={(e) => {
+            if (!e.currentTarget.disabled) {
+              e.currentTarget.style.color = 'var(--danger)'
+              e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)'
+            }
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--ink-3)'
+            e.currentTarget.style.backgroundColor = 'transparent'
+          }}
         >
           <Trash2 size={14} />
         </button>
@@ -110,11 +120,16 @@ function SideButton({
     <button
       type="button"
       onClick={onClick}
-      className={cn(
-        'flex-1 px-2 py-1 text-xs font-semibold mono transition-colors',
-        active ? 'text-white' : 'text-slate-500 hover:bg-slate-50'
-      )}
-      style={active ? { background: 'var(--brand)' } : undefined}
+      className="flex-1 px-2 py-1 text-xs font-semibold mono transition-colors"
+      style={active
+        ? { background: 'var(--brand)', color: '#fff' }
+        : { background: 'transparent', color: 'var(--ink-2)' }}
+      onMouseEnter={(e) => {
+        if (!active) e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)'
+      }}
+      onMouseLeave={(e) => {
+        if (!active) e.currentTarget.style.backgroundColor = 'transparent'
+      }}
     >
       {label}
     </button>

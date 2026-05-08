@@ -476,7 +476,7 @@ export default function ActivityMapPage() {
   }, [mappings])
 
   return (
-    <div className="max-w-6xl mx-auto space-y-5">
+    <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-baseline gap-2">
         <BookOpen size={18} style={{ color: 'var(--brand)' }} />
         <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
@@ -543,7 +543,10 @@ function ActivityRow({ activity, last, byKey }: {
   byKey: Record<string, AccountMapping>
 }) {
   return (
-    <div className={last ? 'p-4' : 'p-4 border-b border-slate-100'}>
+    <div
+      className={last ? 'p-4' : 'p-4 border-b'}
+      style={!last ? { borderColor: 'var(--line)' } : undefined}
+    >
       <div className="flex items-start justify-between gap-3 mb-2 flex-wrap">
         <div>
           <div className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>

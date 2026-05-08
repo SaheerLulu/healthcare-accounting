@@ -131,7 +131,8 @@ export function CreateLedgerModal({ open, onOpenChange, parents, onCreated }: Pr
                 <select
                   value={type}
                   onChange={(e) => setType(e.target.value)}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  className="w-full h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+                  style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
                 >
                   {TYPES.map((t) => (
                     <option key={t.value} value={t.value}>
@@ -145,7 +146,8 @@ export function CreateLedgerModal({ open, onOpenChange, parents, onCreated }: Pr
               <select
                 value={parent}
                 onChange={(e) => setParent(e.target.value ? Number(e.target.value) : '')}
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                className="w-full h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+                style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
               >
                 <option value="">— Top-level —</option>
                 {eligibleParents.map((p) => (
@@ -156,7 +158,7 @@ export function CreateLedgerModal({ open, onOpenChange, parents, onCreated }: Pr
               </select>
             </Field>
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 mt-4">
+            <div className="flex justify-end gap-2 pt-3 border-t mt-4" style={{ borderColor: 'var(--line)' }}>
               <Button
                 type="button"
                 variant="secondary"
@@ -185,11 +187,11 @@ function Field({ label, required, hint, children }: {
 }) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-slate-600 mb-1">
-        {label} {required && <span className="text-rose-500">*</span>}
+      <span className="block text-xs font-medium mb-1" style={{ color: 'var(--ink-2)' }}>
+        {label} {required && <span style={{ color: 'var(--danger)' }}>*</span>}
       </span>
       {children}
-      {hint && <span className="block text-[11px] text-slate-400 mt-1">{hint}</span>}
+      {hint && <span className="block text-[11px] mt-1" style={{ color: 'var(--ink-3)' }}>{hint}</span>}
     </label>
   )
 }

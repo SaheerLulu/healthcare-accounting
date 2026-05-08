@@ -64,7 +64,7 @@ export default function VoucherTypesPage() {
           </div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-100">
+            <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
               <tr>
                 <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Name</th>
                 <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Base Type</th>
@@ -76,7 +76,7 @@ export default function VoucherTypesPage() {
             </thead>
             <tbody>
               {profiles.map((p) => (
-                <tr key={p.id} className="border-b border-slate-100 last:border-0">
+                <tr key={p.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
                   <td className="px-4 py-2.5 font-medium" style={{ color: 'var(--ink)' }}>{p.name}</td>
                   <td className="px-4 py-2.5" style={{ color: 'var(--ink-2)' }}>
                     {p.base_type_display || p.base_type}
@@ -94,13 +94,19 @@ export default function VoucherTypesPage() {
                   <td className="px-2 py-2.5">
                     <div className="flex items-center justify-end gap-1">
                       <button
-                        className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-teal-600"
+                        className="p-1.5 rounded transition-colors"
+                        style={{ color: 'var(--ink-3)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
                         onClick={() => { setEditing(p); setShowForm(true) }}
                       >
                         <Pencil size={13} />
                       </button>
                       <button
-                        className="p-1.5 hover:bg-slate-100 rounded text-slate-400 hover:text-rose-600"
+                        className="p-1.5 rounded transition-colors"
+                        style={{ color: 'var(--ink-3)' }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--danger)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
                         onClick={() => remove(p)}
                       >
                         <Trash2 size={13} />
@@ -193,7 +199,8 @@ function ProfileForm({ open, onOpenChange, editing, onSaved }: {
               <select
                 value={baseType}
                 onChange={(e) => setBaseType(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                className="w-full h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+                style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
               >
                 {voucherList.map((v) => (
                   <option key={v.type} value={v.type}>{v.label} ({v.fKey})</option>
@@ -208,7 +215,8 @@ function ProfileForm({ open, onOpenChange, editing, onSaved }: {
                 <select
                   value={numbering}
                   onChange={(e) => setNumbering(e.target.value as 'AUTO' | 'MANUAL')}
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white"
+                  className="w-full h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+                style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
                 >
                   <option value="AUTO">Auto</option>
                   <option value="MANUAL">Manual</option>
@@ -228,7 +236,7 @@ function ProfileForm({ open, onOpenChange, editing, onSaved }: {
                 Active
               </label>
             </div>
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 mt-4">
+            <div className="flex justify-end gap-2 pt-3 border-t mt-4" style={{ borderColor: 'var(--line)' }}>
               <Button type="button" variant="secondary" onClick={() => onOpenChange(false)} disabled={saving}>
                 Cancel
               </Button>
@@ -246,11 +254,11 @@ function ProfileForm({ open, onOpenChange, editing, onSaved }: {
 function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-slate-600 mb-1">
-        {label} {required && <span className="text-rose-500">*</span>}
+      <span className="block text-xs font-medium mb-1" style={{ color: 'var(--ink-2)' }}>
+        {label} {required && <span style={{ color: 'var(--danger)' }}>*</span>}
       </span>
       {children}
-      {hint && <span className="block text-[11px] text-slate-400 mt-1">{hint}</span>}
+      {hint && <span className="block text-[11px] mt-1" style={{ color: 'var(--ink-3)' }}>{hint}</span>}
     </label>
   )
 }
