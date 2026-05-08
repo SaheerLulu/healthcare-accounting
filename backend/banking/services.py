@@ -369,6 +369,39 @@ def mark_cheque_bounced(cheque, *, reason: str = '', bank_charge=None,
                 bp.bill.status = bp.bill.recalc_status()
                 bp.bill.save(update_fields=['amount_paid', 'status', 'updated_at'])
 
+    # Bounce charge — every minute activity must hit a JV.
+    # Dr Bank Charges (5450) / Cr Bank — for bank-deducted bounce fees.
+    if cheque.bounce_charge and cheque.bounce_charge > 0:
+        from core.models import AccountMapping
+        try:
+            bank_charges_acct = AccountMapping.get_account('BANK_CHARGES')
+            bank_acct = (cheque.bank_account.chart_account
+                         if cheque.bank_account_id and cheque.bank_account.chart_account_id
+                         else AccountMapping.get_account('BANK'))
+        except (ValueError, AttributeError):
+            bank_charges_acct = None
+            bank_acct = None
+        if bank_charges_acct and bank_acct:
+            charge_je = JournalEntry.objects.create(
+                date=date_cls.today(),
+                narration=f'Bounce charge for cheque {cheque.cheque_no}',
+                voucher_type='PAYMENT',
+                reference_type='Manual',
+                location_id=cheque.journal_entry.location_id if cheque.journal_entry_id else None,
+                created_by=user,
+            )
+            JournalEntryLine.objects.create(
+                entry=charge_je, account=bank_charges_acct,
+                debit=cheque.bounce_charge, credit=Decimal('0'),
+                narration=f'Bounce charge — cheque {cheque.cheque_no}',
+            )
+            JournalEntryLine.objects.create(
+                entry=charge_je, account=bank_acct,
+                debit=Decimal('0'), credit=cheque.bounce_charge,
+                narration=f'Bounce charge — cheque {cheque.cheque_no}',
+            )
+            charge_je.post()
+
     cheque.save(update_fields=['status', 'bounce_reason', 'bounce_charge',
                                'bounce_journal_entry', 'updated_at'])
     return cheque

@@ -2213,6 +2213,22 @@ export async function postBadDebtsProvision(payload: { as_of?: string; location_
   return res.data
 }
 
+// ─── Closing-Stock Reconciliation ───────────────────────────────────────────
+
+export interface ClosingStockRecon {
+  as_of: string
+  books_closing_stock: string
+  inventory_value: string
+  variance: string
+  recommended_jv_value: string
+  note?: string
+}
+
+export async function getClosingStockRecon(params?: { as_of?: string }) {
+  const res = await api.get('/reports/closing-stock-recon/', { params })
+  return res.data as ClosingStockRecon
+}
+
 // ─── Tally: Cost Categories & Cost Centres ──────────────────────────────────
 
 export interface CostCategory {

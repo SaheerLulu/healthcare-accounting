@@ -8,6 +8,7 @@ import GatewayPage from './pages/GatewayPage'
 import SetupChecklistPage from './pages/SetupChecklistPage'
 import CostCentresPage from './pages/CostCentresPage'
 import VoucherTypesPage from './pages/VoucherTypesPage'
+import ActivityMapPage from './pages/ActivityMapPage'
 import AccountsPage from './pages/AccountsPage'
 import JournalsPage from './pages/JournalsPage'
 import JournalEditorPage from './pages/journals/JournalEditorPage'
@@ -156,6 +157,7 @@ export default function App() {
           <Route path="setup" element={<SetupChecklistPage />} />
           <Route path="cost-centres" element={<CostCentresPage />} />
           <Route path="voucher-types" element={<VoucherTypesPage />} />
+          <Route path="activity-map" element={<ActivityMapPage />} />
           {/* Wave 6 — new pages */}
           <Route path="fixed-assets" element={<FixedAssetsPage />} />
           <Route path="loans" element={<LoansPage />} />

@@ -82,7 +82,7 @@ LEAVES = [
     ('2110', 'Trade Payables',                 'LIABILITY', 'Payable',           '2105', 'TRADE_PAYABLES'),
     ('2111', 'Creditors for Expenses',         'LIABILITY', 'Payable',           '2105', None),
     ('2112', 'Creditors for Capital Goods',    'LIABILITY', 'Payable',           '2105', None),
-    ('2113', 'Cheques Issued (Outstanding)',   'LIABILITY', 'Payable',           '2105', None),
+    ('2113', 'Cheques Issued (Outstanding)',   'LIABILITY', 'Payable',           '2105', 'CHEQUES_OUTSTANDING'),
 
     # ── Current Liabilities → Duties & Taxes (2115) ────────────────────────
     ('2120', 'Output CGST',                    'LIABILITY', 'Output_GST',        '2115', 'OUTPUT_CGST'),
@@ -110,7 +110,7 @@ LEAVES = [
     ('2200', 'Net Salary Payable',             'LIABILITY', 'Payable',           '2165', 'NET_SALARY_PAYABLE'),
 
     # ── Other Current Liabilities (2195) ───────────────────────────────────
-    ('2196', 'Customer Advances',              'LIABILITY', 'Payable',           '2195', None),
+    ('2196', 'Customer Advances',              'LIABILITY', 'Payable',           '2195', 'CUSTOMER_ADVANCE'),
     ('2197', 'Audit Fees Payable',             'LIABILITY', 'Payable',           '2195', None),
     ('2198', 'Rent Payable',                   'LIABILITY', 'Payable',           '2195', None),
     ('2199', 'Utility Bills Payable',          'LIABILITY', 'Payable',           '2195', None),
@@ -146,8 +146,8 @@ LEAVES = [
     ('1194', 'Stock - Medical Disposables',    'ASSET',     'Other_Income',      '1180', None),
 
     # ── Loans & Advances (1300) ────────────────────────────────────────────
-    ('1310', 'Advance to Suppliers',           'ASSET',     'Receivable',        '1300', None),
-    ('1320', 'Advance to Employees',           'ASSET',     'Receivable',        '1300', None),
+    ('1310', 'Advance to Suppliers',           'ASSET',     'Receivable',        '1300', 'SUPPLIER_ADVANCE'),
+    ('1320', 'Advance to Employees',           'ASSET',     'Receivable',        '1300', 'STAFF_ADVANCE'),
     ('1330', 'Salary Advance',                 'ASSET',     'Receivable',        '1300', None),
     ('1340', 'Security Deposits',              'ASSET',     'Receivable',        '1300', None),
     ('1350', 'Rent Deposit',                   'ASSET',     'Receivable',        '1300', None),
@@ -201,13 +201,13 @@ LEAVES = [
     ('4340', 'Sales - Insurance Settlement',   'REVENUE',   'Sales',             '4000', None),
     # Contra-revenue (debit reduces sales)
     ('5200', 'Sales Returns',                  'REVENUE',   'Other_Expense',     '4000', 'SALES_RETURNS'),
-    ('5210', 'Discount Allowed',               'REVENUE',   'Other_Expense',     '4000', None),
+    ('5210', 'Discount Allowed',               'REVENUE',   'Other_Expense',     '4000', 'DISCOUNT_ALLOWED'),
 
     # ── Direct Income (4500) ───────────────────────────────────────────────
     ('4510', 'Other Operating Income',         'REVENUE',   'Other_Income',      '4500', None),
 
     # ── Indirect Income (4900) ─────────────────────────────────────────────
-    ('4910', 'Interest Received',              'REVENUE',   'Other_Income',      '4900', None),
+    ('4910', 'Interest Received',              'REVENUE',   'Other_Income',      '4900', 'INTEREST_INCOME'),
     ('4920', 'Discount Received',              'REVENUE',   'Other_Income',      '4900', None),
     ('4930', 'Commission Received',            'REVENUE',   'Other_Income',      '4900', None),
     ('4940', 'Rental Income',                  'REVENUE',   'Other_Income',      '4900', None),
@@ -222,7 +222,7 @@ LEAVES = [
     ('5140', 'Purchases - Equipment Spares',   'EXPENSE',   'Purchases',         '5000', None),
     # Contra-expense (credit reduces purchases)
     ('5300', 'Purchase Returns',               'EXPENSE',   'Purchases',         '5000', 'PURCHASE_RETURNS'),
-    ('5310', 'Discount Received (P&L)',        'EXPENSE',   'Other_Income',      '5000', None),
+    ('5310', 'Discount Received (P&L)',        'EXPENSE',   'Other_Income',      '5000', 'DISCOUNT_RECEIVED'),
 
     # ── Direct Expenses (5500) ─────────────────────────────────────────────
     ('5510', 'Carriage Inward',                'EXPENSE',   'Other_Expense',     '5500', None),
@@ -237,7 +237,7 @@ LEAVES = [
     ('5401', 'Salary - Doctors / Consultants', 'EXPENSE',   'Other_Expense',     '5700', None),
     ('5402', 'Salary - Pharmacy Staff',        'EXPENSE',   'Other_Expense',     '5700', None),
     ('5403', 'Salary - Lab / Diagnostics',     'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5404', 'Staff Welfare',                  'EXPENSE',   'Other_Expense',     '5700', None),
+    ('5404', 'Staff Welfare',                  'EXPENSE',   'Other_Expense',     '5700', 'STAFF_WELFARE'),
     ('5405', 'PF Employer Contribution',       'EXPENSE',   'Other_Expense',     '5700', None),
     ('5406', 'ESI Employer Contribution',      'EXPENSE',   'Other_Expense',     '5700', None),
     ('5407', 'Bonus & Incentives',             'EXPENSE',   'Other_Expense',     '5700', None),
@@ -248,35 +248,35 @@ LEAVES = [
     ('5410', 'Rent Expense',                   'EXPENSE',   'Other_Expense',     '5700', 'RENT_EXPENSE'),
     ('5420', 'Electricity Expense',            'EXPENSE',   'Other_Expense',     '5700', 'ELECTRICITY_EXPENSE'),
     ('5421', 'Water & Sewerage',               'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5422', 'Internet & Telephone',           'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5423', 'Office Maintenance',             'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5424', 'Repairs & Maintenance',          'EXPENSE',   'Other_Expense',     '5700', None),
+    ('5422', 'Internet & Telephone',           'EXPENSE',   'Other_Expense',     '5700', 'INTERNET_TELEPHONE'),
+    ('5423', 'Office Maintenance',             'EXPENSE',   'Other_Expense',     '5700', 'OFFICE_MAINTENANCE'),
+    ('5424', 'Repairs & Maintenance',          'EXPENSE',   'Other_Expense',     '5700', 'REPAIRS_MAINTENANCE'),
     ('5425', 'Repairs - Medical Equipment',    'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5426', 'AMC Charges',                    'EXPENSE',   'Other_Expense',     '5700', None),
+    ('5426', 'AMC Charges',                    'EXPENSE',   'Other_Expense',     '5700', 'AMC_CHARGES'),
     ('5427', 'Cleaning & Housekeeping',        'EXPENSE',   'Other_Expense',     '5700', None),
     ('5428', 'Security Charges',               'EXPENSE',   'Other_Expense',     '5700', None),
 
     # ── Indirect Expenses — Operations ─────────────────────────────────────
-    ('5430', 'Insurance',                      'EXPENSE',   'Other_Expense',     '5700', None),
+    ('5430', 'Insurance',                      'EXPENSE',   'Other_Expense',     '5700', 'INSURANCE_EXPENSE'),
     ('5431', 'Insurance - Vehicle',            'EXPENSE',   'Other_Expense',     '5700', None),
     ('5432', 'Insurance - Liability',          'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5440', 'Professional Fees',              'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5441', 'Doctor / Consultant Fees',       'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5442', 'Audit Fees',                     'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5443', 'Legal Fees',                     'EXPENSE',   'Other_Expense',     '5700', None),
+    ('5440', 'Professional Fees',              'EXPENSE',   'Other_Expense',     '5700', 'PROFESSIONAL_FEES'),
+    ('5441', 'Doctor / Consultant Fees',       'EXPENSE',   'Other_Expense',     '5700', 'DOCTOR_FEES'),
+    ('5442', 'Audit Fees',                     'EXPENSE',   'Other_Expense',     '5700', 'AUDIT_FEES'),
+    ('5443', 'Legal Fees',                     'EXPENSE',   'Other_Expense',     '5700', 'LEGAL_FEES'),
     ('5444', 'Consultancy Fees',               'EXPENSE',   'Other_Expense',     '5700', None),
 
     # ── Indirect Expenses — Bank, Tax, Discount ────────────────────────────
-    ('5450', 'Bank Charges',                   'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5451', 'Interest on Loans',              'EXPENSE',   'Other_Expense',     '5700', None),
+    ('5450', 'Bank Charges',                   'EXPENSE',   'Other_Expense',     '5700', 'BANK_CHARGES'),
+    ('5451', 'Interest on Loans',              'EXPENSE',   'Other_Expense',     '5700', 'INTEREST_EXPENSE'),
     ('5452', 'Interest on OD/CC',              'EXPENSE',   'Other_Expense',     '5700', None),
     ('5453', 'Loan Processing Fees',           'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5454', 'GST Late Fee Expense',           'EXPENSE',   'Other_Expense',     '5700', None),
+    ('5454', 'GST Late Fee Expense',           'EXPENSE',   'Other_Expense',     '5700', 'GST_LATE_FEE'),
     ('5455', 'Income Tax Expense',             'EXPENSE',   'Other_Expense',     '5700', None),
 
     # ── Indirect Expenses — Office / G&A ───────────────────────────────────
-    ('5460', 'Printing & Stationery',          'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5461', 'Postage & Courier',              'EXPENSE',   'Other_Expense',     '5700', None),
+    ('5460', 'Printing & Stationery',          'EXPENSE',   'Other_Expense',     '5700', 'PRINTING_STATIONERY'),
+    ('5461', 'Postage & Courier',              'EXPENSE',   'Other_Expense',     '5700', 'POSTAGE_COURIER'),
     ('5462', 'Software Subscriptions',         'EXPENSE',   'Other_Expense',     '5700', None),
     ('5463', 'License & Renewal Fees',         'EXPENSE',   'Other_Expense',     '5700', None),
     ('5464', 'Drug License Fees',              'EXPENSE',   'Other_Expense',     '5700', None),
@@ -285,13 +285,13 @@ LEAVES = [
     # ── Indirect Expenses — Sales & Marketing ──────────────────────────────
     ('5470', 'Advertising & Marketing',        'EXPENSE',   'Other_Expense',     '5700', None),
     ('5471', 'Sales Promotion',                'EXPENSE',   'Other_Expense',     '5700', None),
-    ('5472', 'Travel & Conveyance',            'EXPENSE',   'Other_Expense',     '5700', None),
+    ('5472', 'Travel & Conveyance',            'EXPENSE',   'Other_Expense',     '5700', 'TRAVEL_CONVEYANCE'),
     ('5473', 'Vehicle Running & Fuel',         'EXPENSE',   'Other_Expense',     '5700', None),
     ('5474', 'Donation & CSR',                 'EXPENSE',   'Other_Expense',     '5700', None),
 
     # ── Indirect Expenses — Bad Debts, Depreciation, Misc ──────────────────
     ('5480', 'Bad Debts Written Off',          'EXPENSE',   'Other_Expense',     '5700', 'BAD_DEBTS_EXPENSE'),
-    ('5481', 'Depreciation Expense',           'EXPENSE',   'Other_Expense',     '5700', None),
+    ('5481', 'Depreciation Expense',           'EXPENSE',   'Other_Expense',     '5700', 'DEPRECIATION_EXPENSE'),
     ('5482', 'Loss on Sale of Asset',          'EXPENSE',   'Other_Expense',     '5700', None),
     ('5483', 'Miscellaneous Expense',          'EXPENSE',   'Other_Expense',     '5700', None),
     ('5484', 'Subscriptions & Memberships',    'EXPENSE',   'Other_Expense',     '5700', None),
@@ -299,7 +299,7 @@ LEAVES = [
 
     # ── Suspense / Round-off (6000) ────────────────────────────────────────
     ('6100', 'Round Off',                      'EXPENSE',   'Other_Expense',     '6000', 'ROUND_OFF'),
-    ('6200', 'Suspense Account',               'EXPENSE',   'Other_Expense',     '6000', None),
+    ('6200', 'Suspense Account',               'EXPENSE',   'Other_Expense',     '6000', 'SUSPENSE'),
 ]
 
 

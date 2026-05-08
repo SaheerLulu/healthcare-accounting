@@ -132,6 +132,7 @@ const menuGroups: MenuGroup[] = [
     icon: Ellipsis,
     items: [
       { id: 'setup', label: 'Setup Checklist', to: '/setup' },
+      { id: 'activity-map', label: 'Activity → Account Map', to: '/activity-map' },
       { id: 'sync', label: 'Sync', to: '/sync' },
       { id: 'audit', label: 'Audit Log', to: '/audit' },
       { id: 'settings', label: 'Settings', to: '/settings' },
