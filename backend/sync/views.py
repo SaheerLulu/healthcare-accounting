@@ -23,7 +23,20 @@ class SyncRunView(APIView):
         service = InventorySyncService()
         result = service.sync_all()
         log_action('SYNC', 'SyncLog', '', 'Inventory Sync', request=request, extra=result)
-        return Response({'status': 'success', 'result': result})
+
+        # After a sync, the GL has fresh purchase/sale entries. Auto-post a
+        # closing-stock adjustment per location so 1190 mirrors physical
+        # inventory immediately. Idempotent — no-op when GL already matches.
+        try:
+            from journals.services import auto_close_stock_run
+            cs_result = auto_close_stock_run(
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            cs_result = {'error': str(exc)}
+
+        return Response({'status': 'success', 'result': result,
+                         'closing_stock_sync': cs_result})
 
 
 class SyncLogListView(APIView):

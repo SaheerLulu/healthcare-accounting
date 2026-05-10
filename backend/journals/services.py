@@ -1,6 +1,7 @@
 import logging
 from decimal import Decimal
 from django.db import transaction
+from django.db.models import Sum
 from inventory_reader.models import (
     PurchaseOrderRO,
     POSOrderRO,
@@ -927,3 +928,95 @@ def generate_due_recurring_journals(*, today=None, user=None) -> dict:
             guard += 1
     return {'created': len(created), 'created_details': created, 'errors': errors,
             'today': today.isoformat()}
+
+
+# ─── Auto Closing-Stock (inventory-driven) ──────────────────────────────────
+
+
+def compute_live_inventory_value(as_of, location_id=None):
+    """Replay StockMovementRO × last-purchase-rate (cost proxy) up to `as_of`
+    and return the live inventory ₹ value. Mirrors the calculation used by
+    `reports.ClosingStockReconciliationView` so the auto-post never drifts
+    from the recon view.
+    """
+    from collections import defaultdict
+    from inventory_reader.models import PurchaseOrderLineRO, StockMovementRO
+
+    moves = StockMovementRO.objects.filter(created_at__date__lte=as_of)
+    if location_id is not None:
+        moves = moves.filter(location_id=location_id)
+
+    qty_on_hand = defaultdict(int)
+    for m in moves:
+        delta = m.quantity if m.movement_type not in ('out', 'sale', 'transfer_out') else -abs(m.quantity)
+        qty_on_hand[m.product_id] += delta
+
+    cost_proxy = {
+        row['product_id']: row['rate']
+        for row in PurchaseOrderLineRO.objects
+            .values('product_id')
+            .annotate(rate=Sum('purchase_rate'))
+    }
+    return sum(
+        (Decimal(str(qty_on_hand.get(pid, 0))) * cost_proxy.get(pid, Decimal('0')))
+        for pid in qty_on_hand if qty_on_hand[pid] > 0
+    ) or Decimal('0')
+
+
+def auto_close_stock_run(as_of=None, user=None, narration_prefix='Auto closing-stock sync'):
+    """Post a Closing-Stock JV for every location with a non-zero variance
+    between books (1190 GL) and live inventory.
+
+    Idempotent — `post_closing_stock_adjustment` returns None when the GL is
+    already at the target value, so re-running the same day is safe.
+
+    Returns:
+      {
+        'as_of': '2026-05-10',
+        'created': [{location_id, entry_no, value, delta}, ...],
+        'skipped': [{location_id, reason}, ...],
+        'errors':  [{location_id, error}, ...],
+      }
+    """
+    from datetime import date as _date_cls
+    from inventory_reader.models import LocationRO
+
+    if as_of is None:
+        as_of = _date_cls.today()
+
+    svc = JournalAutoGenerationService()
+    created, skipped, errors = [], [], []
+
+    # Loop over each retail/warehouse location. Skip non-physical (e.g. 'view')
+    # locations via the same heuristic the LocationContext uses on the FE.
+    locations = LocationRO.objects.exclude(usage='view') if hasattr(LocationRO, 'usage') else LocationRO.objects.all()
+    for loc in locations:
+        try:
+            value = compute_live_inventory_value(as_of, loc.id)
+            entry = svc.post_closing_stock_adjustment(
+                date=as_of,
+                value=value,
+                location_id=loc.id,
+                narration=f'{narration_prefix} — {loc.name} ({as_of})',
+                user=user,
+            )
+            if entry is None:
+                skipped.append({'location_id': loc.id, 'location_name': loc.name,
+                                'reason': 'already at target'})
+            else:
+                created.append({
+                    'location_id': loc.id,
+                    'location_name': loc.name,
+                    'entry_no': entry.entry_no,
+                    'value': str(value),
+                })
+        except Exception as exc:  # noqa: BLE001
+            errors.append({'location_id': loc.id, 'location_name': getattr(loc, 'name', '?'),
+                           'error': str(exc)})
+
+    return {
+        'as_of': as_of.isoformat(),
+        'created': created,
+        'skipped': skipped,
+        'errors': errors,
+    }

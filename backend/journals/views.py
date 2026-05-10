@@ -314,6 +314,34 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         return Response(JournalEntrySerializer(entry, context={'request': request}).data,
                         status=status.HTTP_201_CREATED)
 
+    @action(detail=False, methods=['post'], url_path='auto-close-stock')
+    def auto_close_stock(self, request):
+        """Run closing-stock auto-post across every active location.
+
+        Inventory-driven: reads StockMovementRO × last-purchase-rate per
+        location and posts a Closing-Stock JV so GL `1190` matches live
+        inventory. Idempotent — re-runs on the same day are no-ops where GL
+        already matches the live value.
+        """
+        from datetime import date as _d
+        from .services import auto_close_stock_run
+        as_of_str = request.data.get('as_of')
+        as_of = _d.fromisoformat(as_of_str) if as_of_str else _d.today()
+        try:
+            result = auto_close_stock_run(
+                as_of=as_of,
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except Exception as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        log_action(
+            'CREATE', 'JournalEntry', 'batch',
+            f"Auto closing-stock run: posted={len(result['created'])} "
+            f"skipped={len(result['skipped'])} errors={len(result['errors'])}",
+            request=request, extra=result,
+        )
+        return Response(result)
+
     @action(detail=False, methods=['post'], url_path='inventory-adjustment')
     def inventory_adjustment(self, request):
         """Post a shrinkage / damage / count-variance JV with §17(5)(h) ITC reversal."""
