@@ -2188,7 +2188,7 @@ export interface ClosingStockPayload {
   narration?: string
 }
 export async function postClosingStock(payload: ClosingStockPayload) {
-  const res = await api.post('/journals/journal-entries/closing-stock/', payload)
+  const res = await api.post('/journals/entries/closing-stock/', payload)
   return res.data
 }
 
@@ -2201,7 +2201,7 @@ export interface InventoryAdjustmentPayload {
   narration?: string
 }
 export async function postInventoryAdjustment(payload: InventoryAdjustmentPayload) {
-  const res = await api.post('/journals/journal-entries/inventory-adjustment/', payload)
+  const res = await api.post('/journals/entries/inventory-adjustment/', payload)
   return res.data
 }
 
@@ -2213,7 +2213,7 @@ export interface DrugExpiryPayload {
   narration?: string
 }
 export async function postDrugExpiry(payload: DrugExpiryPayload) {
-  const res = await api.post('/journals/journal-entries/drug-expiry/', payload)
+  const res = await api.post('/journals/entries/drug-expiry/', payload)
   return res.data
 }
 
@@ -2225,13 +2225,24 @@ export interface StockTransferPayload {
   narration?: string
 }
 export async function postStockTransfer(payload: StockTransferPayload) {
-  const res = await api.post('/journals/journal-entries/stock-transfer/', payload)
+  const res = await api.post('/journals/entries/stock-transfer/', payload)
   return res.data as { out_entry: any; in_entry: any }
 }
 
 export async function postBadDebtsProvision(payload: { as_of?: string; location_id?: number; narration?: string }) {
-  const res = await api.post('/journals/journal-entries/provision-bad-debts/', payload)
+  const res = await api.post('/journals/entries/provision-bad-debts/', payload)
   return res.data
+}
+
+export async function autoCloseStockAllLocations(as_of?: string) {
+  const res = await api.post('/journals/entries/auto-close-stock/',
+                             as_of ? { as_of } : {})
+  return res.data as {
+    as_of: string
+    created: { location_id: number; location_name: string; entry_no: string; value: string }[]
+    skipped: { location_id: number; location_name: string; reason: string }[]
+    errors: { location_id: number; location_name: string; error: string }[]
+  }
 }
 
 // ─── Closing-Stock Reconciliation ───────────────────────────────────────────
