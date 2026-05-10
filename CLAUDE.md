@@ -36,7 +36,7 @@ npm run build      # TypeScript check + production build
 
 **Settings:** `accounting_project/settings/` — `base.py` (shared), `dev.py`, `prod.py`. Use `DJANGO_SETTINGS_MODULE=accounting_project.settings.dev` for local dev.
 
-**Database:** SQLite, shared with inventory system at `/home/sahee/biloop/healthcare-inventory-management/backend/db.sqlite3`. The `inventory_reader` app uses unmanaged (`managed=False`) read-only proxy models pointing at inventory tables — never write to these.
+**Database:** PostgreSQL, shared with the inventory and dashboard systems. Resolution order in `base.py`: `DATABASE_URL` env var → `POSTGRES_*` env vars → auto-detected defaults (db `healthcare_inv`, user/pass `postgres`/`postgres`, host = WSL2 gateway IP or `localhost`). The `inventory_reader` app uses unmanaged (`managed=False`) read-only proxy models pointing at inventory tables — never write to these.
 
 **JWT Auth:** Shared SECRET_KEY with inventory app for cross-system token compatibility. Tokens: 8h access, 7d refresh with rotation.
 

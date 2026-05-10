@@ -6,6 +6,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
 FRONTEND_DIR="$SCRIPT_DIR/frontend"
 
+echo "Applying database migrations ..."
+(cd "$BACKEND_DIR" && DJANGO_SETTINGS_MODULE=accounting_project.settings.dev \
+  .venv/bin/python manage.py migrate)
+
 echo "Starting Accounting Backend on http://localhost:8001 ..."
 (cd "$BACKEND_DIR" && DJANGO_SETTINGS_MODULE=accounting_project.settings.dev \
   .venv/bin/python manage.py runserver 8001) &
