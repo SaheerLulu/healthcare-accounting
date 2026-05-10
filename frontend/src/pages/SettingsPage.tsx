@@ -4,7 +4,8 @@ import { Loader2, Save, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getSettings, updateSettings, type AccountingSettings,
-  getAccountMappings, updateAccountMapping, resetAccountMappings, type AccountMapping,
+  getAllAccountMappingKeys, updateAccountMapping, createAccountMapping,
+  resetAccountMappings, type AccountMappingKeyRow,
   getChartOfAccounts, type Account,
   getTDSRateConfigs, updateTDSRateConfig, type TDSRateConfig,
 } from '../lib/api'
@@ -102,40 +103,66 @@ function CompanyInfoTab() {
 }
 
 function AccountMappingsTab() {
-  const [mappings, setMappings] = useState<AccountMapping[]>([])
+  const [rows, setRows] = useState<AccountMappingKeyRow[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    Promise.all([getAccountMappings(), getChartOfAccounts()])
-      .then(([m, a]) => { setMappings(m); setAccounts(a) })
-      .catch(() => toast.error('Failed to load mappings'))
-      .finally(() => setLoading(false))
-  }, [])
-
-  async function handleChange(id: number, accountId: number) {
+  async function load() {
+    setLoading(true)
     try {
-      const updated = await updateAccountMapping(id, { account: accountId })
-      setMappings(mappings.map(m => m.id === id ? updated : m))
-      toast.success('Mapping updated')
-    } catch { toast.error('Failed to update mapping') }
+      const [r, a] = await Promise.all([getAllAccountMappingKeys(), getChartOfAccounts()])
+      setRows(r)
+      setAccounts(a)
+    } catch {
+      toast.error('Failed to load mappings')
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { load() }, [])
+
+  async function applyAccount(row: AccountMappingKeyRow, accountId: number) {
+    try {
+      if (row.mapping_id) {
+        await updateAccountMapping(row.mapping_id, { account: accountId })
+      } else {
+        await createAccountMapping({ key: row.key, account: accountId })
+      }
+      // Refresh in place to reflect created mapping_id and labels.
+      await load()
+    } catch {
+      toast.error('Failed to update mapping')
+    }
   }
 
   async function handleReset() {
     try {
       await resetAccountMappings()
-      const m = await getAccountMappings()
-      setMappings(m)
+      await load()
       toast.success('Mappings reset to defaults')
     } catch { toast.error('Failed to reset mappings') }
   }
 
-  if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} /></div>
+  if (loading) return (
+    <div className="flex items-center justify-center h-40">
+      <Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} />
+    </div>
+  )
+
+  const mapped = rows.filter((r) => r.mapping_id !== null)
+  const unmapped = rows.filter((r) => r.mapping_id === null)
 
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-slate-500">Map semantic account keys to your Chart of Accounts.</p>
+        <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
+          Map semantic account keys to your Chart of Accounts.{' '}
+          <span style={{ color: 'var(--ink)' }}>{mapped.length}</span> mapped ·{' '}
+          <span style={{ color: unmapped.length ? 'var(--warning)' : 'var(--ink-3)' }}>
+            {unmapped.length}
+          </span>{' '}
+          unmapped
+        </p>
         <Button onClick={handleReset} variant="secondary" size="sm">
           <RotateCcw size={12} /> Reset Defaults
         </Button>
@@ -143,25 +170,56 @@ function AccountMappingsTab() {
       <Card className="overflow-hidden">
         <Table>
           <Thead>
-            <Tr className="bg-slate-50">
+            <Tr style={{ background: 'var(--surface-1)' }}>
               <Th>Key</Th>
+              <Th>Description</Th>
               <Th>Account</Th>
+              <Th>Status</Th>
             </Tr>
           </Thead>
           <Tbody>
-            {mappings.map((m) => (
-              <Tr key={m.id}>
-                <Td className="font-mono text-xs text-slate-500">{m.key}</Td>
-                <Td>
-                  <select value={m.account} onChange={(e) => handleChange(m.id, Number(e.target.value))}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
-                    {accounts.map((acc) => (
-                      <option key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</option>
-                    ))}
-                  </select>
-                </Td>
-              </Tr>
-            ))}
+            {rows.map((row) => {
+              const isMapped = row.mapping_id !== null
+              return (
+                <Tr key={row.key}>
+                  <Td className="font-mono text-xs" style={{ color: 'var(--ink-2)' }}>{row.key}</Td>
+                  <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{row.label}</Td>
+                  <Td>
+                    <select
+                      value={row.account ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        if (v) applyAccount(row, Number(v))
+                      }}
+                      className="w-full h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+                      style={{
+                        backgroundColor: 'var(--surface-0)',
+                        borderColor: isMapped ? 'var(--line)' : 'var(--warning)',
+                        color: 'var(--ink)',
+                      }}
+                    >
+                      {!isMapped && (
+                        <option value="">
+                          — Not mapped{row.default_code ? ` (suggested: ${row.default_code})` : ''} —
+                        </option>
+                      )}
+                      {accounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.account_code} — {acc.account_name}
+                        </option>
+                      ))}
+                    </select>
+                  </Td>
+                  <Td>
+                    {isMapped ? (
+                      <Badge variant="success">Mapped</Badge>
+                    ) : (
+                      <Badge variant="warning">Not mapped</Badge>
+                    )}
+                  </Td>
+                </Tr>
+              )
+            })}
           </Tbody>
         </Table>
       </Card>

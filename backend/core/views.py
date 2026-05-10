@@ -169,6 +169,27 @@ class AccountMappingViewSet(viewsets.ModelViewSet):
         log_action('UPDATE', 'AccountMapping', 'all', 'Reset account mappings', request=request)
         return Response({'detail': f'Mappings reset. {created} new mappings created.'})
 
+    @action(detail=False, methods=['get'], url_path='all-keys')
+    def all_keys(self, request):
+        """Return every defined mapping key + its display label + the
+        existing AccountMapping row (if any). Lets the Settings page show
+        unmapped keys with a "Map to..." dropdown rather than hiding them.
+        """
+        existing = {m.key: m for m in AccountMapping.objects.select_related('account').all()}
+        rows = []
+        for key, label in AccountMapping.KEY_CHOICES:
+            m = existing.get(key)
+            rows.append({
+                'key': key,
+                'label': label,
+                'default_code': AccountMapping.DEFAULT_CODES.get(key),
+                'mapping_id': m.pk if m else None,
+                'account': m.account_id if m else None,
+                'account_code': m.account.account_code if m else None,
+                'account_name': m.account.account_name if m else None,
+            })
+        return Response(rows)
+
 
 def _get_fy_dates():
     settings = AccountingSettings.get_settings()

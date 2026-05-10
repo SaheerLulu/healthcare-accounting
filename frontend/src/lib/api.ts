@@ -137,8 +137,28 @@ export async function getAccountMappings() {
   return res.data as AccountMapping[]
 }
 
+export interface AccountMappingKeyRow {
+  key: string
+  label: string
+  default_code: string | null
+  mapping_id: number | null
+  account: number | null
+  account_code: string | null
+  account_name: string | null
+}
+
+export async function getAllAccountMappingKeys() {
+  const res = await api.get('/accounts/account-mappings/all-keys/')
+  return res.data as AccountMappingKeyRow[]
+}
+
 export async function updateAccountMapping(id: number, data: { account: number }) {
   const res = await api.patch(`/accounts/account-mappings/${id}/`, data)
+  return res.data as AccountMapping
+}
+
+export async function createAccountMapping(data: { key: string; account: number }) {
+  const res = await api.post('/accounts/account-mappings/', data)
   return res.data as AccountMapping
 }
 
