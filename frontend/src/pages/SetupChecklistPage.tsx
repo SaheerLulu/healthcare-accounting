@@ -139,6 +139,17 @@ export default function SetupChecklistPage() {
         fix: { label: 'Open Banking', to: '/banking' },
         required: true,
       },
+      {
+        id: 'stock-method',
+        label: 'Stock accounting method',
+        description: settings.stock_method === 'perpetual'
+          ? 'Perpetual — purchases hit 1190 Closing Stock and COGS posts per sale'
+          : 'Periodic — purchases hit 5100; closing stock posted at period end (Tally default)',
+        ok: true,
+        detail: settings.stock_method === 'perpetual' ? 'Perpetual' : 'Periodic',
+        fix: { label: 'Change in Settings', to: '/settings' },
+        required: false,
+      },
     ]
   }, [settings, mappings, banks])
 

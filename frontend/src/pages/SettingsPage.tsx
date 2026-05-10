@@ -43,7 +43,7 @@ function CompanyInfoTab() {
     } catch { toast.error('Failed to save settings') } finally { setSaving(false) }
   }
 
-  if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin text-teal-600" /></div>
+  if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} /></div>
 
   return (
     <Card className="p-6">
@@ -53,10 +53,12 @@ function CompanyInfoTab() {
             const isAddress = key === 'registered_address'
             return (
               <div key={key} className={isAddress ? 'sm:col-span-2' : ''}>
-                <label className="block text-xs font-medium text-slate-500 mb-1.5">{label}</label>
+                <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>{label}</label>
                 {isAddress ? (
                   <textarea {...register(key)} rows={3} placeholder={placeholder}
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none" />
+                    className="w-full px-3 py-2 text-sm border rounded-lg outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)] resize-none"
+                    style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+                  />
                 ) : (
                   <Input {...register(key)} type={type || 'text'} placeholder={placeholder} />
                 )}
@@ -64,8 +66,31 @@ function CompanyInfoTab() {
             )
           })}
         </div>
-        <div className="flex items-center justify-between pt-2 border-t border-slate-200">
-          {isDirty ? <p className="text-xs text-amber-600 font-medium">You have unsaved changes</p> : <p className="text-xs text-slate-400">All changes saved</p>}
+
+        {/* Stock method — controls how inventory hits the GL */}
+        <div className="border-t pt-5" style={{ borderColor: 'var(--line)' }}>
+          <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>
+            Stock Accounting Method
+          </label>
+          <select
+            {...register('stock_method')}
+            className="w-full sm:w-1/2 h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+            style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+          >
+            <option value="periodic">Periodic — purchases → 5100 Purchases; closing stock at period-end (Tally default)</option>
+            <option value="perpetual">Perpetual — purchases → 1190 Closing Stock; COGS posted per sale</option>
+          </select>
+          <p className="text-[11px] mt-1.5" style={{ color: 'var(--ink-3)' }}>
+            Switching mid-stream affects only future entries. Posted JVs are not retroactively recoded.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: 'var(--line)' }}>
+          {isDirty ? (
+            <p className="text-xs font-medium" style={{ color: 'var(--warning)' }}>You have unsaved changes</p>
+          ) : (
+            <p className="text-xs" style={{ color: 'var(--ink-3)' }}>All changes saved</p>
+          )}
           <Button type="submit" disabled={saving || !isDirty} variant="primary">
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             {saving ? 'Saving...' : 'Save Settings'}
@@ -105,7 +130,7 @@ function AccountMappingsTab() {
     } catch { toast.error('Failed to reset mappings') }
   }
 
-  if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin text-teal-600" /></div>
+  if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} /></div>
 
   return (
     <div>
@@ -159,7 +184,7 @@ function TDSRatesTab() {
     } catch { toast.error('Failed to update rate') }
   }
 
-  if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin text-teal-600" /></div>
+  if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} /></div>
 
   return (
     <Card className="overflow-hidden">

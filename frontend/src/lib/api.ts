@@ -1813,6 +1813,7 @@ export interface AccountingSettings {
   financial_year_start: string
   is_fy_closed: boolean
   last_closed_fy: string
+  stock_method?: 'periodic' | 'perpetual'
 }
 
 export async function getSettings() {

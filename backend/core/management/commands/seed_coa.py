@@ -230,7 +230,7 @@ LEAVES = [
     ('5530', 'Power & Fuel',                   'EXPENSE',   'Other_Expense',     '5500', None),
     ('5540', 'Inventory Loss / Shrinkage',     'EXPENSE',   'Other_Expense',     '5500', 'INVENTORY_LOSS'),
     ('5550', 'Expired Stock Write-off',        'EXPENSE',   'Other_Expense',     '5500', 'EXPIRY_LOSS'),
-    ('5560', 'Pharmacy COGS Adjustment',       'EXPENSE',   'Other_Expense',     '5500', None),
+    ('5560', 'Cost of Goods Sold',             'EXPENSE',   'Other_Expense',     '5500', 'COGS'),
 
     # ── Indirect Expenses (5700) — Personnel ────────────────────────────────
     ('5400', 'Salary Expense',                 'EXPENSE',   'Other_Expense',     '5700', 'SALARY_EXPENSE'),

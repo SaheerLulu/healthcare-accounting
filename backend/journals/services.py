@@ -45,6 +45,71 @@ class JournalAutoGenerationService:
             self._settings.state_code,
         )
 
+    def _is_perpetual(self):
+        """True when AccountingSettings.stock_method == 'perpetual'.
+        In perpetual mode, purchases hit Closing Stock directly and each sale
+        posts a COGS pair (Dr COGS / Cr Closing Stock) at the line's avg cost.
+        """
+        return getattr(self._settings, 'stock_method', 'periodic') == 'perpetual'
+
+    def _purchase_dr_acct(self):
+        """Dr account for the goods cost on a purchase JV.
+        Perpetual: Closing Stock (1190). Periodic: Purchases (5100).
+        """
+        return self._acct('CLOSING_STOCK' if self._is_perpetual() else 'PURCHASES')
+
+    def _purchase_return_cr_acct(self):
+        """Cr account when goods leave on a purchase return JV.
+        Perpetual: Closing Stock. Periodic: Purchase Returns (5300).
+        """
+        return self._acct('CLOSING_STOCK' if self._is_perpetual() else 'PURCHASE_RETURNS')
+
+    def _product_avg_cost(self, product_id):
+        """Weighted-average purchase rate per unit, in ₹.
+        Used by perpetual mode to value COGS at sale time. Returns 0 if the
+        product has never been purchased through the system.
+        """
+        from django.db.models import Avg
+        from inventory_reader.models import PurchaseOrderLineRO
+        agg = PurchaseOrderLineRO.objects.filter(product_id=product_id).aggregate(
+            avg=Avg('purchase_rate'),
+        )
+        return Decimal(str(agg['avg'] or 0))
+
+    def _post_perpetual_cogs(self, *, entry, lines, location_id=None):
+        """Post the Dr COGS / Cr Closing Stock pair for a perpetual sale.
+
+        `lines` is an iterable of objects exposing `.product_id` and a quantity
+        attribute (`.quantity`). Returns the total COGS posted (or zero when
+        in periodic mode or when no costed lines exist).
+        """
+        if not self._is_perpetual():
+            return Decimal('0')
+        cogs_acct = self._accounts.get('COGS')
+        stock_acct = self._accounts.get('CLOSING_STOCK')
+        if not cogs_acct or not stock_acct:
+            return Decimal('0')
+        total = Decimal('0')
+        for line in lines:
+            qty = Decimal(str(getattr(line, 'quantity', 0) or 0))
+            if qty <= 0:
+                continue
+            cost = self._product_avg_cost(line.product_id)
+            value = (qty * cost).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            if value <= 0:
+                continue
+            total += value
+        if total > 0:
+            JournalEntryLine.objects.create(
+                entry=entry, account=cogs_acct, debit=total,
+                narration='COGS — perpetual',
+            )
+            JournalEntryLine.objects.create(
+                entry=entry, account=stock_acct, credit=total,
+                narration='Stock relieved — perpetual',
+            )
+        return total
+
     @transaction.atomic
     def generate_purchase(self, po_id):
         """Generate journal entry for a purchase order with proper IGST support."""
@@ -115,7 +180,9 @@ class JournalAutoGenerationService:
         )
 
         if total_purchases > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('PURCHASES'), debit=total_purchases)
+            JournalEntryLine.objects.create(
+                entry=entry, account=self._purchase_dr_acct(), debit=total_purchases,
+            )
         if cgst_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST'), debit=cgst_amount)
         if sgst_amount > 0:
@@ -231,6 +298,11 @@ class JournalAutoGenerationService:
                 else:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(diff))
 
+        # Perpetual mode: relieve stock and post COGS in the same JE.
+        self._post_perpetual_cogs(
+            entry=entry, lines=pos.lines.all(), location_id=pos.location_id,
+        )
+
         entry.post()
         return entry
 
@@ -306,6 +378,11 @@ class JournalAutoGenerationService:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, credit=diff)
                 else:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(diff))
+
+        # Perpetual mode: relieve stock and post COGS in the same JE.
+        self._post_perpetual_cogs(
+            entry=entry, lines=order.lines.all(), location_id=order.location_id,
+        )
 
         entry.post()
         return entry
@@ -398,6 +475,30 @@ class JournalAutoGenerationService:
                 else:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(diff))
 
+        # Perpetual mode: stock comes back in, reverse COGS.
+        if self._is_perpetual():
+            cogs_acct = self._accounts.get('COGS')
+            stock_acct = self._accounts.get('CLOSING_STOCK')
+            if cogs_acct and stock_acct:
+                cogs_total = Decimal('0')
+                for line in ret.lines.all():
+                    qty = Decimal(str(getattr(line, 'quantity', 0) or 0))
+                    if qty <= 0:
+                        continue
+                    cost = self._product_avg_cost(line.product_id)
+                    value = (qty * cost).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                    if value > 0:
+                        cogs_total += value
+                if cogs_total > 0:
+                    JournalEntryLine.objects.create(
+                        entry=entry, account=stock_acct, debit=cogs_total,
+                        narration='Stock returned — perpetual',
+                    )
+                    JournalEntryLine.objects.create(
+                        entry=entry, account=cogs_acct, credit=cogs_total,
+                        narration='COGS reversed — perpetual',
+                    )
+
         entry.post()
         return entry
 
@@ -466,10 +567,12 @@ class JournalAutoGenerationService:
                 party_type='Supplier',
                 party_id=ret.supplier_id,
             )
-        # Credit: Purchase Returns (contra-expense)
-        purchase_returns_ac = self._accounts.get('PURCHASE_RETURNS')
-        if purchase_returns_ac and taxable_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=purchase_returns_ac, credit=taxable_amount)
+        # Credit: Purchase Returns (contra-expense) in periodic, or Closing
+        # Stock directly in perpetual mode (we never debited Purchases on the
+        # original purchase, so we don't credit Purchase Returns now either).
+        cr_acct = self._purchase_return_cr_acct()
+        if cr_acct and taxable_amount > 0:
+            JournalEntryLine.objects.create(entry=entry, account=cr_acct, credit=taxable_amount)
         # Credit: Reverse ITC
         if cgst_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST'), credit=cgst_amount)

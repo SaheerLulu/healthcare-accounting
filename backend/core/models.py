@@ -17,6 +17,15 @@ class AccountingSettings(models.Model):
         help_text='Bills above this amount require approval before posting. '
                   '0 = no approval required (default).',
     )
+    STOCK_METHOD_CHOICES = [
+        ('periodic', 'Periodic (purchases → 5100; closing stock at period end)'),
+        ('perpetual', 'Perpetual (purchases → 1190; COGS posted per sale)'),
+    ]
+    stock_method = models.CharField(
+        max_length=10, choices=STOCK_METHOD_CHOICES, default='periodic',
+        help_text='How inventory hits the GL. Periodic is Tally default; '
+                  'perpetual posts stock + COGS in real time.',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -181,6 +190,7 @@ class AccountMapping(models.Model):
         ('CUSTOMER_ADVANCE', 'Customer Advance Received'),
         ('CHEQUES_OUTSTANDING', 'Cheques Issued (Outstanding)'),
         ('SUSPENSE', 'Suspense Account'),
+        ('COGS', 'Cost of Goods Sold (perpetual mode)'),
     ]
 
     # Default mapping from key to account_code for data migration. These map
@@ -247,6 +257,7 @@ class AccountMapping(models.Model):
         'CUSTOMER_ADVANCE': '2196',
         'CHEQUES_OUTSTANDING': '2113',
         'SUSPENSE': '6200',
+        'COGS': '5560',
     }
 
     key = models.CharField(max_length=30, unique=True, choices=KEY_CHOICES)
