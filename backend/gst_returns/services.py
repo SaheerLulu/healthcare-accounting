@@ -1,5 +1,5 @@
 import logging
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import date
 from django.db import transaction
 from django.db.models import Sum, F
@@ -8,10 +8,13 @@ from inventory_reader.models import (
     POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseOrderRO
 )
 from core.models import AccountingSettings
-from core.gst_utils import compute_tax_split, detect_supply_type, back_calculate_taxable
+from core.gst_utils import (
+    compute_tax_split, detect_supply_type, back_calculate_taxable,
+    state_name_to_code,
+)
 from .models import (
     GSTR1Entry, GSTR1HSNSummary, GSTR3BSummary,
-    GSTR2BEntry, ITCReconciliation,
+    GSTR2BEntry, ITCReconciliation, RCMEntry,
 )
 
 logger = logging.getLogger('gst_returns')
@@ -22,11 +25,12 @@ class GSTR1Generator:
     def __init__(self):
         self._settings = AccountingSettings.get_settings()
 
-    def _get_supply_type(self, counterparty_gstin):
+    def _get_supply_type(self, counterparty_gstin, counterparty_state_code=''):
         return detect_supply_type(
             self._settings.gstin,
             counterparty_gstin,
             self._settings.state_code,
+            counterparty_state_code,
         )
 
     def generate(self, period: str, location_id: int):
@@ -64,46 +68,67 @@ class GSTR1Generator:
         ).prefetch_related('lines')
 
         for pos in pos_orders:
-            # Aggregate per line — header gst_percent is unreliable (0 in source data).
-            taxable_base = Decimal('0.00')
-            tax_total = Decimal('0.00')
-            line_rate_set = set()
-            for line in pos.lines.all():
-                line_total = Decimal(str(line.line_total or 0))
-                line_taxable = back_calculate_taxable(line_total, line.tax_percent)
-                taxable_base += line_taxable
-                tax_total += line_total - line_taxable
-                line_rate_set.add(line.tax_percent)
-            taxable_base = taxable_base.quantize(Decimal('0.01'))
-            tax_total = tax_total.quantize(Decimal('0.01'))
-            # Effective rate: single rate if homogeneous, else recover from totals.
-            gst_rate = next(iter(line_rate_set)) if len(line_rate_set) == 1 else (
-                (tax_total * Decimal('100') / taxable_base).quantize(Decimal('0.01'))
-                if taxable_base else Decimal('0.00')
-            )
-
+            # Resolve customer + supply_type *first* so per-line splits agree
+            # with the supply_type used by the JE generator.
             supply_type = 'intra_state'
             customer_gstin = ''
-            pos_code = ''
+            customer_state_code = ''
+            pos_code = self._settings.state_code
             if pos.customer_id:
                 try:
                     from inventory_reader.models import CustomerRO
                     customer = CustomerRO.objects.get(id=pos.customer_id)
                     customer_gstin = customer.gst_no or ''
-                    if customer_gstin:
-                        supply_type = self._get_supply_type(customer_gstin)
-                    pos_code = customer_gstin[:2] if customer_gstin else self._settings.state_code
+                    customer_state_code = state_name_to_code(customer.state or '')
+                    supply_type = self._get_supply_type(
+                        customer_gstin, customer_state_code,
+                    )
+                    pos_code = (
+                        customer_gstin[:2] if customer_gstin else
+                        customer_state_code or self._settings.state_code
+                    )
                 except Exception:
                     pos_code = self._settings.state_code
-            else:
-                pos_code = self._settings.state_code
 
-            if supply_type == 'inter_state':
-                split = {'cgst': Decimal('0.00'), 'sgst': Decimal('0.00'), 'igst': tax_total}
-            else:
-                half = (tax_total / Decimal('2')).quantize(Decimal('0.01'))
-                split = {'cgst': half, 'sgst': tax_total - half, 'igst': Decimal('0.00')}
-            inv_type = 'B2C_LARGE' if pos.total_amount > Decimal('250000') else 'B2C_SMALL'
+            # Aggregate per line using the SAME split arithmetic as the JE
+            # (`JournalAutoGenerationService.generate_pos_sale`): per-line
+            # back-calc, per-line half-split for intra-state. This guarantees
+            # GSTR-1 totals and JE Output GST credits match to the paisa for
+            # multi-rate carts. Header gst_percent is unreliable (0 in source).
+            taxable_base = Decimal('0.00')
+            split = {'cgst': Decimal('0.00'), 'sgst': Decimal('0.00'), 'igst': Decimal('0.00')}
+            line_rate_set = set()
+            for line in pos.lines.all():
+                line_total = Decimal(str(line.line_total or 0))
+                line_taxable = back_calculate_taxable(line_total, line.tax_percent)
+                line_tax = line_total - line_taxable
+                taxable_base += line_taxable
+                if supply_type == 'inter_state':
+                    split['igst'] += line_tax
+                else:
+                    half = (line_tax / Decimal('2')).quantize(
+                        Decimal('0.01'), rounding=ROUND_HALF_UP,
+                    )
+                    split['cgst'] += half
+                    split['sgst'] += line_tax - half
+                line_rate_set.add(line.tax_percent)
+            taxable_base = taxable_base.quantize(Decimal('0.01'))
+            for k in split:
+                split[k] = split[k].quantize(Decimal('0.01'))
+            tax_total = split['cgst'] + split['sgst'] + split['igst']
+            # Effective rate: single rate if homogeneous, else recover from totals.
+            gst_rate = next(iter(line_rate_set)) if len(line_rate_set) == 1 else (
+                (tax_total * Decimal('100') / taxable_base).quantize(Decimal('0.01'))
+                if taxable_base else Decimal('0.00')
+            )
+            # B2C-Large applies only to inter-state supplies > ₹2.5L per
+            # Notification 12/2020-CT. Intra-state B2C is always B2C_SMALL
+            # regardless of value.
+            inv_type = (
+                'B2C_LARGE'
+                if supply_type == 'inter_state' and pos.total_amount > Decimal('250000')
+                else 'B2C_SMALL'
+            )
 
             GSTR1Entry.objects.create(
                 source_type='pos',
@@ -152,9 +177,13 @@ class GSTR1Generator:
         for order in b2b_orders:
             taxable = order.subtotal - order.discount_amount
             customer_gstin = order.customer.gst_no if order.customer and order.customer.gst_no else ''
+            customer_state_code = (
+                state_name_to_code(order.customer.state)
+                if order.customer and getattr(order.customer, 'state', '') else ''
+            )
             # Always re-derive — pre-populated supply_type / total_cgst|sgst|igst on the
             # order may carry the old wrong classification.
-            supply_type = self._get_supply_type(customer_gstin)
+            supply_type = self._get_supply_type(customer_gstin, customer_state_code)
             # order.gst_percent is unreliable; sum line tax fields and re-split.
             total_tax = sum(
                 (Decimal(str(l.cgst_amount or 0)) +
@@ -173,8 +202,17 @@ class GSTR1Generator:
                 if taxable else Decimal('0.00')
             )
 
-            pos_code = customer_gstin[:2] if customer_gstin else self._settings.state_code
-            inv_type = 'B2B' if customer_gstin else ('B2C_LARGE' if order.total_amount > Decimal('250000') else 'B2C_SMALL')
+            pos_code = (
+                customer_gstin[:2] if customer_gstin else
+                customer_state_code or self._settings.state_code
+            )
+            # B2C-Large only applies to inter-state > ₹2.5L (Notif 12/2020-CT).
+            if customer_gstin:
+                inv_type = 'B2B'
+            elif supply_type == 'inter_state' and order.total_amount > Decimal('250000'):
+                inv_type = 'B2C_LARGE'
+            else:
+                inv_type = 'B2C_SMALL'
 
             GSTR1Entry.objects.create(
                 source_type='b2b',
@@ -219,35 +257,44 @@ class GSTR1Generator:
 
         for ret in returns.prefetch_related('lines'):
             customer_gstin = ret.customer.gst_no if ret.customer and ret.customer.gst_no else ''
+            customer_state_code = (
+                state_name_to_code(ret.customer.state)
+                if ret.customer and getattr(ret.customer, 'state', '') else ''
+            )
             supply_type = (
-                'intra_state' if ret.return_type == 'pos'
-                else self._get_supply_type(customer_gstin)
+                'intra_state' if ret.return_type == 'pos' and not customer_gstin and not customer_state_code
+                else self._get_supply_type(customer_gstin, customer_state_code)
             )
 
             # SalesReturnLineRO.line_total is tax-inclusive for both POS and B2B
-            # returns (live source data has tax baked into line_total in both cases).
+            # returns. Per-line aggregation matches `generate_sales_return` so
+            # the credit-note JE and the GSTR-1 row foot to the paisa even on
+            # mixed-rate carts.
             taxable_base = Decimal('0.00')
-            tax_total = Decimal('0.00')
+            split = {'cgst': Decimal('0.00'), 'sgst': Decimal('0.00'), 'igst': Decimal('0.00')}
             line_rate_set = set()
             for line in ret.lines.all():
                 line_total = Decimal(str(line.line_total or 0))
                 line_taxable = back_calculate_taxable(line_total, line.tax_percent)
                 line_tax = line_total - line_taxable
                 taxable_base += line_taxable
-                tax_total += line_tax
+                if supply_type == 'inter_state':
+                    split['igst'] += line_tax
+                else:
+                    half = (line_tax / Decimal('2')).quantize(
+                        Decimal('0.01'), rounding=ROUND_HALF_UP,
+                    )
+                    split['cgst'] += half
+                    split['sgst'] += line_tax - half
                 line_rate_set.add(line.tax_percent)
             taxable_base = taxable_base.quantize(Decimal('0.01'))
-            tax_total = tax_total.quantize(Decimal('0.01'))
+            for k in split:
+                split[k] = split[k].quantize(Decimal('0.01'))
+            tax_total = split['cgst'] + split['sgst'] + split['igst']
             gst_rate = next(iter(line_rate_set)) if len(line_rate_set) == 1 else (
                 (tax_total * Decimal('100') / taxable_base).quantize(Decimal('0.01'))
                 if taxable_base else Decimal('0.00')
             )
-
-            if supply_type == 'inter_state':
-                split = {'cgst': Decimal('0.00'), 'sgst': Decimal('0.00'), 'igst': tax_total}
-            else:
-                half = (tax_total / Decimal('2')).quantize(Decimal('0.01'))
-                split = {'cgst': half, 'sgst': tax_total - half, 'igst': Decimal('0.00')}
 
             # Determine invoice type: CDNR for registered, CREDIT_NOTE for unregistered
             if customer_gstin:
@@ -255,27 +302,34 @@ class GSTR1Generator:
             else:
                 inv_type = 'CREDIT_NOTE'
 
-            # Check time-bar: credit notes past 30 Nov of following FY
-            is_time_barred = False
             ret_date = ret.return_date.date() if hasattr(ret.return_date, 'date') else ret.return_date
-            # FY of original: if sale was in FY 2024-25, deadline is 30 Nov 2025
-            fy_year = ret_date.year if ret_date.month >= 4 else ret_date.year - 1
-            deadline = date(fy_year + 1, 11, 30)
-            if ret_date > deadline:
-                is_time_barred = True
 
-            # Derive original invoice number from FK relationships
+            # Per CGST §34(2), the deadline to declare a credit note is
+            # 30 November of the FY *following the original supply* — not the
+            # FY of the credit note itself. Resolve the original sale date via
+            # the FK to the source invoice; fall back to the credit-note date
+            # when no FK is set (worst case keeps the old behaviour, never
+            # silently passes a stale CN as in-time).
             original_inv = ''
+            original_inv_date = None
             if getattr(ret, 'original_b2b_order_id', None):
                 try:
                     original_inv = ret.original_b2b_order.invoice_no or ''
+                    original_inv_date = ret.original_b2b_order.sale_date
                 except Exception:
                     pass
             elif getattr(ret, 'original_order_id', None):
                 try:
                     original_inv = ret.original_order.invoice_no or ''
+                    src_dt = ret.original_order.sale_date
+                    original_inv_date = src_dt.date() if hasattr(src_dt, 'date') else src_dt
                 except Exception:
                     pass
+
+            anchor = original_inv_date or ret_date
+            fy_year = anchor.year if anchor.month >= 4 else anchor.year - 1
+            deadline = date(fy_year + 1, 11, 30)
+            is_time_barred = ret_date > deadline
 
             GSTR1Entry.objects.create(
                 source_type='return',
@@ -295,6 +349,7 @@ class GSTR1Generator:
                 igst=-split['igst'],
                 rate=gst_rate,
                 original_invoice_no=original_inv,
+                original_invoice_date=original_inv_date,
                 is_time_barred=is_time_barred,
             )
             entries_created += 1
@@ -341,11 +396,19 @@ class GSTR2BGenerator:
         # Clear existing for re-generation
         GSTR2BEntry.objects.filter(period=period, location_id=location_id).delete()
 
+        # Match POs whose bill_date falls in the period. POs with no bill_date
+        # fall back to created_at — mirroring the write-time fallback at line
+        # 387 below — so a confirmed PO with a missing bill_date doesn't drop
+        # silently out of GSTR-2B (and out of the ITC matching that depends
+        # on it).
+        from django.db.models import Q
         purchases = PurchaseOrderRO.objects.filter(
-            bill_date__year=year,
-            bill_date__month=month,
             location_id=location_id,
             state__in=['confirmed', 'done', 'approved'],
+        ).filter(
+            Q(bill_date__year=year, bill_date__month=month) |
+            Q(bill_date__isnull=True,
+              created_at__year=year, created_at__month=month)
         ).select_related('supplier').prefetch_related('lines')
 
         entries_created = 0
@@ -424,22 +487,39 @@ class GSTR3BGenerator:
         GSTR1Generator().generate(period, location_id)
         GSTR2BGenerator().generate(period, location_id)
 
-        # Get outward supply data from active GSTR1 entries
+        year, month = map(int, period.split('-'))
+
+        # 3.1(a) Outward supplies — include CDNR/CREDIT_NOTE/DEBIT_NOTE so that
+        # credit-note adjustments (stored with negative amounts in GSTR1Entry,
+        # see GSTR1Generator line 292-295) net out of the period's totals.
+        # Sales returns and forward sales are reported on a NET basis under
+        # CGST §34 r/w portal Table 3.1(a).
+        outward_types = ['B2B', 'B2C_LARGE', 'B2C_SMALL', 'CDNR', 'CREDIT_NOTE', 'DEBIT_NOTE']
         entries = list(GSTR1Entry.objects.filter(
             period=period,
             location_id=location_id,
             is_active=True,
-            invoice_type__in=['B2B', 'B2C_LARGE', 'B2C_SMALL'],
-        ))
+            invoice_type__in=outward_types,
+        ).exclude(is_time_barred=True))
 
-        outward_taxable = sum((e.taxable_value for e in entries if e.taxable_value > 0), Decimal('0.00'))
-        outward_igst = sum((e.igst for e in entries if e.igst > 0), Decimal('0.00'))
-        outward_cgst = sum((e.cgst for e in entries if e.cgst > 0), Decimal('0.00'))
-        outward_sgst = sum((e.sgst for e in entries if e.sgst > 0), Decimal('0.00'))
+        outward_taxable = sum((e.taxable_value for e in entries), Decimal('0.00'))
+        outward_igst = sum((e.igst for e in entries), Decimal('0.00'))
+        outward_cgst = sum((e.cgst for e in entries), Decimal('0.00'))
+        outward_sgst = sum((e.sgst for e in entries), Decimal('0.00'))
+
+        # 3.1(d) Inward supplies liable to RCM — picked from RCMEntry posted in
+        # the period. The corresponding ITC flows through Input GST 1140/1150/
+        # 1160 in the GL (see JournalAutoGenerationService.generate_rcm_entry),
+        # so we have to subtract it from the total Input-GST debits and report
+        # it separately under 4(A)(3) instead of 4(A)(5).
+        rcm_qs = RCMEntry.objects.filter(period=period, location_id=location_id)
+        rcm_taxable = rcm_qs.aggregate(t=Sum('taxable_value'))['t'] or Decimal('0.00')
+        rcm_cgst = rcm_qs.aggregate(t=Sum('cgst'))['t'] or Decimal('0.00')
+        rcm_sgst = rcm_qs.aggregate(t=Sum('sgst'))['t'] or Decimal('0.00')
+        rcm_igst = rcm_qs.aggregate(t=Sum('igst'))['t'] or Decimal('0.00')
 
         # ITC from posted JE Input GST lines for the period+location.
         # Net debit = purchase debits − purchase-return credit reversals.
-        year, month = map(int, period.split('-'))
         itc_rows = JournalEntryLine.objects.filter(
             entry__is_posted=True,
             entry__date__year=year,
@@ -457,21 +537,38 @@ class GSTR3BGenerator:
             )
             for row in itc_rows
         }
-        itc_cgst = itc_by_code.get('1140', Decimal('0.00'))
-        itc_sgst = itc_by_code.get('1150', Decimal('0.00'))
-        itc_igst = itc_by_code.get('1160', Decimal('0.00'))
+        total_itc_cgst = itc_by_code.get('1140', Decimal('0.00'))
+        total_itc_sgst = itc_by_code.get('1150', Decimal('0.00'))
+        total_itc_igst = itc_by_code.get('1160', Decimal('0.00'))
 
-        # ITC utilization order per GST rules: IGST first, then CGST, then SGST
-        remaining_igst = max(outward_igst - itc_igst, Decimal('0.00'))
-        igst_surplus = max(itc_igst - outward_igst, Decimal('0.00'))
+        # 4(A)(5) "All other ITC" = total Input-GST debits − RCM ITC.
+        # Negative residuals are clamped to 0 to handle the edge case where
+        # an RCM JE was posted but the matching aggregation row was deleted.
+        itc_cgst = max(total_itc_cgst - rcm_cgst, Decimal('0.00'))
+        itc_sgst = max(total_itc_sgst - rcm_sgst, Decimal('0.00'))
+        itc_igst = max(total_itc_igst - rcm_igst, Decimal('0.00'))
 
-        # Apply IGST surplus to CGST first, then SGST
-        effective_itc_cgst = itc_cgst + min(igst_surplus, max(outward_cgst - itc_cgst, Decimal('0.00')))
-        igst_surplus_after_cgst = max(igst_surplus - max(outward_cgst - itc_cgst, Decimal('0.00')), Decimal('0.00'))
-        effective_itc_sgst = itc_sgst + min(igst_surplus_after_cgst, max(outward_sgst - itc_sgst, Decimal('0.00')))
+        # Total liability = forward outward + RCM inward (3.1(a) + 3.1(d)).
+        # Total ITC = regular ITC + RCM ITC (4(A)(5) + 4(A)(3)). Net payable
+        # is computed against the combined gross.
+        gross_cgst = outward_cgst + rcm_cgst
+        gross_sgst = outward_sgst + rcm_sgst
+        gross_igst = outward_igst + rcm_igst
+        eff_itc_cgst = itc_cgst + rcm_cgst
+        eff_itc_sgst = itc_sgst + rcm_sgst
+        eff_itc_igst = itc_igst + rcm_igst
 
-        net_cgst = max(outward_cgst - effective_itc_cgst, Decimal('0.00'))
-        net_sgst = max(outward_sgst - effective_itc_sgst, Decimal('0.00'))
+        # ITC utilization order per §49 + Rule 88A: IGST first, then CGST, then SGST.
+        remaining_igst = max(gross_igst - eff_itc_igst, Decimal('0.00'))
+        igst_surplus = max(eff_itc_igst - gross_igst, Decimal('0.00'))
+
+        cgst_short_after_own = max(gross_cgst - eff_itc_cgst, Decimal('0.00'))
+        igst_used_for_cgst = min(igst_surplus, cgst_short_after_own)
+        igst_surplus_after_cgst = igst_surplus - igst_used_for_cgst
+        sgst_short_after_own = max(gross_sgst - eff_itc_sgst, Decimal('0.00'))
+
+        net_cgst = max(cgst_short_after_own - igst_used_for_cgst, Decimal('0.00'))
+        net_sgst = max(sgst_short_after_own - min(igst_surplus_after_cgst, sgst_short_after_own), Decimal('0.00'))
         net_igst = remaining_igst
 
         summary, _ = GSTR3BSummary.objects.update_or_create(
@@ -482,9 +579,16 @@ class GSTR3BGenerator:
                 outward_igst=outward_igst,
                 outward_cgst=outward_cgst,
                 outward_sgst=outward_sgst,
+                rcm_taxable=rcm_taxable,
+                rcm_cgst=rcm_cgst,
+                rcm_sgst=rcm_sgst,
+                rcm_igst=rcm_igst,
                 itc_cgst=itc_cgst,
                 itc_sgst=itc_sgst,
                 itc_igst=itc_igst,
+                rcm_itc_cgst=rcm_cgst,
+                rcm_itc_sgst=rcm_sgst,
+                rcm_itc_igst=rcm_igst,
                 net_payable_cgst=net_cgst,
                 net_payable_sgst=net_sgst,
                 net_payable_igst=net_igst,
@@ -502,59 +606,92 @@ class ITCReconciliationService:
 
         gstr2b_entries = GSTR2BEntry.objects.filter(period=period, location_id=location_id)
 
-        # Group GSTR-2B by supplier
-        supplier_2b = {}
+        # Group GSTR-2B by supplier GSTIN.
+        supplier_2b: dict[str, dict] = {}
         for entry in gstr2b_entries:
             gstin = entry.supplier_gstin
-            if gstin not in supplier_2b:
-                supplier_2b[gstin] = {
-                    'taxable': Decimal('0.00'), 'cgst': Decimal('0.00'),
-                    'sgst': Decimal('0.00'), 'igst': Decimal('0.00'),
-                }
-            supplier_2b[gstin]['taxable'] += entry.taxable_value
-            supplier_2b[gstin]['cgst'] += entry.cgst
-            supplier_2b[gstin]['sgst'] += entry.sgst
-            supplier_2b[gstin]['igst'] += entry.igst
+            bucket = supplier_2b.setdefault(gstin, {
+                'taxable': Decimal('0.00'), 'cgst': Decimal('0.00'),
+                'sgst': Decimal('0.00'), 'igst': Decimal('0.00'),
+            })
+            bucket['taxable'] += entry.taxable_value
+            bucket['cgst'] += entry.cgst
+            bucket['sgst'] += entry.sgst
+            bucket['igst'] += entry.igst
 
-        # Get books-side from journal entries (purchase entries for the period)
+        # Books-side: aggregate posted purchase JEs by supplier-GSTIN.
+        # The party_id on the trade-payables line points at SupplierRO.id;
+        # we resolve that to a GSTIN once per supplier so both sides of the
+        # recon key on the same field. Taxable is summed from the goods-cost
+        # debit lines (Closing Stock 1190 in perpetual mode, Purchases 5100
+        # in periodic) and tax from the Input GST debit lines.
         from journals.models import JournalEntryLine, JournalEntry
+        from inventory_reader.models import SupplierRO
         year, month = map(int, period.split('-'))
 
         purchase_entries = JournalEntry.objects.filter(
             is_posted=True,
-            voucher_type='PURCHASE',
+            voucher_type__in=['PURCHASE', 'DEBIT_NOTE'],
             date__year=year,
             date__month=month,
         )
         if location_id:
             purchase_entries = purchase_entries.filter(location_id=location_id)
 
-        # Group by supplier from journal lines
-        supplier_books = {}
+        supplier_ids: set[int] = set()
         for je in purchase_entries:
             for line in je.lines.filter(party_type='Supplier'):
-                supplier_id = line.party_id
-                if supplier_id not in supplier_books:
-                    supplier_books[supplier_id] = {
-                        'taxable': Decimal('0.00'), 'cgst': Decimal('0.00'),
-                        'sgst': Decimal('0.00'), 'igst': Decimal('0.00'),
-                    }
-                supplier_books[supplier_id]['taxable'] += line.credit  # payable credit = total
+                if line.party_id:
+                    supplier_ids.add(line.party_id)
+
+        gstin_by_supplier_id = dict(
+            SupplierRO.objects.filter(id__in=supplier_ids)
+            .values_list('id', 'gst_no')
+        )
+
+        TAXABLE_CODES = ('1190', '5100')          # Closing Stock OR Purchases
+        TAX_CODE_MAP = {'1140': 'cgst', '1150': 'sgst', '1160': 'igst'}
+        SIGN_BY_VOUCHER = {'PURCHASE': Decimal('1'), 'DEBIT_NOTE': Decimal('-1')}
+
+        supplier_books: dict[str, dict] = {}
+        for je in purchase_entries:
+            sign = SIGN_BY_VOUCHER.get(je.voucher_type, Decimal('1'))
+            # Find the supplier GSTIN for this entry — there's at most one
+            # supplier party per purchase JE.
+            supplier_gstin = ''
+            for line in je.lines.filter(party_type='Supplier'):
+                if line.party_id:
+                    supplier_gstin = gstin_by_supplier_id.get(line.party_id, '') or ''
+                    break
+            if not supplier_gstin:
+                continue
+            bucket = supplier_books.setdefault(supplier_gstin, {
+                'taxable': Decimal('0.00'), 'cgst': Decimal('0.00'),
+                'sgst': Decimal('0.00'), 'igst': Decimal('0.00'),
+            })
+            for line in je.lines.all():
+                code = line.account.account_code
+                if code in TAXABLE_CODES:
+                    bucket['taxable'] += sign * (line.debit - line.credit)
+                elif code in TAX_CODE_MAP:
+                    bucket[TAX_CODE_MAP[code]] += sign * (line.debit - line.credit)
 
         results = []
-        all_gstins = set(supplier_2b.keys())
+        all_gstins = set(supplier_2b.keys()) | set(supplier_books.keys())
+        empty = {'taxable': Decimal('0.00'), 'cgst': Decimal('0.00'),
+                 'sgst': Decimal('0.00'), 'igst': Decimal('0.00')}
 
         for gstin in all_gstins:
-            b2b = supplier_2b.get(gstin, {})
-            # Try to match supplier GSTIN to books data
-            books = {'taxable': Decimal('0.00'), 'cgst': Decimal('0.00'),
-                     'sgst': Decimal('0.00'), 'igst': Decimal('0.00')}
+            b2b = supplier_2b.get(gstin, empty)
+            books = supplier_books.get(gstin, empty)
 
-            diff = abs(b2b.get('taxable', Decimal('0.00')) - books['taxable'])
-            if diff < Decimal('1.00'):
+            diff = abs(b2b['taxable'] - books['taxable'])
+            if books['taxable'] == 0 and b2b['taxable'] != 0:
+                status = 'unmatched'        # in 2B, missing in books
+            elif b2b['taxable'] == 0 and books['taxable'] != 0:
+                status = 'unmatched'        # in books, missing in 2B
+            elif diff < Decimal('1.00'):
                 status = 'matched'
-            elif books['taxable'] == 0:
-                status = 'unmatched'
             else:
                 status = 'partial'
 
@@ -566,15 +703,14 @@ class ITCReconciliationService:
                 books_cgst=books['cgst'],
                 books_sgst=books['sgst'],
                 books_igst=books['igst'],
-                gstr2b_taxable=b2b.get('taxable', Decimal('0.00')),
-                gstr2b_cgst=b2b.get('cgst', Decimal('0.00')),
-                gstr2b_sgst=b2b.get('sgst', Decimal('0.00')),
-                gstr2b_igst=b2b.get('igst', Decimal('0.00')),
+                gstr2b_taxable=b2b['taxable'],
+                gstr2b_cgst=b2b['cgst'],
+                gstr2b_sgst=b2b['sgst'],
+                gstr2b_igst=b2b['igst'],
                 status=status,
             )
             results.append(recon)
 
-            # Update GSTR2B match status
             GSTR2BEntry.objects.filter(
                 period=period, location_id=location_id, supplier_gstin=gstin
             ).update(match_status=status)

@@ -103,10 +103,19 @@ class GSTR3BSummary(models.Model):
     outward_cgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     outward_sgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     outward_zero_rated = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
-    # 4. ITC (Input Tax Credit)
+    # 3.1(d) Inward supplies liable to reverse charge
+    rcm_taxable = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    rcm_igst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    rcm_cgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    rcm_sgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    # 4(A)(5) "All other ITC" — regular purchase ITC excluding RCM ITC
     itc_igst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     itc_cgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     itc_sgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    # 4(A)(3) ITC on RCM (mirrors the 3.1(d) tax — booked back as ITC under §9(3)/(4))
+    rcm_itc_igst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    rcm_itc_cgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    rcm_itc_sgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     # Net payable
     net_payable_igst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     net_payable_cgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))

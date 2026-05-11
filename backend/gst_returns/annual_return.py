@@ -69,10 +69,15 @@ def generate_gstr9(*, fy_start_year: int, location_id: int) -> dict:
                     'itc_igst', 'itc_cgst', 'itc_sgst',
                     'net_payable_igst', 'net_payable_cgst', 'net_payable_sgst')
 
-    # Aggregate turnover (used for threshold check)
+    # Aggregate turnover (used for threshold check). Credit notes are stored
+    # with negative `taxable_value` in GSTR1Entry (see GSTR1Generator.generate
+    # line 292), so summing them in directly is what nets them out — adding a
+    # negative subtracts. The previous `- cdnr` formula subtracted again,
+    # double-counting the reduction (and inflating turnover by 2× the CDN
+    # value, since two negatives become a positive).
     total_turnover = (
         b2b['taxable_value'] + b2c_large['taxable_value'] +
-        b2c_small['taxable_value'] - cdnr['taxable_value'] + nil['taxable_value']
+        b2c_small['taxable_value'] + cdnr['taxable_value'] + nil['taxable_value']
     )
 
     return {

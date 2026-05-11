@@ -9,6 +9,7 @@ def detect_supply_type(
     business_gstin: str,
     counterparty_gstin: str,
     business_state_code: str = '',
+    counterparty_state_code: str = '',
 ) -> str:
     """
     Detect supply type based on state codes (first 2 chars of GSTIN).
@@ -17,7 +18,13 @@ def detect_supply_type(
     Resolution order for the company side:
       1. business_gstin[:2] if a 15-char GSTIN is provided
       2. business_state_code (2-digit anchor from AccountingSettings)
-    If either side cannot be resolved to 2 digits, defaults to intra_state.
+    Resolution order for the counterparty side:
+      1. counterparty_gstin[:2] if provided
+      2. counterparty_state_code (2-digit POS code derived from the customer's
+         state name, store/branch state, or shipping address)
+    If either side cannot be resolved to 2 digits, defaults to intra_state —
+    callers should pass `counterparty_state_code` so this default only fires
+    for true OTC walk-in sales where no place-of-supply is captured.
     """
     business_state = ''
     if business_gstin and len(business_gstin) >= 2:
@@ -28,11 +35,72 @@ def detect_supply_type(
     counterparty_state = ''
     if counterparty_gstin and len(counterparty_gstin) >= 2:
         counterparty_state = counterparty_gstin[:2]
+    elif counterparty_state_code and len(counterparty_state_code) >= 2:
+        counterparty_state = counterparty_state_code[:2]
 
     if not business_state or not counterparty_state:
         return 'intra_state'
 
     return 'intra_state' if business_state == counterparty_state else 'inter_state'
+
+
+# State name → 2-digit GST state code per the official GST list. Used as a
+# place-of-supply fallback when a customer's GSTIN is unknown but their state
+# is captured (CustomerRO.state, SupplierRO.state — both free-text).
+STATE_NAME_TO_CODE = {
+    'jammu and kashmir': '01', 'j&k': '01', 'jammu & kashmir': '01',
+    'himachal pradesh': '02',
+    'punjab': '03',
+    'chandigarh': '04',
+    'uttarakhand': '05', 'uttaranchal': '05',
+    'haryana': '06',
+    'delhi': '07', 'new delhi': '07', 'nct of delhi': '07',
+    'rajasthan': '08',
+    'uttar pradesh': '09',
+    'bihar': '10',
+    'sikkim': '11',
+    'arunachal pradesh': '12',
+    'nagaland': '13',
+    'manipur': '14',
+    'mizoram': '15',
+    'tripura': '16',
+    'meghalaya': '17',
+    'assam': '18',
+    'west bengal': '19',
+    'jharkhand': '20',
+    'odisha': '21', 'orissa': '21',
+    'chhattisgarh': '22', 'chattisgarh': '22',
+    'madhya pradesh': '23',
+    'gujarat': '24',
+    'daman and diu': '25', 'daman & diu': '25',
+    'dadra and nagar haveli': '26', 'dadra & nagar haveli': '26',
+    'dadra and nagar haveli and daman and diu': '26',
+    'maharashtra': '27',
+    'andhra pradesh (old)': '28',
+    'karnataka': '29',
+    'goa': '30',
+    'lakshadweep': '31',
+    'kerala': '32',
+    'tamil nadu': '33', 'tamilnadu': '33',
+    'puducherry': '34', 'pondicherry': '34',
+    'andaman and nicobar islands': '35', 'andaman & nicobar': '35',
+    'andaman and nicobar': '35',
+    'telangana': '36',
+    'andhra pradesh': '37',
+    'ladakh': '38',
+    'other territory': '97',
+    'centre jurisdiction': '99',
+}
+
+
+def state_name_to_code(name: str) -> str:
+    """Resolve a free-text state name to its 2-digit GST code, or '' if unknown.
+    Case- and whitespace-insensitive; tolerates trailing dots and the common
+    state-name aliases used on tax invoices."""
+    if not name:
+        return ''
+    key = name.strip().lower().rstrip('.')
+    return STATE_NAME_TO_CODE.get(key, '')
 
 
 def detect_supply_type_by_state(business_state_code: str, counterparty_state_code: str) -> str:

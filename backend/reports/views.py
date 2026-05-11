@@ -50,17 +50,21 @@ class TrialBalanceView(APIView):
             )
             dr = agg['total_debit'] or Decimal('0.00')
             cr = agg['total_credit'] or Decimal('0.00')
-            if dr > 0 or cr > 0:
-                rows.append({
-                    'account_code': account.account_code,
-                    'account_name': account.account_name,
-                    'account_type': account.account_type,
-                    'debit': str(dr),
-                    'credit': str(cr),
-                    'balance': str(dr - cr),
-                })
-                total_debit += dr
-                total_credit += cr
+            net = dr - cr
+            if net == 0:
+                continue
+            net_dr = net if net > 0 else Decimal('0.00')
+            net_cr = -net if net < 0 else Decimal('0.00')
+            rows.append({
+                'account_code': account.account_code,
+                'account_name': account.account_name,
+                'account_type': account.account_type,
+                'debit': str(net_dr),
+                'credit': str(net_cr),
+                'balance': str(net),
+            })
+            total_debit += net_dr
+            total_credit += net_cr
 
         return Response({
             'start_date': start_date,
