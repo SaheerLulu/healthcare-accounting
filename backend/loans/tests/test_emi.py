@@ -30,16 +30,16 @@ class EMIComputationTests(TestCase):
 
 
 def _seed_loan_accounts(coa):
-    """Add the two accounts a loan needs."""
-    for code, (name, atype, sub) in [
-        ('2300', ('HDFC Term Loan', 'LIABILITY', 'Payable')),
-        ('5500', ('Interest Expense', 'EXPENSE', 'Other_Expense')),
-    ]:
-        ChartOfAccount.objects.get_or_create(
-            account_code=code,
-            defaults=dict(account_name=name, account_type=atype,
-                          account_subtype=sub, is_leaf=True),
-        )
+    """Add the lender-specific liability account a loan needs. The canonical
+    CoA (seeded by migration 0016) already provides 5451 'Interest on Loans'
+    as a leaf with the INTEREST_EXPENSE mapping — reuse it rather than
+    creating a duplicate code that shadows the parent 5500 'Direct Expenses'.
+    """
+    ChartOfAccount.objects.get_or_create(
+        account_code='2300',
+        defaults=dict(account_name='HDFC Term Loan', account_type='LIABILITY',
+                      account_subtype='Payable', is_leaf=True),
+    )
 
 
 class LoanLifecycleTests(TestCase):
@@ -61,7 +61,7 @@ class LoanLifecycleTests(TestCase):
             emi_amount=Decimal('33214.31'),
             location_id=1,
             liability_account=coa['2300'],
-            interest_expense_account=coa['5500'],
+            interest_expense_account=coa['5451'],
         )
 
     def test_generate_schedule_creates_36_rows(self):
