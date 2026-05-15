@@ -17,15 +17,6 @@ class AccountingSettings(models.Model):
         help_text='Bills above this amount require approval before posting. '
                   '0 = no approval required (default).',
     )
-    STOCK_METHOD_CHOICES = [
-        ('periodic', 'Periodic (purchases → 5100; closing stock at period end)'),
-        ('perpetual', 'Perpetual (purchases → 1190; COGS posted per sale)'),
-    ]
-    stock_method = models.CharField(
-        max_length=10, choices=STOCK_METHOD_CHOICES, default='periodic',
-        help_text='How inventory hits the GL. Periodic is Tally default; '
-                  'perpetual posts stock + COGS in real time.',
-    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

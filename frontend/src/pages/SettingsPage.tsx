@@ -68,24 +68,6 @@ function CompanyInfoTab() {
           })}
         </div>
 
-        {/* Stock method — controls how inventory hits the GL */}
-        <div className="border-t pt-5" style={{ borderColor: 'var(--line)' }}>
-          <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>
-            Stock Accounting Method
-          </label>
-          <select
-            {...register('stock_method')}
-            className="w-full sm:w-1/2 h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
-            style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
-          >
-            <option value="periodic">Periodic — purchases → 5100 Purchases; closing stock at period-end (Tally default)</option>
-            <option value="perpetual">Perpetual — purchases → 1190 Closing Stock; COGS posted per sale</option>
-          </select>
-          <p className="text-[11px] mt-1.5" style={{ color: 'var(--ink-3)' }}>
-            Switching mid-stream affects only future entries. Posted JVs are not retroactively recoded.
-          </p>
-        </div>
-
         <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: 'var(--line)' }}>
           {isDirty ? (
             <p className="text-xs font-medium" style={{ color: 'var(--warning)' }}>You have unsaved changes</p>

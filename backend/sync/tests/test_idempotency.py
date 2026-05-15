@@ -41,14 +41,15 @@ class MissingAccountFailsGracefullyTests(TestCase):
     def setUp(self):
         seed_chart_and_mappings()
         make_settings()
-        # Remove the PURCHASES mapping
+        # Remove the CLOSING_STOCK mapping — this is the account every
+        # purchase now debits, so a missing mapping should surface clearly.
         from core.models import AccountMapping
-        AccountMapping.objects.filter(key='PURCHASES').delete()
+        AccountMapping.objects.filter(key='CLOSING_STOCK').delete()
 
     def test_missing_mapping_raises_clear_error(self):
         # Re-instantiating the service after mapping deletion should still
         # raise a clean ValueError when the missing key is requested.
         svc = JournalAutoGenerationService()
         with self.assertRaises(ValueError) as ctx:
-            svc._acct('PURCHASES')
-        self.assertIn('PURCHASES', str(ctx.exception))
+            svc._acct('CLOSING_STOCK')
+        self.assertIn('CLOSING_STOCK', str(ctx.exception))

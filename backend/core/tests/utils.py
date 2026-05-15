@@ -67,11 +67,15 @@ def seed_chart_and_mappings():
         '4100': ('Sales POS', 'REVENUE', 'Sales'),
         '4200': ('Sales B2B', 'REVENUE', 'Sales'),
         '5100': ('Purchases', 'EXPENSE', 'Purchases'),
-        '5200': ('Sales Returns', 'EXPENSE', 'Sales'),
+        # 5200 is REVENUE (contra-revenue) in production coa_data.py — a
+        # debit here reduces net revenue rather than inflating expenses.
+        '5200': ('Sales Returns', 'REVENUE', 'Sales'),
         '5300': ('Purchase Returns', 'EXPENSE', 'Purchases'),
         '5400': ('Salary Expense', 'EXPENSE', 'Other_Expense'),
         '5410': ('Rent Expense', 'EXPENSE', 'Other_Expense'),
         '5420': ('Electricity Expense', 'EXPENSE', 'Other_Expense'),
+        '1190': ('Closing Stock', 'ASSET', ''),
+        '5560': ('Cost of Goods Sold', 'EXPENSE', 'Other_Expense'),
         '6100': ('Round Off', 'EXPENSE', 'Other_Expense'),
     }
     coa = {}

@@ -69,6 +69,7 @@ Inventory DB → `inventory_reader` (proxy models) → `sync` service → `journ
 - Incremental sync uses `SyncLog.last_synced_id` to avoid reprocessing
 - Indian fiscal year starts in April (`ACCOUNTING_FY_START_MONTH = 4` in `base.py`; per-tenant overrides in `AccountingSettings`)
 - `audit.utils.log_action()` called on all mutations
+- **Inventory is perpetual-only**: every purchase debits `1190 Closing Stock` (ASSET); every sale credits `1190` and debits `5560 Cost of Goods Sold` at weighted-avg cost via `JournalAutoGenerationService._post_cogs`. Account `5100 Purchases` exists for non-inventory expense routing but is never touched by the sync flow. There is no periodic-mode toggle and no period-end closing-stock JV.
 
 **API prefix:** All endpoints under `/api/` — `auth/token/`, `accounts/`, `journals/`, `gst/`, `tds/`, `reports/`, `sync/`, `audit/`, `payroll/`, `parties/`, `bills/`, `banking/`, `expenses/`. JWT obtain/refresh/verify live at `/api/auth/token[/refresh|/verify]/`.
 

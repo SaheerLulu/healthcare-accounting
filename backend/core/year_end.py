@@ -30,20 +30,17 @@ def fy_window(fy_start_year: int, fy_start_month: int = 4):
 
 @transaction.atomic
 def close_fiscal_year(fy_start_year: int, *, location_id: int = None,
-                      generate_opening: bool = True, user=None,
-                      closing_stock_value: Decimal = None):
+                      generate_opening: bool = True, user=None):
     """
     Close the fiscal year that begins on `fy_start_year` (April by default).
 
     Order of operations:
-      1. **Closing-stock JV** (if `closing_stock_value` is provided): post
-         the period-end Dr Closing Stock / Cr Purchases entry FIRST, so the
-         subsequent P&L→Retained-Earnings transfer captures the corrected
-         net profit.
-      2. Post the YEAR-END CLOSE JV that zeros all Revenue and Expense
-         accounts into RETAINED_EARNINGS.
-      3. Set AccountingSettings.is_fy_closed=True and last_closed_fy.
-      4. If generate_opening: post an OPENING BALANCES JV on day 1 of the
+      1. Post the YEAR-END CLOSE JV that zeros all Revenue and Expense
+         accounts into RETAINED_EARNINGS. Perpetual inventory means 1190
+         Closing Stock already reflects on-hand value — no period-end
+         closing-stock JV is needed.
+      2. Set AccountingSettings.is_fy_closed=True and last_closed_fy.
+      3. If generate_opening: post an OPENING BALANCES JV on day 1 of the
          next FY that re-instates all Asset/Liability/Equity balances
          (Closing Stock carried forward automatically).
 
@@ -56,18 +53,6 @@ def close_fiscal_year(fy_start_year: int, *, location_id: int = None,
         raise ValueError(f'Fiscal year {label} is already closed.')
 
     fy_start, fy_end = fy_window(fy_start_year, settings.financial_year_start or 4)
-
-    # Step 1 — closing-stock JV (period-end physical-count adjustment)
-    closing_stock_entry_no = None
-    if closing_stock_value is not None:
-        from journals.services import JournalAutoGenerationService
-        cs_je = JournalAutoGenerationService().post_closing_stock_adjustment(
-            date=fy_end, value=closing_stock_value,
-            location_id=location_id, user=user,
-            narration=f'Year-end closing stock for FY {label}',
-        )
-        if cs_je:
-            closing_stock_entry_no = cs_je.entry_no
 
     retained = AccountMapping.get_account('RETAINED_EARNINGS')
 
@@ -171,6 +156,5 @@ def close_fiscal_year(fy_start_year: int, *, location_id: int = None,
         'fy': label,
         'close_entry_no': close_entry.entry_no,
         'opening_entry_no': opening_entry_no,
-        'closing_stock_entry_no': closing_stock_entry_no,
         'net_profit': str(net_profit),
     }

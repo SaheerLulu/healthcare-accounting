@@ -40,7 +40,6 @@ class AccountingSettingsSerializer(serializers.ModelSerializer):
             'id', 'company_name', 'gstin', 'tan', 'state_code',
             'financial_year_start', 'registered_address', 'pan',
             'is_fy_closed', 'last_closed_fy', 'bill_approval_threshold',
-            'stock_method',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']

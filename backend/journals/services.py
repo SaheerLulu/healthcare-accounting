@@ -45,28 +45,8 @@ class JournalAutoGenerationService:
             self._settings.state_code,
         )
 
-    def _is_perpetual(self):
-        """True when AccountingSettings.stock_method == 'perpetual'.
-        In perpetual mode, purchases hit Closing Stock directly and each sale
-        posts a COGS pair (Dr COGS / Cr Closing Stock) at the line's avg cost.
-        """
-        return getattr(self._settings, 'stock_method', 'periodic') == 'perpetual'
-
-    def _purchase_dr_acct(self):
-        """Dr account for the goods cost on a purchase JV.
-        Perpetual: Closing Stock (1190). Periodic: Purchases (5100).
-        """
-        return self._acct('CLOSING_STOCK' if self._is_perpetual() else 'PURCHASES')
-
-    def _purchase_return_cr_acct(self):
-        """Cr account when goods leave on a purchase return JV.
-        Perpetual: Closing Stock. Periodic: Purchase Returns (5300).
-        """
-        return self._acct('CLOSING_STOCK' if self._is_perpetual() else 'PURCHASE_RETURNS')
-
     def _product_avg_cost(self, product_id):
-        """Weighted-average purchase rate per unit, in ₹.
-        Used by perpetual mode to value COGS at sale time. Returns 0 if the
+        """Weighted-average purchase rate per unit, in ₹. Returns 0 if the
         product has never been purchased through the system.
         """
         from django.db.models import Avg
@@ -76,15 +56,12 @@ class JournalAutoGenerationService:
         )
         return Decimal(str(agg['avg'] or 0))
 
-    def _post_perpetual_cogs(self, *, entry, lines, location_id=None):
-        """Post the Dr COGS / Cr Closing Stock pair for a perpetual sale.
+    def _post_cogs(self, *, entry, lines):
+        """Post Dr COGS / Cr Closing Stock for every line in a sale at avg cost.
 
-        `lines` is an iterable of objects exposing `.product_id` and a quantity
-        attribute (`.quantity`). Returns the total COGS posted (or zero when
-        in periodic mode or when no costed lines exist).
+        `lines` is an iterable of objects exposing `.product_id` and `.quantity`.
+        Returns the total COGS posted (or zero when no costed lines exist).
         """
-        if not self._is_perpetual():
-            return Decimal('0')
         cogs_acct = self._accounts.get('COGS')
         stock_acct = self._accounts.get('CLOSING_STOCK')
         if not cogs_acct or not stock_acct:
@@ -102,11 +79,11 @@ class JournalAutoGenerationService:
         if total > 0:
             JournalEntryLine.objects.create(
                 entry=entry, account=cogs_acct, debit=total,
-                narration='COGS — perpetual',
+                narration='COGS',
             )
             JournalEntryLine.objects.create(
                 entry=entry, account=stock_acct, credit=total,
-                narration='Stock relieved — perpetual',
+                narration='Stock relieved',
             )
         return total
 
@@ -181,7 +158,7 @@ class JournalAutoGenerationService:
 
         if total_purchases > 0:
             JournalEntryLine.objects.create(
-                entry=entry, account=self._purchase_dr_acct(), debit=total_purchases,
+                entry=entry, account=self._acct('CLOSING_STOCK'), debit=total_purchases,
             )
         if cgst_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST'), debit=cgst_amount)
@@ -298,10 +275,8 @@ class JournalAutoGenerationService:
                 else:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(diff))
 
-        # Perpetual mode: relieve stock and post COGS in the same JE.
-        self._post_perpetual_cogs(
-            entry=entry, lines=pos.lines.all(), location_id=pos.location_id,
-        )
+        # Relieve stock and post COGS in the same JE (perpetual inventory).
+        self._post_cogs(entry=entry, lines=pos.lines.all())
 
         entry.post()
         return entry
@@ -379,10 +354,8 @@ class JournalAutoGenerationService:
                 else:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(diff))
 
-        # Perpetual mode: relieve stock and post COGS in the same JE.
-        self._post_perpetual_cogs(
-            entry=entry, lines=order.lines.all(), location_id=order.location_id,
-        )
+        # Relieve stock and post COGS in the same JE (perpetual inventory).
+        self._post_cogs(entry=entry, lines=order.lines.all())
 
         entry.post()
         return entry
@@ -475,29 +448,28 @@ class JournalAutoGenerationService:
                 else:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(diff))
 
-        # Perpetual mode: stock comes back in, reverse COGS.
-        if self._is_perpetual():
-            cogs_acct = self._accounts.get('COGS')
-            stock_acct = self._accounts.get('CLOSING_STOCK')
-            if cogs_acct and stock_acct:
-                cogs_total = Decimal('0')
-                for line in ret.lines.all():
-                    qty = Decimal(str(getattr(line, 'quantity', 0) or 0))
-                    if qty <= 0:
-                        continue
-                    cost = self._product_avg_cost(line.product_id)
-                    value = (qty * cost).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-                    if value > 0:
-                        cogs_total += value
-                if cogs_total > 0:
-                    JournalEntryLine.objects.create(
-                        entry=entry, account=stock_acct, debit=cogs_total,
-                        narration='Stock returned — perpetual',
-                    )
-                    JournalEntryLine.objects.create(
-                        entry=entry, account=cogs_acct, credit=cogs_total,
-                        narration='COGS reversed — perpetual',
-                    )
+        # Stock comes back in, reverse the COGS that was posted at sale time.
+        cogs_acct = self._accounts.get('COGS')
+        stock_acct = self._accounts.get('CLOSING_STOCK')
+        if cogs_acct and stock_acct:
+            cogs_total = Decimal('0')
+            for line in ret.lines.all():
+                qty = Decimal(str(getattr(line, 'quantity', 0) or 0))
+                if qty <= 0:
+                    continue
+                cost = self._product_avg_cost(line.product_id)
+                value = (qty * cost).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                if value > 0:
+                    cogs_total += value
+            if cogs_total > 0:
+                JournalEntryLine.objects.create(
+                    entry=entry, account=stock_acct, debit=cogs_total,
+                    narration='Stock returned',
+                )
+                JournalEntryLine.objects.create(
+                    entry=entry, account=cogs_acct, credit=cogs_total,
+                    narration='COGS reversed',
+                )
 
         entry.post()
         return entry
@@ -567,12 +539,13 @@ class JournalAutoGenerationService:
                 party_type='Supplier',
                 party_id=ret.supplier_id,
             )
-        # Credit: Purchase Returns (contra-expense) in periodic, or Closing
-        # Stock directly in perpetual mode (we never debited Purchases on the
-        # original purchase, so we don't credit Purchase Returns now either).
-        cr_acct = self._purchase_return_cr_acct()
-        if cr_acct and taxable_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=cr_acct, credit=taxable_amount)
+        # Credit: Closing Stock directly — perpetual inventory never debited
+        # Purchases on the original purchase, so we don't credit Purchase
+        # Returns now either; the stock just goes back out.
+        if taxable_amount > 0:
+            JournalEntryLine.objects.create(
+                entry=entry, account=self._acct('CLOSING_STOCK'), credit=taxable_amount,
+            )
         # Credit: Reverse ITC
         if cgst_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST'), credit=cgst_amount)
@@ -774,75 +747,6 @@ class JournalAutoGenerationService:
         return je
 
     @transaction.atomic
-    def post_closing_stock_adjustment(self, *, date, value: Decimal,
-                                      location_id: int = None,
-                                      narration: str = '', user=None):
-        """
-        Period-end closing-stock JV — the entry that the periodic-inventory
-        system needs to make the balance sheet correct.
-
-        Mechanics:
-          1. Caller passes the *target* balance for Closing Stock — typically
-             from a physical count (or from `reports.StockValuationView`).
-          2. Service computes existing balance and posts only the *delta*.
-          3. Counter-leg goes to Purchases — increasing Closing Stock reduces
-             Purchases (and therefore boosts net profit by the same amount),
-             keeping the equation Assets = Liabilities + Equity in balance.
-
-        Books:
-          delta > 0 (more stock on hand than already booked):
-              Dr Closing Stock          delta
-                  Cr Purchases (5100)       delta   [reverses over-expensing]
-
-          delta < 0 (less on hand — e.g. shrinkage caught at count):
-              Dr Purchases              |delta|
-                  Cr Closing Stock          |delta|
-
-        Idempotent at the *value* level — re-call with same target → no-op.
-        """
-        target = Decimal(str(value))
-        if target < 0:
-            raise ValueError('Closing-stock value cannot be negative.')
-
-        closing_stock = self._acct('CLOSING_STOCK')
-        purchases = self._acct('PURCHASES')
-
-        # Existing balance on Closing Stock up to `date`
-        from django.db.models import Sum
-        agg = JournalEntryLine.objects.filter(
-            account=closing_stock, entry__is_posted=True, entry__date__lte=date,
-        )
-        if location_id is not None:
-            agg = agg.filter(entry__location_id=location_id)
-        agg = agg.aggregate(d=Sum('debit'), c=Sum('credit'))
-        existing = (agg['d'] or Decimal('0')) - (agg['c'] or Decimal('0'))
-
-        delta = target - existing
-        if abs(delta) < Decimal('0.01'):
-            return None  # already at target — no JV needed
-
-        je = JournalEntry.objects.create(
-            date=date,
-            narration=(narration or
-                       f'Closing stock adjustment as of {date} '
-                       f'(target ₹{target}, existing ₹{existing})'),
-            voucher_type='JOURNAL', reference_type='Manual',
-            location_id=location_id, created_by=user,
-        )
-        if delta > 0:
-            JournalEntryLine.objects.create(entry=je, account=closing_stock,
-                                            debit=delta)
-            JournalEntryLine.objects.create(entry=je, account=purchases,
-                                            credit=delta)
-        else:
-            JournalEntryLine.objects.create(entry=je, account=purchases,
-                                            debit=-delta)
-            JournalEntryLine.objects.create(entry=je, account=closing_stock,
-                                            credit=-delta)
-        je.post()
-        return je
-
-    @transaction.atomic
     def post_stock_transfer(self, *, date, value: Decimal,
                             from_location_id: int, to_location_id: int,
                             narration: str = '', user=None):
@@ -1033,93 +937,3 @@ def generate_due_recurring_journals(*, today=None, user=None) -> dict:
             'today': today.isoformat()}
 
 
-# ─── Auto Closing-Stock (inventory-driven) ──────────────────────────────────
-
-
-def compute_live_inventory_value(as_of, location_id=None):
-    """Replay StockMovementRO × last-purchase-rate (cost proxy) up to `as_of`
-    and return the live inventory ₹ value. Mirrors the calculation used by
-    `reports.ClosingStockReconciliationView` so the auto-post never drifts
-    from the recon view.
-    """
-    from collections import defaultdict
-    from inventory_reader.models import PurchaseOrderLineRO, StockMovementRO
-
-    moves = StockMovementRO.objects.filter(created_at__date__lte=as_of)
-    if location_id is not None:
-        moves = moves.filter(location_id=location_id)
-
-    qty_on_hand = defaultdict(int)
-    for m in moves:
-        delta = m.quantity if m.movement_type not in ('out', 'sale', 'transfer_out') else -abs(m.quantity)
-        qty_on_hand[m.product_id] += delta
-
-    cost_proxy = {
-        row['product_id']: row['rate']
-        for row in PurchaseOrderLineRO.objects
-            .values('product_id')
-            .annotate(rate=Sum('purchase_rate'))
-    }
-    return sum(
-        (Decimal(str(qty_on_hand.get(pid, 0))) * cost_proxy.get(pid, Decimal('0')))
-        for pid in qty_on_hand if qty_on_hand[pid] > 0
-    ) or Decimal('0')
-
-
-def auto_close_stock_run(as_of=None, user=None, narration_prefix='Auto closing-stock sync'):
-    """Post a Closing-Stock JV for every location with a non-zero variance
-    between books (1190 GL) and live inventory.
-
-    Idempotent — `post_closing_stock_adjustment` returns None when the GL is
-    already at the target value, so re-running the same day is safe.
-
-    Returns:
-      {
-        'as_of': '2026-05-10',
-        'created': [{location_id, entry_no, value, delta}, ...],
-        'skipped': [{location_id, reason}, ...],
-        'errors':  [{location_id, error}, ...],
-      }
-    """
-    from datetime import date as _date_cls
-    from inventory_reader.models import LocationRO
-
-    if as_of is None:
-        as_of = _date_cls.today()
-
-    svc = JournalAutoGenerationService()
-    created, skipped, errors = [], [], []
-
-    # Loop over each retail/warehouse location. Skip non-physical (e.g. 'view')
-    # locations via the same heuristic the LocationContext uses on the FE.
-    locations = LocationRO.objects.exclude(usage='view') if hasattr(LocationRO, 'usage') else LocationRO.objects.all()
-    for loc in locations:
-        try:
-            value = compute_live_inventory_value(as_of, loc.id)
-            entry = svc.post_closing_stock_adjustment(
-                date=as_of,
-                value=value,
-                location_id=loc.id,
-                narration=f'{narration_prefix} — {loc.name} ({as_of})',
-                user=user,
-            )
-            if entry is None:
-                skipped.append({'location_id': loc.id, 'location_name': loc.name,
-                                'reason': 'already at target'})
-            else:
-                created.append({
-                    'location_id': loc.id,
-                    'location_name': loc.name,
-                    'entry_no': entry.entry_no,
-                    'value': str(value),
-                })
-        except Exception as exc:  # noqa: BLE001
-            errors.append({'location_id': loc.id, 'location_name': getattr(loc, 'name', '?'),
-                           'error': str(exc)})
-
-    return {
-        'as_of': as_of.isoformat(),
-        'created': created,
-        'skipped': skipped,
-        'errors': errors,
-    }

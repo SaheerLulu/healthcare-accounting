@@ -426,14 +426,11 @@ class CloseFiscalYearView(APIView):
         except (TypeError, ValueError):
             return Response({'detail': 'fy_start_year must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
 
-        from decimal import Decimal as _D
-        cs_value = request.data.get('closing_stock_value')
         try:
             result = close_fiscal_year(
                 fy_start_year,
                 location_id=request.data.get('location_id'),
                 generate_opening=bool(request.data.get('generate_opening', True)),
-                closing_stock_value=_D(str(cs_value)) if cs_value is not None else None,
                 user=request.user if request.user.is_authenticated else None,
             )
         except ValueError as exc:
