@@ -1,142 +1,184 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Loader2, Banknote, ChevronRight, ExternalLink } from 'lucide-react'
+import { Loader2, Banknote, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  getPayablesAging, createPaymentVoucher,
-  type PayablesAgingRow,
+  getBills, recordBillPayment,
+  type Bill,
 } from '../lib/api'
-import { formatCurrency, cn } from '../lib/utils'
+import { formatCurrency, formatDate, cn } from '../lib/utils'
 import { Input } from '../components/ui/input'
 import { Card } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
 import { Button } from '../components/ui/button'
+import { Badge } from '../components/ui/badge'
 import { EmptyState } from '../components/ui/EmptyState'
 import { SkeletonTable } from '../components/ui/Skeletons'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose,
 } from '../components/ui/sheet'
-import { useLocation as useActiveLocation } from '../contexts/LocationContext'
 
+/**
+ * Payables — one row per open vendor bill. Each row shows the bill number,
+ * dates, supplier, totals, and a Pay action that allocates the payment to
+ * that specific bill via recordBillPayment (i.e. the BillPayment table).
+ */
 export default function PayablesPage() {
-  const [rows, setRows] = useState<PayablesAgingRow[]>([])
+  const [bills, setBills] = useState<Bill[]>([])
   const [loading, setLoading] = useState(true)
-  const [asOf, setAsOf] = useState(new Date().toISOString().split('T')[0])
-  const [paying, setPaying] = useState<PayablesAgingRow | null>(null)
+  const [search, setSearch] = useState('')
+  const [paying, setPaying] = useState<Bill | null>(null)
 
   async function load() {
     setLoading(true)
     try {
-      const params: Record<string, string> = {}
-      if (asOf) params.date = asOf
-      const res = await getPayablesAging(params)
-      setRows(res.rows)
+      const params: Record<string, string> = { status: 'open,partially_paid' }
+      if (search) params.search = search
+      const res = await getBills(params)
+      setBills(res.results)
     } catch {
-      toast.error('Failed to load payables aging')
+      toast.error('Failed to load open bills')
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [asOf])
+  useEffect(() => { load() /* eslint-disable-next-line */ }, [])
 
-  const totals = useMemo(() => rows.reduce(
-    (acc, row) => ({
-      total: acc.total + Number(row.total_outstanding),
-      d0_30: acc.d0_30 + Number(row.aging_0_30),
-      d31_60: acc.d31_60 + Number(row.aging_31_60),
-      d61_90: acc.d61_90 + Number(row.aging_61_90),
-      d90plus: acc.d90plus + Number(row.aging_90_plus),
-    }),
-    { total: 0, d0_30: 0, d31_60: 0, d61_90: 0, d90plus: 0 }
-  ), [rows])
+  // Re-fetch when search changes (debounced).
+  useEffect(() => {
+    const t = setTimeout(load, 250)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search])
+
+  const today = new Date().toISOString().slice(0, 10)
+  const totals = useMemo(() => {
+    return bills.reduce((acc, b) => {
+      const due = parseFloat(b.balance_due) || 0
+      const overdue = b.due_date && b.due_date < today
+      return {
+        total: acc.total + due,
+        overdue: acc.overdue + (overdue ? due : 0),
+        count: acc.count + 1,
+      }
+    }, { total: 0, overdue: 0, count: 0 })
+  }, [bills, today])
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Payables Aging</h1>
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+            Payables
+          </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
-            <span className="mono">{rows.length}</span> suppliers owed a total of{' '}
-            <span className="font-medium mono" style={{ color: 'var(--warning)' }}>{formatCurrency(totals.total)}</span>.
-            Click a row to drill into the supplier; use Pay to record payment.
+            <span className="mono">{totals.count}</span> open bills totalling{' '}
+            <span className="font-medium mono" style={{ color: 'var(--warning)' }}>{formatCurrency(totals.total)}</span>
+            {totals.overdue > 0 && (
+              <>
+                {' '}·{' '}
+                <span className="font-medium mono" style={{ color: 'var(--danger)' }}>
+                  {formatCurrency(totals.overdue)} overdue
+                </span>
+              </>
+            )}
+            . Click Pay on a bill to record a payment against it.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>As of</label>
-          <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-auto" />
-        </div>
+        <Input
+          type="text"
+          placeholder="Search bill # or vendor…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="w-64"
+        />
       </div>
 
       {loading ? (
-        <SkeletonTable rows={6} cols={7} />
-      ) : rows.length === 0 ? (
+        <SkeletonTable rows={6} cols={8} />
+      ) : bills.length === 0 ? (
         <EmptyState
           icon={Banknote}
-          title="No outstanding payables"
-          description="When you owe suppliers, their aging buckets will appear here."
+          title="No open bills"
+          description="Once you record vendor bills, the unpaid ones will appear here."
         />
       ) : (
         <Card className="overflow-hidden p-0">
           <Table>
             <Thead>
               <Tr>
-                <Th className="text-left">Supplier</Th>
-                <Th className="text-right px-3">Total Outstanding</Th>
-                <Th className="text-right px-3">0–30</Th>
-                <Th className="text-right px-3">31–60</Th>
-                <Th className="text-right px-3">61–90</Th>
-                <Th className="text-right px-3">90+</Th>
-                <Th className="w-[160px]" />
+                <Th className="text-left">Bill #</Th>
+                <Th className="text-left">Date</Th>
+                <Th className="text-left">Due</Th>
+                <Th className="text-left">Vendor</Th>
+                <Th className="text-right px-3">Total</Th>
+                <Th className="text-right px-3">Balance Due</Th>
+                <Th className="text-left">Status</Th>
+                <Th className="w-[140px]" />
               </Tr>
             </Thead>
             <Tbody>
-              {rows.map((row) => (
-                <Tr key={row.supplier_id} className="group">
-                  <Td className="font-medium">
-                    <Link
-                      to={`/parties/suppliers/${row.supplier_id}`}
-                      className="inline-flex items-center gap-1 hover:underline"
-                      style={{ color: 'var(--ink)' }}
-                    >
-                      {row.supplier_name}
-                      <ExternalLink size={11} className="opacity-0 group-hover:opacity-100" style={{ color: 'var(--brand)' }} />
-                    </Link>
-                  </Td>
-                  <Td className="text-right mono font-semibold px-3" style={{ color: 'var(--ink)' }}>
-                    {formatCurrency(row.total_outstanding)}
-                  </Td>
-                  <Td className="text-right mono px-3" style={{ color: 'var(--ink-2)' }}>{formatCurrency(row.aging_0_30)}</Td>
-                  <Td className="text-right mono px-3" style={{ color: 'var(--warning)' }}>{formatCurrency(row.aging_31_60)}</Td>
-                  <Td className="text-right mono px-3" style={{ color: '#d97706' }}>{formatCurrency(row.aging_61_90)}</Td>
-                  <Td className="text-right mono px-3" style={{ color: 'var(--danger)' }}>{formatCurrency(row.aging_90_plus)}</Td>
-                  <Td className="text-right pr-3">
-                    <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button size="sm" onClick={() => setPaying(row)}>
-                        <Banknote size={13} /> Pay
-                      </Button>
+              {bills.map((b) => {
+                const overdue = b.due_date && b.due_date < today
+                return (
+                  <Tr key={b.id} className="group">
+                    <Td>
                       <Link
-                        to={`/parties/suppliers/${row.supplier_id}`}
-                        className="p-1.5 rounded hover:bg-[var(--color-hover-bg)]"
-                        style={{ color: 'var(--ink-3)' }}
-                        title="Open detail"
+                        to={`/bills/${b.id}`}
+                        className="font-medium mono hover:underline"
+                        style={{ color: 'var(--brand)' }}
                       >
-                        <ChevronRight size={16} />
+                        {b.bill_no || `BILL-${b.id}`}
                       </Link>
-                    </div>
-                  </Td>
-                </Tr>
-              ))}
+                    </Td>
+                    <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(b.bill_date)}</Td>
+                    <Td className={cn('text-sm', overdue && 'font-medium')}
+                      style={{ color: overdue ? 'var(--danger)' : 'var(--ink-2)' }}>
+                      {b.due_date ? formatDate(b.due_date) : '—'}
+                      {overdue && <span className="ml-1 text-xs">(overdue)</span>}
+                    </Td>
+                    <Td className="text-sm" style={{ color: 'var(--ink)' }}>{b.vendor_name}</Td>
+                    <Td className="text-right mono px-3" style={{ color: 'var(--ink)' }}>
+                      {formatCurrency(b.total_amount)}
+                    </Td>
+                    <Td className="text-right mono px-3 font-semibold"
+                      style={{ color: parseFloat(b.balance_due) > 0 ? 'var(--warning)' : 'var(--ink-2)' }}>
+                      {formatCurrency(b.balance_due)}
+                    </Td>
+                    <Td>
+                      <Badge variant={b.status === 'partially_paid' ? 'warning' : 'default'}>
+                        {b.status === 'partially_paid' ? 'Part-paid' : 'Open'}
+                      </Badge>
+                    </Td>
+                    <Td className="text-right pr-3">
+                      <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button size="sm" onClick={() => setPaying(b)}>
+                          <Banknote size={13} /> Pay
+                        </Button>
+                        <Link
+                          to={`/bills/${b.id}`}
+                          className="p-1.5 rounded hover:bg-[var(--color-hover-bg)]"
+                          style={{ color: 'var(--ink-3)' }}
+                          title="Open bill"
+                        >
+                          <ExternalLink size={14} />
+                        </Link>
+                      </div>
+                    </Td>
+                  </Tr>
+                )
+              })}
             </Tbody>
             <tfoot>
               <tr style={{ borderTop: '2px solid var(--line)', background: 'var(--color-grey-light)' }} className="font-semibold">
-                <td className="py-3 px-4 text-sm" style={{ color: 'var(--ink-2)' }}>Total</td>
-                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--ink)' }}>{formatCurrency(totals.total)}</td>
-                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--ink-2)' }}>{formatCurrency(totals.d0_30)}</td>
-                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--warning)' }}>{formatCurrency(totals.d31_60)}</td>
-                <td className="py-3 px-3 text-right mono" style={{ color: '#d97706' }}>{formatCurrency(totals.d61_90)}</td>
-                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--danger)' }}>{formatCurrency(totals.d90plus)}</td>
-                <td />
+                <td colSpan={5} className="py-3 px-4 text-sm" style={{ color: 'var(--ink-2)' }}>
+                  Total · {totals.count} bill{totals.count === 1 ? '' : 's'}
+                </td>
+                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--warning)' }}>
+                  {formatCurrency(totals.total)}
+                </td>
+                <td colSpan={2} />
               </tr>
             </tfoot>
           </Table>
@@ -144,51 +186,40 @@ export default function PayablesPage() {
       )}
 
       {paying && (
-        <PayPaymentSheet row={paying} onClose={() => setPaying(null)}
-          onSuccess={() => { setPaying(null); load() }} />
+        <PayBillSheet
+          bill={paying}
+          onClose={() => setPaying(null)}
+          onSuccess={() => { setPaying(null); load() }}
+        />
       )}
     </div>
   )
 }
 
-function PayPaymentSheet({ row, onClose, onSuccess }: {
-  row: PayablesAgingRow
+function PayBillSheet({ bill, onClose, onSuccess }: {
+  bill: Bill
   onClose: () => void
   onSuccess: () => void
 }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
-  const [amount, setAmount] = useState(row.total_outstanding)
+  const [amount, setAmount] = useState(bill.balance_due)
   const [mode, setMode] = useState<'bank' | 'cash'>('bank')
-  const [narration, setNarration] = useState(`Payment to ${row.supplier_name}`)
+  const [reference, setReference] = useState('')
+  const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
-
-  const outstanding = parseFloat(row.total_outstanding) || 0
-
-  const { activeLocationId } = useActiveLocation()
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     const amt = parseFloat(amount) || 0
     if (amt <= 0) { toast.error('Amount must be > 0'); return }
-    if (activeLocationId === null) {
-      toast.error('Select a specific location before recording a payment')
-      return
-    }
-    if (amt > outstanding + 0.005) {
-      if (!confirm(`Amount ${formatCurrency(amt)} exceeds outstanding ${formatCurrency(outstanding)}. Continue anyway?`)) return
-    }
     setSaving(true)
     try {
-      await createPaymentVoucher({
-        date, amount, party_id: row.supplier_id,
-        payment_mode: mode, narration,
-        location_id: activeLocationId,
-      })
-      toast.success('Payment posted')
+      await recordBillPayment(bill.id, { date, amount, mode, reference, notes })
+      toast.success(`Payment recorded against ${bill.bill_no}`)
       onSuccess()
     } catch (err) {
       const e = err as { response?: { data?: { detail?: string } } }
-      toast.error(e.response?.data?.detail || 'Failed to post payment')
+      toast.error(e.response?.data?.detail || 'Failed to record payment')
     } finally { setSaving(false) }
   }
 
@@ -197,10 +228,10 @@ function PayPaymentSheet({ row, onClose, onSuccess }: {
       <SheetContent width="md">
         <form onSubmit={submit} className="flex flex-col h-full">
           <SheetHeader>
-            <SheetTitle>Make payment</SheetTitle>
-            <p className="text-xs text-slate-500 mt-0.5">
-              To <span className="font-medium">{row.supplier_name}</span> · Outstanding{' '}
-              <span className="font-mono font-medium">{formatCurrency(outstanding)}</span>
+            <SheetTitle>Pay {bill.bill_no || `Bill #${bill.id}`}</SheetTitle>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--ink-3)' }}>
+              {bill.vendor_name} · Outstanding{' '}
+              <span className="font-mono font-medium">{formatCurrency(bill.balance_due)}</span>
             </p>
           </SheetHeader>
           <SheetBody>
@@ -210,9 +241,8 @@ function PayPaymentSheet({ row, onClose, onSuccess }: {
                   <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
                 </Field>
                 <Field label="Amount" required>
-                  <Input type="number" step="0.01" min="0.01" required value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="text-right font-mono" />
+                  <Input type="number" step="0.01" min="0.01" max={bill.balance_due} required value={amount}
+                    onChange={(e) => setAmount(e.target.value)} className="text-right font-mono" />
                 </Field>
               </div>
               <Field label="Paid from">
@@ -228,19 +258,29 @@ function PayPaymentSheet({ row, onClose, onSuccess }: {
                   ))}
                 </div>
               </Field>
-              <Field label="Narration">
-                <Input value={narration} onChange={(e) => setNarration(e.target.value)} />
+              <Field label="Reference" hint="Cheque #, UTR, transaction ID — optional">
+                <Input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="Optional" />
               </Field>
-              <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-lg p-3">
-                Posts a Payment: Debit Trade Payables (party-tagged to {row.supplier_name}),
-                Credit {mode === 'bank' ? 'Bank' : 'Cash'}.
+              <Field label="Notes">
+                <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional" />
+              </Field>
+              <div
+                className="text-xs rounded-lg p-3"
+                style={{
+                  background: 'var(--surface-1)',
+                  color: 'var(--ink-3)',
+                  border: '1px solid var(--line)',
+                }}
+              >
+                Allocated against this bill specifically — partial payments are supported and the
+                bill's status will switch to <strong>Part-paid</strong> until the balance is cleared.
               </div>
             </div>
           </SheetBody>
           <SheetFooter>
             <SheetClose asChild><Button type="button" variant="secondary">Cancel</Button></SheetClose>
             <Button type="submit" disabled={saving}>
-              {saving && <Loader2 className="animate-spin" size={14} />} Post Payment
+              {saving && <Loader2 className="animate-spin" size={14} />} Save Payment
             </Button>
           </SheetFooter>
         </form>
@@ -249,17 +289,19 @@ function PayPaymentSheet({ row, onClose, onSuccess }: {
   )
 }
 
-function Field({ label, required, children }: {
+function Field({ label, required, hint, children }: {
   label: string
   required?: boolean
+  hint?: string
   children: React.ReactNode
 }) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-slate-600 mb-1.5">
-        {label} {required && <span className="text-rose-500">*</span>}
+      <span className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>
+        {label} {required && <span style={{ color: 'var(--danger)' }}>*</span>}
       </span>
       {children}
+      {hint && <span className="block text-xs mt-1" style={{ color: 'var(--ink-3)' }}>{hint}</span>}
     </label>
   )
 }

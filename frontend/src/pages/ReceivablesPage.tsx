@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Loader2, Wallet, ChevronRight, ExternalLink } from 'lucide-react'
+import { Loader2, Wallet, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  getReceivablesAging, createReceiptVoucher,
-  type ReceivablesAgingRow,
+  getOpenCustomerInvoices, createReceiptVoucher,
+  type OpenCustomerInvoice,
 } from '../lib/api'
-import { formatCurrency, cn } from '../lib/utils'
+import { formatCurrency, formatDate, cn } from '../lib/utils'
 import { Input } from '../components/ui/input'
 import { Card } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
@@ -18,53 +18,81 @@ import {
 } from '../components/ui/sheet'
 import { useLocation as useActiveLocation } from '../contexts/LocationContext'
 
+/**
+ * Receivables — one row per open customer SALE invoice. Click Receive on
+ * any row to record a receipt against that customer. Per-invoice balance
+ * isn't tracked (no bill-allocation on the customer side); the rightmost
+ * "Customer outstanding" column shows the customer's running net so you
+ * can see which customers still owe overall.
+ */
 export default function ReceivablesPage() {
-  const [rows, setRows] = useState<ReceivablesAgingRow[]>([])
+  const [rows, setRows] = useState<OpenCustomerInvoice[]>([])
   const [loading, setLoading] = useState(true)
   const [asOf, setAsOf] = useState(new Date().toISOString().split('T')[0])
-  const [paying, setPaying] = useState<ReceivablesAgingRow | null>(null)
+  const [search, setSearch] = useState('')
+  const [receiving, setReceiving] = useState<OpenCustomerInvoice | null>(null)
 
   async function load() {
     setLoading(true)
     try {
       const params: Record<string, string> = {}
       if (asOf) params.date = asOf
-      const res = await getReceivablesAging(params)
+      if (search) params.search = search
+      const res = await getOpenCustomerInvoices(params)
       setRows(res.rows)
     } catch {
-      toast.error('Failed to load receivables aging')
+      toast.error('Failed to load open customer invoices')
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [asOf])
+  useEffect(() => { load() /* eslint-disable-next-line */ }, [asOf])
+  useEffect(() => {
+    const t = setTimeout(load, 250)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search])
 
-  const totals = useMemo(() => rows.reduce(
-    (acc, row) => ({
-      total: acc.total + Number(row.total_outstanding),
-      d0_30: acc.d0_30 + Number(row.aging_0_30),
-      d31_60: acc.d31_60 + Number(row.aging_31_60),
-      d61_90: acc.d61_90 + Number(row.aging_61_90),
-      d90plus: acc.d90plus + Number(row.aging_90_plus),
-    }),
-    { total: 0, d0_30: 0, d31_60: 0, d61_90: 0, d90plus: 0 }
-  ), [rows])
+  // Customer-level outstanding deduped — same party appearing on multiple
+  // invoices contributes once to the header total.
+  const totals = useMemo(() => {
+    const perCustomer = new Map<number, number>()
+    for (const r of rows) perCustomer.set(r.party_id, parseFloat(r.customer_outstanding) || 0)
+    let sum = 0
+    perCustomer.forEach((v) => { sum += v })
+    return { invoiceCount: rows.length, customerCount: perCustomer.size, totalOutstanding: sum }
+  }, [rows])
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Receivables Aging</h1>
+          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+            Receivables
+          </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
-            <span className="mono">{rows.length}</span> customers owe a total of{' '}
-            <span className="font-medium mono" style={{ color: 'var(--warning)' }}>{formatCurrency(totals.total)}</span>.
-            Click a row to drill into the customer; use Receive to record payment.
+            <span className="mono">{totals.invoiceCount}</span> open invoice
+            {totals.invoiceCount === 1 ? '' : 's'} across <span className="mono">{totals.customerCount}</span>{' '}
+            customer{totals.customerCount === 1 ? '' : 's'}, owing{' '}
+            <span className="font-medium mono" style={{ color: 'var(--warning)' }}>
+              {formatCurrency(totals.totalOutstanding)}
+            </span>
+            . Click Receive on an invoice to record a payment from that customer.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>As of</label>
-          <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-auto" />
+        <div className="flex items-center gap-3 flex-wrap">
+          <Input
+            type="text"
+            placeholder="Search invoice # or customer…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-56"
+          />
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>As of</label>
+            <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-auto" />
+          </div>
         </div>
       </div>
 
@@ -73,56 +101,55 @@ export default function ReceivablesPage() {
       ) : rows.length === 0 ? (
         <EmptyState
           icon={Wallet}
-          title="No outstanding receivables"
-          description="When customers owe you money, their aging buckets will appear here."
+          title="No outstanding customer invoices"
+          description="When customers owe you money, their open invoices will appear here."
         />
       ) : (
         <Card className="overflow-hidden p-0">
           <Table>
             <Thead>
               <Tr>
+                <Th className="text-left">Invoice #</Th>
+                <Th className="text-left">Date</Th>
+                <Th className="text-left">Type</Th>
                 <Th className="text-left">Customer</Th>
-                <Th className="text-right px-3">Total Outstanding</Th>
-                <Th className="text-right px-3">0–30</Th>
-                <Th className="text-right px-3">31–60</Th>
-                <Th className="text-right px-3">61–90</Th>
-                <Th className="text-right px-3">90+</Th>
-                <Th className="w-[160px]" />
+                <Th className="text-right px-3">Invoice Amount</Th>
+                <Th className="text-right px-3">Customer Outstanding</Th>
+                <Th className="w-[140px]" />
               </Tr>
             </Thead>
             <Tbody>
-              {rows.map((row) => (
-                <Tr key={row.customer_id} className="group">
+              {rows.map((r) => (
+                <Tr key={`${r.party_id}-${r.invoice_no}`} className="group">
+                  <Td>
+                    <span className="font-medium mono" style={{ color: 'var(--brand)' }}>
+                      {r.invoice_no}
+                    </span>
+                  </Td>
+                  <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(r.date)}</Td>
+                  <Td className="text-xs" style={{ color: 'var(--ink-2)' }}>{r.voucher_type}</Td>
                   <Td className="font-medium">
                     <Link
-                      to={`/parties/customers/${row.customer_id}`}
+                      to={`/parties/customers/${r.party_id}`}
                       className="inline-flex items-center gap-1 hover:underline"
                       style={{ color: 'var(--ink)' }}
                     >
-                      {row.customer_name}
+                      {r.party_name}
                       <ExternalLink size={11} className="opacity-0 group-hover:opacity-100" style={{ color: 'var(--brand)' }} />
                     </Link>
                   </Td>
-                  <Td className="text-right mono font-semibold px-3" style={{ color: 'var(--ink)' }}>
-                    {formatCurrency(row.total_outstanding)}
+                  <Td className="text-right mono px-3" style={{ color: 'var(--ink)' }}>
+                    {formatCurrency(r.amount)}
                   </Td>
-                  <Td className="text-right mono px-3" style={{ color: 'var(--ink-2)' }}>{formatCurrency(row.aging_0_30)}</Td>
-                  <Td className="text-right mono px-3" style={{ color: 'var(--warning)' }}>{formatCurrency(row.aging_31_60)}</Td>
-                  <Td className="text-right mono px-3" style={{ color: '#d97706' }}>{formatCurrency(row.aging_61_90)}</Td>
-                  <Td className="text-right mono px-3" style={{ color: 'var(--danger)' }}>{formatCurrency(row.aging_90_plus)}</Td>
+                  <Td className="text-right mono font-semibold px-3"
+                    style={{ color: 'var(--warning)' }}>
+                    {formatCurrency(r.customer_outstanding)}
+                  </Td>
                   <Td className="text-right pr-3">
                     <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button size="sm" onClick={() => setPaying(row)}>
+                      <Button size="sm" onClick={() => setReceiving(r)}>
                         <Wallet size={13} /> Receive
                       </Button>
-                      <Link
-                        to={`/parties/customers/${row.customer_id}`}
-                        className="p-1.5 rounded hover:bg-[var(--color-hover-bg)]"
-                        style={{ color: 'var(--ink-3)' }}
-                        title="Open detail"
-                      >
-                        <ChevronRight size={16} />
-                      </Link>
                     </div>
                   </Td>
                 </Tr>
@@ -130,12 +157,12 @@ export default function ReceivablesPage() {
             </Tbody>
             <tfoot>
               <tr style={{ borderTop: '2px solid var(--line)', background: 'var(--color-grey-light)' }} className="font-semibold">
-                <td className="py-3 px-4 text-sm" style={{ color: 'var(--ink-2)' }}>Total</td>
-                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--ink)' }}>{formatCurrency(totals.total)}</td>
-                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--ink-2)' }}>{formatCurrency(totals.d0_30)}</td>
-                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--warning)' }}>{formatCurrency(totals.d31_60)}</td>
-                <td className="py-3 px-3 text-right mono" style={{ color: '#d97706' }}>{formatCurrency(totals.d61_90)}</td>
-                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--danger)' }}>{formatCurrency(totals.d90plus)}</td>
+                <td colSpan={5} className="py-3 px-4 text-sm" style={{ color: 'var(--ink-2)' }}>
+                  Total · {totals.customerCount} customer{totals.customerCount === 1 ? '' : 's'}
+                </td>
+                <td className="py-3 px-3 text-right mono" style={{ color: 'var(--warning)' }}>
+                  {formatCurrency(totals.totalOutstanding)}
+                </td>
                 <td />
               </tr>
             </tfoot>
@@ -143,27 +170,27 @@ export default function ReceivablesPage() {
         </Card>
       )}
 
-      {paying && (
-        <ReceivePaymentSheet row={paying} onClose={() => setPaying(null)}
-          onSuccess={() => { setPaying(null); load() }} />
+      {receiving && (
+        <ReceivePaymentSheet
+          row={receiving}
+          onClose={() => setReceiving(null)}
+          onSuccess={() => { setReceiving(null); load() }}
+        />
       )}
     </div>
   )
 }
 
 function ReceivePaymentSheet({ row, onClose, onSuccess }: {
-  row: ReceivablesAgingRow
+  row: OpenCustomerInvoice
   onClose: () => void
   onSuccess: () => void
 }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
-  const [amount, setAmount] = useState(row.total_outstanding)
+  const [amount, setAmount] = useState(row.amount)
   const [mode, setMode] = useState<'bank' | 'cash'>('bank')
-  const [narration, setNarration] = useState(`Receipt from ${row.customer_name}`)
+  const [narration, setNarration] = useState(`Receipt from ${row.party_name} (${row.invoice_no})`)
   const [saving, setSaving] = useState(false)
-
-  const outstanding = parseFloat(row.total_outstanding) || 0
-
   const { activeLocationId } = useActiveLocation()
 
   async function submit(e: React.FormEvent) {
@@ -174,17 +201,14 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
       toast.error('Select a specific location before recording a receipt')
       return
     }
-    if (amt > outstanding + 0.005) {
-      if (!confirm(`Amount ${formatCurrency(amt)} exceeds outstanding ${formatCurrency(outstanding)}. Continue anyway?`)) return
-    }
     setSaving(true)
     try {
       await createReceiptVoucher({
-        date, amount, party_id: row.customer_id,
+        date, amount, party_id: row.party_id,
         receipt_mode: mode, narration,
         location_id: activeLocationId,
       })
-      toast.success('Receipt posted')
+      toast.success(`Receipt against ${row.invoice_no} posted`)
       onSuccess()
     } catch (err) {
       const e = err as { response?: { data?: { detail?: string } } }
@@ -197,10 +221,11 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
       <SheetContent width="md">
         <form onSubmit={submit} className="flex flex-col h-full">
           <SheetHeader>
-            <SheetTitle>Receive payment</SheetTitle>
-            <p className="text-xs text-slate-500 mt-0.5">
-              From <span className="font-medium">{row.customer_name}</span> · Outstanding{' '}
-              <span className="font-mono font-medium">{formatCurrency(outstanding)}</span>
+            <SheetTitle>Receive against {row.invoice_no}</SheetTitle>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--ink-3)' }}>
+              From <span className="font-medium">{row.party_name}</span> · Invoice{' '}
+              <span className="font-mono">{formatCurrency(row.amount)}</span> · Customer outstanding{' '}
+              <span className="font-mono font-medium">{formatCurrency(row.customer_outstanding)}</span>
             </p>
           </SheetHeader>
           <SheetBody>
@@ -211,8 +236,7 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
                 </Field>
                 <Field label="Amount" required>
                   <Input type="number" step="0.01" min="0.01" required value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="text-right font-mono" />
+                    onChange={(e) => setAmount(e.target.value)} className="text-right font-mono" />
                 </Field>
               </div>
               <Field label="Received in">
@@ -231,9 +255,18 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
               <Field label="Narration">
                 <Input value={narration} onChange={(e) => setNarration(e.target.value)} />
               </Field>
-              <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-lg p-3">
-                Posts a Receipt: Debit {mode === 'bank' ? 'Bank' : 'Cash'}, Credit Trade Receivables
-                <span className="ml-1">(party-tagged to {row.customer_name}).</span>
+              <div
+                className="text-xs rounded-lg p-3"
+                style={{
+                  background: 'var(--surface-1)',
+                  color: 'var(--ink-3)',
+                  border: '1px solid var(--line)',
+                }}
+              >
+                Posts a Receipt at the customer level: Dr {mode === 'bank' ? 'Bank' : 'Cash'} /
+                Cr Trade Receivables (party-tagged to {row.party_name}). Customer-side payments
+                aren't allocated to specific invoices, so the receipt reduces the customer's
+                overall outstanding balance.
               </div>
             </div>
           </SheetBody>
@@ -256,8 +289,8 @@ function Field({ label, required, children }: {
 }) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-slate-600 mb-1.5">
-        {label} {required && <span className="text-rose-500">*</span>}
+      <span className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>
+        {label} {required && <span style={{ color: 'var(--danger)' }}>*</span>}
       </span>
       {children}
     </label>

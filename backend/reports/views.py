@@ -606,6 +606,87 @@ class ReceivablesAgingView(APIView):
         })
 
 
+class OpenCustomerInvoicesView(APIView):
+    """One row per customer SALE journal entry whose customer still has a
+    net outstanding balance. Unlike Payables (which uses the Bill model
+    with proper per-bill allocation), customer invoices live as JEs and
+    receipts are not allocated to specific invoices — so the balance is
+    tracked at the customer level. We expose the invoice rows here so the
+    user can pick one and record a receipt against that customer.
+
+    Each row: invoice_no (entry_no), date, party, party_id, amount (Dr on
+    the Receivable line within this JE), customer_outstanding (net balance
+    across all the customer's JEs up to `as_of`).
+    """
+    def get(self, request):
+        as_of_date = request.query_params.get('date', date.today().isoformat())
+        search = request.query_params.get('search', '').strip().lower()
+        location = get_active_location(request)
+
+        lines_qs = JournalEntryLine.objects.filter(
+            entry__is_posted=True,
+            entry__date__lte=as_of_date,
+            party_type='Customer',
+            account__account_subtype='Receivable',
+            debit__gt=0,
+        ).select_related('entry')
+        if location:
+            lines_qs = lines_qs.filter(entry__location_id=location.id)
+
+        # Per-customer net outstanding (debit minus credit on Receivable across
+        # ALL their JEs up to as_of). We only emit invoice rows for customers
+        # whose net is positive — fully-settled customers fall out.
+        all_lines = JournalEntryLine.objects.filter(
+            entry__is_posted=True,
+            entry__date__lte=as_of_date,
+            party_type='Customer',
+            account__account_subtype='Receivable',
+        )
+        if location:
+            all_lines = all_lines.filter(entry__location_id=location.id)
+
+        per_customer = defaultdict(lambda: Decimal('0'))
+        for line in all_lines:
+            per_customer[line.party_id] += line.debit - line.credit
+
+        from inventory_reader.models import CustomerRO
+
+        # Resolve invoice rows.
+        rows = []
+        for line in lines_qs.order_by('entry__date', 'entry__id'):
+            pid = line.party_id
+            outstanding = per_customer.get(pid, Decimal('0'))
+            if outstanding <= 0:
+                continue
+            try:
+                customer = CustomerRO.objects.get(id=pid)
+                name = customer.customer_name
+            except CustomerRO.DoesNotExist:
+                name = f'Customer #{pid}'
+            if search and search not in name.lower() \
+                    and search not in (line.entry.entry_no or '').lower():
+                continue
+            rows.append({
+                'invoice_no': line.entry.entry_no,
+                'voucher_type': line.entry.voucher_type,
+                'date': line.entry.date.isoformat(),
+                'party_id': pid,
+                'party_name': name,
+                'amount': str(line.debit),
+                'narration': line.entry.narration or '',
+                'customer_outstanding': str(outstanding),
+            })
+
+        return Response({
+            'as_of_date': as_of_date,
+            'rows': rows,
+            'total_invoices': len(rows),
+            'total_outstanding': str(sum(
+                {r['party_id']: Decimal(r['customer_outstanding']) for r in rows}.values()
+            )),
+        })
+
+
 class PayablesAgingView(APIView):
     def get(self, request):
         as_of_date = request.query_params.get('date', date.today().isoformat())

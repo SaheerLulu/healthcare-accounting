@@ -8,6 +8,7 @@ urlpatterns = [
     path('ledger/', views.LedgerView.as_view(), name='ledger'),
     path('ledger/export/', views.LedgerExportView.as_view(), name='ledger-export'),
     path('receivables-aging/', views.ReceivablesAgingView.as_view(), name='receivables-aging'),
+    path('open-customer-invoices/', views.OpenCustomerInvoicesView.as_view(), name='open-customer-invoices'),
     path('payables-aging/', views.PayablesAgingView.as_view(), name='payables-aging'),
     path('bank-book/', views.BankBookView.as_view(), name='bank-book'),
     path('cash-book/', views.CashBookView.as_view(), name='cash-book'),
