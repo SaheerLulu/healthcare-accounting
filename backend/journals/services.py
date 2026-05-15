@@ -665,8 +665,18 @@ class JournalAutoGenerationService:
             party_type='Supplier',
             party_id=data.get('party_id'),
         )
-        # Credit: Bank or Cash
-        credit_ac = self._acct('BANK') if payment_mode == 'bank' else self._acct('CASH')
+        # Credit: Bank or Cash. When payment_mode='bank' the caller can
+        # name a specific Bank-subtype ChartOfAccount via bank_account_id;
+        # otherwise we fall back to the BANK mapping.
+        if payment_mode == 'bank':
+            bank_id = data.get('bank_account_id')
+            if bank_id:
+                from core.models import ChartOfAccount
+                credit_ac = ChartOfAccount.objects.get(pk=bank_id)
+            else:
+                credit_ac = self._acct('BANK')
+        else:
+            credit_ac = self._acct('CASH')
         JournalEntryLine.objects.create(entry=entry, account=credit_ac, credit=amount)
 
         entry.post()

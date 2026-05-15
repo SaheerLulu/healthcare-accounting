@@ -339,7 +339,7 @@ function PaymentSheet({ suppliers, onSuccess }: { suppliers: Party[]; onSuccess:
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   const [amount, setAmount] = useState('')
   const [partyId, setPartyId] = useState<number | ''>('')
-  const [mode, setMode] = useState('bank')
+  const [mode, setMode] = useState<'bank' | 'cash'>('bank')
   const [narration, setNarration] = useState('')
 
   function reset() {
@@ -397,7 +397,7 @@ function PaymentSheet({ suppliers, onSuccess }: { suppliers: Party[]; onSuccess:
             <div className="mt-3">
               <Field label="Paid from">
                 <div className="flex gap-2">
-                  {['bank', 'cash'].map((m) => (
+                  {(['bank', 'cash'] as const).map((m) => (
                     <label key={m} className={cn(
                       'flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm',
                       mode === m
@@ -435,7 +435,7 @@ function ReceiptSheet({ customers, onSuccess }: { customers: Party[]; onSuccess:
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   const [amount, setAmount] = useState('')
   const [partyId, setPartyId] = useState<number | ''>('')
-  const [mode, setMode] = useState('bank')
+  const [mode, setMode] = useState<'bank' | 'cash'>('bank')
   const [narration, setNarration] = useState('')
 
   function reset() {
@@ -491,7 +491,7 @@ function ReceiptSheet({ customers, onSuccess }: { customers: Party[]; onSuccess:
             <div className="mt-3">
               <Field label="Received in">
                 <div className="flex gap-2">
-                  {['bank', 'cash'].map((m) => (
+                  {(['bank', 'cash'] as const).map((m) => (
                     <label key={m} className={cn(
                       'flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm',
                       mode === m

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Plus, Loader2, Pencil, Trash2, Search,
   ChevronRight, ChevronDown, List as ListIcon, GitBranch,
-  PowerOff, Power, FileText,
+  PowerOff, Power, FileText, BookOpen,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -509,7 +510,13 @@ function ListView({
             </Td>
             <Td className="text-right font-mono text-sm px-3">
               {a.documents_count ? (
-                <span className="text-slate-700">{a.documents_count}</span>
+                <Link
+                  to={`/reports/ledger/${a.account_code}`}
+                  className="text-slate-700 hover:underline hover:text-teal-700"
+                  title="Open ledger"
+                >
+                  {a.documents_count}
+                </Link>
               ) : (
                 <span className="text-slate-300">0</span>
               )}
@@ -521,6 +528,13 @@ function ListView({
             </Td>
             <Td>
               <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Link
+                  to={`/reports/ledger/${a.account_code}`}
+                  className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100"
+                  title="View ledger"
+                >
+                  <BookOpen size={14} />
+                </Link>
                 <button
                   onClick={() => onToggle(a)}
                   className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100"

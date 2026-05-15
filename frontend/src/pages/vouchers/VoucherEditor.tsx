@@ -60,9 +60,6 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
   const [costCenter, setCostCenter] = useState('')
   const [costCentreId, setCostCentreId] = useState<number | null>(null)
   const [voucherTypeProfileId, setVoucherTypeProfileId] = useState<number | null>(null)
-  const [isOptional, setIsOptional] = useState(false)
-  const [isMemorandum, setIsMemorandum] = useState(false)
-  const [reversalDate, setReversalDate] = useState('')
   const [lines, setLines] = useState<VoucherLine[]>([
     makeLine(config.firstLineSide),
     makeLine(config.secondLineSide),
@@ -125,9 +122,6 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
           setCostCenter(entry.cost_center || '')
           setCostCentreId(entry.cost_centre ?? null)
           setVoucherTypeProfileId(entry.voucher_type_profile ?? null)
-          setIsOptional(entry.is_optional || false)
-          setIsMemorandum(entry.is_memorandum || false)
-          setReversalDate(entry.reversal_date || '')
           setLines(
             entry.lines.length > 0
               ? entry.lines.map((l): VoucherLine => {
@@ -201,9 +195,6 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
       reference_id: referenceId ? Number(referenceId) : null,
       cost_center: costCenter,
       cost_centre: costCentreId,
-      is_optional: isOptional,
-      is_memorandum: isMemorandum,
-      reversal_date: reversalDate || null,
       location_id: activeLocationId as number,
       lines: cleanLines,
     }
@@ -279,7 +270,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
       setSaving(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, narration, voucherType, referenceId, activeLocationId, lines, editingId, costCenter, costCentreId, voucherTypeProfileId, isOptional, isMemorandum, reversalDate, pendingAllocations])
+  }, [date, narration, voucherType, referenceId, activeLocationId, lines, editingId, costCenter, costCentreId, voucherTypeProfileId, pendingAllocations])
 
   // ─── Repeat last (Ctrl+H) ──────────────────────────────────────────────────
   const handleRepeatLast = useCallback(async () => {
@@ -436,6 +427,17 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
           <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             {editingId ? `Edit ${originalEntry?.entry_no ?? config.label}` : `${config.label} Voucher`}
           </h1>
+          <span
+            className="mono text-xs font-semibold px-2 py-0.5 rounded"
+            style={{
+              background: 'var(--surface-1)',
+              color: 'var(--ink-2)',
+              border: '1px solid var(--line)',
+            }}
+            title={originalEntry?.entry_no ? 'Voucher #' : 'Voucher # will be assigned on save'}
+          >
+            # {originalEntry?.entry_no || 'Auto on save'}
+          </span>
           <span className="text-sm" style={{ color: 'var(--ink-2)' }}>· {config.description}</span>
           {(costCenter || costCentreId) && (
             <button
@@ -497,13 +499,6 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
               <Input value={referenceId} onChange={(e) => setReferenceId(e.target.value)} />
             </Field>
           )}
-          <Field label="Voucher #" hint="Auto-generated">
-            <Input
-              value={originalEntry?.entry_no || '— assigned on save —'}
-              readOnly className="font-mono text-xs"
-              style={{ backgroundColor: 'var(--surface-1)', color: 'var(--ink-2)' }}
-            />
-          </Field>
           <Field label="Voucher Type">
             <Input
               value={config.label} readOnly
@@ -512,47 +507,6 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
           </Field>
         </div>
       </Card>
-
-      {/* Tally voucher modes */}
-      <div
-        className="flex items-center gap-3 flex-wrap px-1 text-xs"
-        style={{ color: 'var(--ink-2)' }}
-      >
-        <ModeToggle
-          label="Optional"
-          checked={isOptional}
-          onChange={setIsOptional}
-          help="Saved but excluded from ledger balances"
-        />
-        <ModeToggle
-          label="Memorandum"
-          checked={isMemorandum}
-          onChange={setIsMemorandum}
-          help="Tracked outside the books"
-        />
-        <label className="inline-flex items-center gap-1.5">
-          <span className="mono uppercase text-[10px] tracking-wider" style={{ color: 'var(--ink-3)' }}>
-            Reverse on
-          </span>
-          <input
-            type="date"
-            value={reversalDate}
-            onChange={(e) => setReversalDate(e.target.value)}
-            className="text-xs px-2 py-1 rounded-md outline-none"
-            style={{ border: '1px solid var(--line)', background: 'var(--surface-0)', color: 'var(--ink)' }}
-          />
-          {reversalDate && (
-            <button
-              type="button"
-              onClick={() => setReversalDate('')}
-              className="text-[11px] hover:underline"
-              style={{ color: 'var(--ink-3)' }}
-            >
-              clear
-            </button>
-          )}
-        </label>
-      </div>
 
       <Card className="overflow-hidden p-0">
         <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--line)' }}>
@@ -719,37 +673,6 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
         }}
       />
     </div>
-  )
-}
-
-function ModeToggle({ label, checked, onChange, help }: {
-  label: string
-  checked: boolean
-  onChange: (next: boolean) => void
-  help?: string
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full transition-colors"
-      style={{
-        background: checked ? 'rgba(15,157,154,0.10)' : 'var(--surface-0)',
-        border: `1px solid ${checked ? 'rgba(15,157,154,0.30)' : 'var(--line)'}`,
-        color: checked ? 'var(--brand)' : 'var(--ink-2)',
-        fontWeight: checked ? 600 : 400,
-      }}
-      title={help}
-    >
-      <span
-        className="inline-block w-3 h-3 rounded-full"
-        style={{
-          background: checked ? 'var(--brand)' : 'var(--surface-1)',
-          border: `1px solid ${checked ? 'var(--brand)' : 'var(--line)'}`,
-        }}
-      />
-      {label}
-    </button>
   )
 }
 

@@ -209,6 +209,9 @@ class PaymentVoucherSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal('0.01'))
     party_id = serializers.IntegerField(required=False, allow_null=True)
     payment_mode = serializers.ChoiceField(choices=['bank', 'cash'], default='bank')
+    # Specific Bank-subtype ChartOfAccount when payment_mode='bank'. Falls
+    # back to AccountMapping['BANK'] if omitted.
+    bank_account_id = serializers.IntegerField(required=False, allow_null=True)
     narration = serializers.CharField(required=False, allow_blank=True, default='Payment')
     location_id = serializers.IntegerField(required=True, allow_null=False)
 

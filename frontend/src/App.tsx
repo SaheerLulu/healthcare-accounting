@@ -53,6 +53,7 @@ import CashBookPage from './pages/reports/CashBookPage'
 import DaybookPage from './pages/reports/DaybookPage'
 import PayrollPage from './pages/PayrollPage'
 import StockSummaryPage from './pages/reports/StockSummaryPage'
+import LedgerPage from './pages/reports/LedgerPage'
 import SyncPage from './pages/SyncPage'
 import SettingsPage from './pages/SettingsPage'
 import AuditLogPage from './pages/AuditLogPage'
@@ -151,6 +152,7 @@ export default function App() {
           <Route path="reports/daybook" element={<DaybookPage />} />
           <Route path="payroll" element={<PayrollPage />} />
           <Route path="reports/stock-summary" element={<StockSummaryPage />} />
+          <Route path="reports/ledger/:code" element={<LedgerPage />} />
           <Route path="sync" element={<SyncPage />} />
           <Route path="audit" element={<AuditLogPage />} />
           <Route path="settings" element={<SettingsPage />} />

@@ -305,7 +305,9 @@ export async function getCustomers() {
 }
 
 export async function createPaymentVoucher(data: {
-  date: string; amount: string; party_id?: number | null; payment_mode: string; narration?: string; location_id: number
+  date: string; amount: string; party_id?: number | null;
+  payment_mode: 'bank' | 'cash'; bank_account_id?: number | null;
+  narration?: string; location_id: number
 }) {
   const res = await api.post('/journals/entries/payment/', data)
   return res.data as JournalEntry
@@ -1579,9 +1581,17 @@ export interface LedgerRow {
   date: string
   entry_no: string
   narration: string
+  voucher_type?: string
   debit: number | string
   credit: number | string
   balance: number | string
+}
+
+export interface LedgerReport {
+  account: { code: string; name: string; type: string }
+  opening_balance: string
+  transactions: LedgerRow[]
+  closing_balance: string
 }
 
 export async function getTrialBalance(params?: Record<string, string>) {
@@ -1601,7 +1611,7 @@ export async function getBalanceSheet(params?: Record<string, string>) {
 
 export async function getLedger(params?: Record<string, string>) {
   const res = await api.get('/reports/ledger/', { params })
-  return res.data as { rows: LedgerRow[] }
+  return res.data as LedgerReport
 }
 
 export async function getReceivablesAging(params?: Record<string, string>) {
