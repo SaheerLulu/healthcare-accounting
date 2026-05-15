@@ -149,6 +149,15 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
         line_errors = {}
         for idx, line in enumerate(lines):
             account = line.get('account')
+            # Posting to a non-leaf account would silently fall out of the P&L
+            # (which sums leaf accounts only) while still affecting the Balance
+            # Sheet's net-income calc — the two reports would no longer tie.
+            if account is not None and not getattr(account, 'is_leaf', True):
+                line_errors[idx] = (
+                    f'Cannot post to non-leaf account {account.account_code} '
+                    f'{account.account_name} (line {idx + 1}). Post to a leaf account.'
+                )
+                continue
             subtype = getattr(account, 'account_subtype', None)
             if subtype in self.PARTY_REQUIRED_SUBTYPES:
                 if not line.get('party_type') or not line.get('party_id'):

@@ -254,6 +254,18 @@ class JournalEntryLine(models.Model):
         if self.debit > 0 and self.credit > 0:
             raise ValidationError('A line cannot have both debit and credit.')
 
+    def save(self, *args, **kwargs):
+        # Postings must hit a leaf account, otherwise the row drops out of the
+        # P&L (which sums leaves only) while still affecting the Balance Sheet's
+        # net-income calc — the two reports would silently disagree. Enforce
+        # here so service-layer .objects.create() calls can't bypass it.
+        if self.account_id and not self.account.is_leaf:
+            raise ValidationError(
+                f'Cannot post to non-leaf account {self.account.account_code} '
+                f'{self.account.account_name}. Post to a leaf account.'
+            )
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"{self.entry.entry_no} | {self.account} | Dr:{self.debit} Cr:{self.credit}"
 

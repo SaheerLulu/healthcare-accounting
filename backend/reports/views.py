@@ -179,14 +179,15 @@ class BalanceSheetView(APIView):
         liability_items, total_liabilities = get_section_balances('LIABILITY')
         equity_items, total_equity = get_section_balances('EQUITY')
 
-        # Phase 1E: Compute current year net income and include in equity
-        # Net income = (revenue credits - revenue debits) - (expense debits - expense credits)
-        revenue_agg = lines_qs.filter(account__account_type='REVENUE').aggregate(
-            dr=Sum('debit'), cr=Sum('credit')
-        )
-        expense_agg = lines_qs.filter(account__account_type='EXPENSE').aggregate(
-            dr=Sum('debit'), cr=Sum('credit')
-        )
+        # Phase 1E: Compute current year net income and include in equity.
+        # is_leaf=True keeps this in lockstep with ProfitLossView so the two
+        # reports always tie out — even if a stray posting hits a parent account.
+        revenue_agg = lines_qs.filter(
+            account__account_type='REVENUE', account__is_leaf=True,
+        ).aggregate(dr=Sum('debit'), cr=Sum('credit'))
+        expense_agg = lines_qs.filter(
+            account__account_type='EXPENSE', account__is_leaf=True,
+        ).aggregate(dr=Sum('debit'), cr=Sum('credit'))
         rev_dr = revenue_agg['dr'] or Decimal('0.00')
         rev_cr = revenue_agg['cr'] or Decimal('0.00')
         exp_dr = expense_agg['dr'] or Decimal('0.00')

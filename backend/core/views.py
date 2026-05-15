@@ -71,6 +71,8 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         instance = serializer.save()
+        if instance.parent_id:
+            ChartOfAccount.objects.filter(pk=instance.parent_id, is_leaf=True).update(is_leaf=False)
         log_action('CREATE', 'ChartOfAccount', instance.pk, str(instance), request=self.request)
 
     def perform_update(self, serializer):
@@ -88,7 +90,16 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
                     raise ValidationError({
                         protected: f'Cannot change {protected} on a system-mapped account.',
                     })
+        old_parent_id = serializer.instance.parent_id
         instance = serializer.save()
+        new_parent_id = instance.parent_id
+        if old_parent_id != new_parent_id:
+            if new_parent_id:
+                ChartOfAccount.objects.filter(pk=new_parent_id, is_leaf=True).update(is_leaf=False)
+            if old_parent_id:
+                still_has_children = ChartOfAccount.objects.filter(parent_id=old_parent_id).exists()
+                if not still_has_children:
+                    ChartOfAccount.objects.filter(pk=old_parent_id).update(is_leaf=True)
         log_action('UPDATE', 'ChartOfAccount', instance.pk, str(instance), request=self.request)
 
     def perform_destroy(self, instance):
@@ -105,8 +116,11 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
             raise ValidationError(
                 'This account is bound to a system mapping; remove the mapping first.'
             )
+        parent_id = instance.parent_id
         log_action('DELETE', 'ChartOfAccount', instance.pk, str(instance), request=self.request)
         instance.delete()
+        if parent_id and not ChartOfAccount.objects.filter(parent_id=parent_id).exists():
+            ChartOfAccount.objects.filter(pk=parent_id).update(is_leaf=True)
 
     @action(detail=False, methods=['get'], url_path='tree')
     def tree(self, request):
