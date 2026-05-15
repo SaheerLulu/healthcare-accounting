@@ -1146,21 +1146,18 @@ class StockMovementSummaryView(APIView):
         if end_date:
             period_movements = period_movements.filter(created_at__date__lte=end_date)
 
-        # Compute opening balances
+        # StockMovementRO.quantity is signed (positive = IN, negative = OUT)
+        # per inventory_management's MovementType convention — just sum it.
         opening_data = defaultdict(int)
         for mv in opening_movements:
-            if mv.movement_type in ('purchase', 'purchase_return_in', 'adjustment_in'):
-                opening_data[mv.product_id] += mv.quantity
-            else:
-                opening_data[mv.product_id] -= mv.quantity
+            opening_data[mv.product_id] += mv.quantity
 
-        # Compute period movements
         product_data = defaultdict(lambda: {'in': 0, 'out': 0})
         for mv in period_movements:
-            if mv.movement_type in ('purchase', 'purchase_return_in', 'adjustment_in'):
+            if mv.quantity >= 0:
                 product_data[mv.product_id]['in'] += mv.quantity
             else:
-                product_data[mv.product_id]['out'] += mv.quantity
+                product_data[mv.product_id]['out'] += -mv.quantity
 
         # Collect all product IDs
         all_pids = set(opening_data.keys()) | set(product_data.keys())
@@ -1197,35 +1194,54 @@ class StockMovementSummaryView(APIView):
 class StockValuationView(APIView):
     """Product-wise stock valuation using weighted average cost."""
     def get(self, request):
-        from inventory_reader.models import StockMovementRO, ProductRO, PurchaseOrderLineRO
+        from inventory_reader.models import (
+            StockMovementRO, ProductRO, PurchaseOrderLineRO, OpeningStockLineRO,
+        )
 
         as_of_date = request.query_params.get('date', date.today().isoformat())
         location = get_active_location(request)
 
-        # Get closing quantities
+        # StockMovementRO.quantity is signed (positive = IN, negative = OUT)
+        # per inventory_management's MovementType convention — so a simple
+        # sum gives qty on hand. This already covers opening_stock, purchase_in,
+        # sales (negative), returns, write-offs, and transfers.
         movements = StockMovementRO.objects.filter(created_at__date__lte=as_of_date)
         if location:
             movements = movements.filter(location_id=location.id)
 
         qty_data = defaultdict(int)
         for mv in movements:
-            if mv.movement_type in ('purchase', 'purchase_return_in', 'adjustment_in'):
-                qty_data[mv.product_id] += mv.quantity
-            else:
-                qty_data[mv.product_id] -= mv.quantity
+            qty_data[mv.product_id] += mv.quantity
 
-        # Get weighted average purchase rate per product
+        # Weighted-average cost per product. Aggregate both PO lines AND
+        # opening-stock lines so seeded inventory has a non-zero rate even
+        # before its first purchase order.
+        cost_totals = defaultdict(lambda: {'qty': Decimal('0'), 'value': Decimal('0')})
+
         po_lines = PurchaseOrderLineRO.objects.filter(
             purchase_order__state__in=['confirmed', 'done', 'approved']
         ).values('product_id').annotate(
             total_qty=Sum('quantity'),
             total_value=Sum(F('quantity') * F('purchase_rate')),
         )
-
-        avg_rates = {}
         for line in po_lines:
             if line['total_qty'] and line['total_qty'] > 0:
-                avg_rates[line['product_id']] = Decimal(str(line['total_value'])) / Decimal(str(line['total_qty']))
+                cost_totals[line['product_id']]['qty'] += Decimal(str(line['total_qty']))
+                cost_totals[line['product_id']]['value'] += Decimal(str(line['total_value']))
+
+        os_lines = OpeningStockLineRO.objects.values('product_id').annotate(
+            total_qty=Sum('quantity'),
+            total_value=Sum(F('quantity') * F('purchase_rate')),
+        )
+        for line in os_lines:
+            if line['total_qty'] and line['total_qty'] > 0:
+                cost_totals[line['product_id']]['qty'] += Decimal(str(line['total_qty']))
+                cost_totals[line['product_id']]['value'] += Decimal(str(line['total_value']))
+
+        avg_rates = {}
+        for pid, totals in cost_totals.items():
+            if totals['qty'] > 0:
+                avg_rates[pid] = totals['value'] / totals['qty']
 
         all_pids = [pid for pid, qty in qty_data.items() if qty > 0]
         products = {p.id: p for p in ProductRO.objects.filter(id__in=all_pids)}
@@ -1594,9 +1610,12 @@ class ClosingStockReconciliationView(APIView):
         agg = bq.aggregate(d=Sum('debit'), c=Sum('credit'))
         books_balance = (agg['d'] or Decimal('0')) - (agg['c'] or Decimal('0'))
 
-        # 2. Inventory-side: replay movements to get qty-on-hand × purchase rate
+        # 2. Inventory-side: replay movements to get qty-on-hand × weighted-
+        # avg purchase rate. StockMovementRO.quantity is signed, so summing
+        # gives qty on hand directly. Cost = weighted avg across PO lines +
+        # opening-stock lines (the same calc StockValuationView uses).
         from inventory_reader.models import (
-            PurchaseOrderLineRO, StockMovementRO,
+            PurchaseOrderLineRO, StockMovementRO, OpeningStockLineRO,
         )
         moves = StockMovementRO.objects.filter(created_at__date__lte=as_of)
         if location:
@@ -1604,19 +1623,32 @@ class ClosingStockReconciliationView(APIView):
         from collections import defaultdict
         qty_on_hand = defaultdict(int)
         for m in moves:
-            qty_on_hand[m.product_id] += m.quantity if (
-                m.movement_type not in ('out', 'sale', 'transfer_out')
-            ) else -abs(m.quantity)
-        # Last purchase rate per product as a cost proxy
-        cost_proxy = {
-            row['product_id']: row['rate']
-            for row in PurchaseOrderLineRO.objects
-            .values('product_id')
-            .annotate(rate=Sum('purchase_rate'))
+            qty_on_hand[m.product_id] += m.quantity
+
+        cost_totals = defaultdict(lambda: {'qty': Decimal('0'), 'value': Decimal('0')})
+        for line in PurchaseOrderLineRO.objects.filter(
+            purchase_order__state__in=['confirmed', 'done', 'approved']
+        ).values('product_id').annotate(
+            total_qty=Sum('quantity'),
+            total_value=Sum(F('quantity') * F('purchase_rate')),
+        ):
+            if line['total_qty'] and line['total_qty'] > 0:
+                cost_totals[line['product_id']]['qty'] += Decimal(str(line['total_qty']))
+                cost_totals[line['product_id']]['value'] += Decimal(str(line['total_value']))
+        for line in OpeningStockLineRO.objects.values('product_id').annotate(
+            total_qty=Sum('quantity'),
+            total_value=Sum(F('quantity') * F('purchase_rate')),
+        ):
+            if line['total_qty'] and line['total_qty'] > 0:
+                cost_totals[line['product_id']]['qty'] += Decimal(str(line['total_qty']))
+                cost_totals[line['product_id']]['value'] += Decimal(str(line['total_value']))
+        avg_rate = {
+            pid: t['value'] / t['qty']
+            for pid, t in cost_totals.items() if t['qty'] > 0
         }
+
         inventory_value = sum(
-            (Decimal(str(qty_on_hand.get(pid, 0))) *
-             cost_proxy.get(pid, Decimal('0')))
+            (Decimal(str(qty_on_hand.get(pid, 0))) * avg_rate.get(pid, Decimal('0')))
             for pid in qty_on_hand if qty_on_hand[pid] > 0
         ) or Decimal('0')
 
@@ -1628,8 +1660,8 @@ class ClosingStockReconciliationView(APIView):
             'variance': str(variance),
             'recommended_jv_value': str(inventory_value),
             'note': (
-                'POST /api/journals/journal-entries/closing-stock/ with '
-                f'value={inventory_value} to bring Books in line with Inventory.'
+                'Run sync to post any pending opening-stock / purchase JVs '
+                'that bring 1190 Closing Stock in line with live inventory.'
                 if abs(variance) > Decimal('0.01') else 'No adjustment needed.'
             ),
         })
@@ -1659,8 +1691,11 @@ class AgedStockReportView(APIView):
                 'location_id': m.location_id,
                 'qty_in': 0, 'qty_out': 0, 'last_out_date': None,
             })
+            # StockMovementRO.quantity is signed — positive rows are inflows,
+            # negative are outflows. Bucket by sign rather than by
+            # movement_type strings (which no longer match upstream).
             qty = abs(m.quantity)
-            if m.movement_type in ('out', 'sale', 'transfer_out'):
+            if m.quantity < 0:
                 row['qty_out'] += qty
                 if not row['last_out_date'] or m.created_at.date() > row['last_out_date']:
                     row['last_out_date'] = m.created_at.date()
