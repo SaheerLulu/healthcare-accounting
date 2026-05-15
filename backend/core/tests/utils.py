@@ -44,7 +44,26 @@ def make_settings(**kw) -> AccountingSettings:
 
 
 def seed_chart_and_mappings():
-    """Create the minimum CoA + mappings every JV/post test needs."""
+    """Create the minimum CoA + mappings every JV/post test needs.
+
+    Two expense group rows (5500 Direct, 5700 Indirect) are seeded as
+    non-leaf parents and the standard direct/indirect leaves are wired
+    onto them so ProfitLossView can classify expenses correctly.
+    """
+    # Non-leaf group rows — must be created first so leaves can point at them.
+    groups = {
+        '5500': ('Direct Expenses', 'EXPENSE'),
+        '5700': ('Indirect Expenses', 'EXPENSE'),
+    }
+    group_objs = {}
+    for code, (name, atype) in groups.items():
+        obj, _ = ChartOfAccount.objects.get_or_create(
+            account_code=code,
+            defaults=dict(account_name=name, account_type=atype,
+                          is_leaf=False, is_active=True),
+        )
+        group_objs[code] = obj
+
     accounts = {
         '1110': ('Cash in Hand', 'ASSET', 'Cash'),
         '1120': ('Bank', 'ASSET', 'Bank'),
@@ -79,15 +98,25 @@ def seed_chart_and_mappings():
         '5560': ('Cost of Goods Sold', 'EXPENSE', 'Other_Expense'),
         '6100': ('Round Off', 'EXPENSE', 'Other_Expense'),
     }
+    # Per-leaf parent wiring so ProfitLossView's expense classifier works.
+    # Direct (5500): COGS-style postings. Indirect (5700): G&A.
+    PARENTS = {
+        '5400': '5700', '5410': '5700', '5420': '5700',  # Personnel, Rent, Power
+        '5560': '5500',  # Cost of Goods Sold rolls up to Direct Expenses
+    }
+
     coa = {}
     for code, (name, atype, sub) in accounts.items():
+        parent = group_objs.get(PARENTS.get(code))
         obj, _ = ChartOfAccount.objects.get_or_create(
             account_code=code,
             defaults=dict(account_name=name, account_type=atype,
-                          account_subtype=sub, is_leaf=True, is_active=True),
+                          account_subtype=sub, parent=parent,
+                          is_leaf=True, is_active=True),
         )
         coa[code] = obj
 
+    coa.update(group_objs)
     for key, code in AccountMapping.DEFAULT_CODES.items():
         if code in coa:
             AccountMapping.objects.get_or_create(

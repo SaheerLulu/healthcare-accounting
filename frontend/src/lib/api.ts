@@ -1531,7 +1531,10 @@ export interface PLSection {
 
 export interface PLReport {
   revenue: PLSection
-  expenses: PLSection
+  direct_expenses: PLSection
+  gross_profit: string
+  indirect_expenses: PLSection
+  other_expenses: PLSection
   net_profit: string
   start_date: string
   end_date: string

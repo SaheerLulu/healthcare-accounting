@@ -77,6 +77,28 @@ class TrialBalanceView(APIView):
 
 
 class ProfitLossView(APIView):
+    """Tally-style P&L with explicit Gross Profit subtotal.
+
+    Structure:
+        Revenue                         (every REVENUE leaf account)
+      − Direct Expenses                 (EXPENSE leaves rolling up to 5500)
+      ─────────────────────────────
+      = Gross Profit
+      − Indirect Expenses               (EXPENSE leaves rolling up to 5700)
+      − Other Expenses                  (EXPENSE leaves not under 5500/5700)
+      ─────────────────────────────
+      = Net Profit
+
+    Expense classification walks each leaf up the `parent` chain until a
+    direct child of a root group is found. `5500 Direct Expenses` and
+    `5700 Indirect Expenses` are the canonical Tally groups; anything
+    else (e.g. residual 5100 Purchases postings from before the perpetual
+    cutover) falls into Other Expenses so it stays visible.
+    """
+
+    DIRECT_GROUP = '5500'
+    INDIRECT_GROUP = '5700'
+
     def get(self, request):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
@@ -94,34 +116,68 @@ class ProfitLossView(APIView):
         if location:
             lines_qs = lines_qs.filter(entry__location_id=location.id)
 
-        def get_section(account_type):
-            accounts = ChartOfAccount.objects.filter(
-                account_type=account_type, is_leaf=True
-            )
-            items = []
-            total = Decimal('0.00')
-            for acc in accounts:
-                agg = lines_qs.filter(account=acc).aggregate(
-                    dr=Sum('debit'), cr=Sum('credit')
-                )
-                dr = agg['dr'] or Decimal('0.00')
-                cr = agg['cr'] or Decimal('0.00')
-                if account_type == 'REVENUE':
-                    amount = cr - dr
-                else:
-                    amount = dr - cr
-                if amount != 0:
-                    items.append({
-                        'account_code': acc.account_code,
-                        'account_name': acc.account_name,
-                        'amount': str(amount),
-                    })
-                    total += amount
-            return items, total
+        def expense_bucket(acc):
+            """Walk parents up to a root group; return DIRECT_GROUP /
+            INDIRECT_GROUP / None. Short-circuits as soon as either is
+            encountered, so leaves nested deeper than 1 still classify.
+            """
+            cur = acc.parent
+            seen = set()
+            while cur is not None and cur.account_code not in seen:
+                seen.add(cur.account_code)
+                if cur.account_code == self.DIRECT_GROUP:
+                    return self.DIRECT_GROUP
+                if cur.account_code == self.INDIRECT_GROUP:
+                    return self.INDIRECT_GROUP
+                cur = cur.parent
+            return None
 
-        revenue_items, total_revenue = get_section('REVENUE')
-        expense_items, total_expenses = get_section('EXPENSE')
-        net_profit = total_revenue - total_expenses
+        revenue_items = []
+        total_revenue = Decimal('0.00')
+        for acc in ChartOfAccount.objects.filter(
+            account_type='REVENUE', is_leaf=True
+        ).order_by('account_code'):
+            agg = lines_qs.filter(account=acc).aggregate(
+                dr=Sum('debit'), cr=Sum('credit'),
+            )
+            amount = (agg['cr'] or Decimal('0')) - (agg['dr'] or Decimal('0'))
+            if amount != 0:
+                revenue_items.append({
+                    'account_code': acc.account_code,
+                    'account_name': acc.account_name,
+                    'amount': str(amount),
+                })
+                total_revenue += amount
+
+        direct_items, indirect_items, other_items = [], [], []
+        total_direct = total_indirect = total_other = Decimal('0.00')
+        for acc in ChartOfAccount.objects.select_related('parent').filter(
+            account_type='EXPENSE', is_leaf=True,
+        ).order_by('account_code'):
+            agg = lines_qs.filter(account=acc).aggregate(
+                dr=Sum('debit'), cr=Sum('credit'),
+            )
+            amount = (agg['dr'] or Decimal('0')) - (agg['cr'] or Decimal('0'))
+            if amount == 0:
+                continue
+            row = {
+                'account_code': acc.account_code,
+                'account_name': acc.account_name,
+                'amount': str(amount),
+            }
+            bucket = expense_bucket(acc)
+            if bucket == self.DIRECT_GROUP:
+                direct_items.append(row)
+                total_direct += amount
+            elif bucket == self.INDIRECT_GROUP:
+                indirect_items.append(row)
+                total_indirect += amount
+            else:
+                other_items.append(row)
+                total_other += amount
+
+        gross_profit = total_revenue - total_direct
+        net_profit = gross_profit - total_indirect - total_other
 
         return Response({
             'start_date': start_date,
@@ -130,9 +186,18 @@ class ProfitLossView(APIView):
                 'items': revenue_items,
                 'total': str(total_revenue),
             },
-            'expenses': {
-                'items': expense_items,
-                'total': str(total_expenses),
+            'direct_expenses': {
+                'items': direct_items,
+                'total': str(total_direct),
+            },
+            'gross_profit': str(gross_profit),
+            'indirect_expenses': {
+                'items': indirect_items,
+                'total': str(total_indirect),
+            },
+            'other_expenses': {
+                'items': other_items,
+                'total': str(total_other),
             },
             'net_profit': str(net_profit),
         })

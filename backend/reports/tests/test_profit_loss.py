@@ -57,7 +57,7 @@ class ProfitLossPerpetualTests(TestCase):
             ('1190', Decimal('0'), Decimal('700.00')),
         ])
 
-    def test_net_profit_equals_revenue_minus_cogs(self):
+    def test_tally_structure_revenue_direct_gross_indirect_net(self):
         res = self.client.get('/api/reports/profit-loss/',
                               {'start_date': '2026-04-01', 'end_date': '2026-04-30'})
         self.assertEqual(res.status_code, 200, res.content)
@@ -65,17 +65,27 @@ class ProfitLossPerpetualTests(TestCase):
 
         self.assertEqual(Decimal(data['revenue']['total']), Decimal('1500.00'),
                          'Total revenue = sale price')
-        self.assertEqual(Decimal(data['expenses']['total']), Decimal('700.00'),
-                         'Total expenses = COGS only')
+        self.assertEqual(Decimal(data['direct_expenses']['total']), Decimal('700.00'),
+                         'COGS (5560) rolls up under 5500 Direct Expenses')
+        self.assertEqual(Decimal(data['gross_profit']), Decimal('800.00'),
+                         'Gross Profit = Revenue 1500 − Direct 700 = 800')
+        self.assertEqual(Decimal(data['indirect_expenses']['total']), Decimal('0'),
+                         'No indirect expenses in this test scenario')
+        self.assertEqual(Decimal(data['other_expenses']['total']), Decimal('0'),
+                         'No uncategorized expenses')
         self.assertEqual(Decimal(data['net_profit']), Decimal('800.00'),
-                         'Net profit = revenue (1500) − COGS (700) = 800')
+                         'Net Profit = Gross Profit 800 − Indirect 0 − Other 0 = 800')
 
     def test_5100_purchases_absent_from_pl(self):
         res = self.client.get('/api/reports/profit-loss/',
                               {'start_date': '2026-04-01', 'end_date': '2026-04-30'})
         data = res.json()
-        codes = [item['account_code'] for item in data['expenses']['items']]
-        self.assertNotIn('5100', codes,
+        all_codes = [
+            row['account_code']
+            for section in ('direct_expenses', 'indirect_expenses', 'other_expenses')
+            for row in data[section]['items']
+        ]
+        self.assertNotIn('5100', all_codes,
                          '5100 Purchases must not appear in P&L — perpetual posts go to 1190')
 
     def test_balance_sheet_ties_with_pl(self):
