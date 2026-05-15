@@ -60,6 +60,10 @@ LEAVES = [
     ('3120', 'Drawings',                       'EQUITY',    'Capital',           '3000', None),
     ('3200', 'Retained Earnings',              'EQUITY',    'Retained_Earnings', '3100', 'RETAINED_EARNINGS'),
     ('3210', 'General Reserve',                'EQUITY',    'Retained_Earnings', '3100', None),
+    # Opening Balance Equity — counter-leg for opening-stock JV posted by sync.
+    # Kept separate from Retained Earnings so the audit trail distinguishes
+    # initial seed value from real profit retention.
+    ('3300', 'Opening Balance Equity',         'EQUITY',    'Capital',           '3000', 'OPENING_BALANCE_EQUITY'),
 
     # Loans (2xxx)
     ('2011', 'Term Loan - Bank',               'LIABILITY', 'Payable',           '2010', None),

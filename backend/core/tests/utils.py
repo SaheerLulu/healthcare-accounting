@@ -64,6 +64,7 @@ def seed_chart_and_mappings():
         '2190': ('Professional Tax Payable', 'LIABILITY', 'Payable'),
         '2200': ('Net Salary Payable', 'LIABILITY', 'Payable'),
         '3200': ('Retained Earnings', 'EQUITY', 'Retained_Earnings'),
+        '3300': ('Opening Balance Equity', 'EQUITY', 'Capital'),
         '4100': ('Sales POS', 'REVENUE', 'Sales'),
         '4200': ('Sales B2B', 'REVENUE', 'Sales'),
         '5100': ('Purchases', 'EXPENSE', 'Purchases'),

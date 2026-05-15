@@ -2180,17 +2180,6 @@ export async function markAllNotificationsRead() {
 
 // ─── Wave 6 — Closing-entries wizard helpers ────────────────────────────────
 
-export interface ClosingStockPayload {
-  date: string
-  value: string
-  location_id?: number
-  narration?: string
-}
-export async function postClosingStock(payload: ClosingStockPayload) {
-  const res = await api.post('/journals/entries/closing-stock/', payload)
-  return res.data
-}
-
 export interface InventoryAdjustmentPayload {
   date: string
   location_id: number

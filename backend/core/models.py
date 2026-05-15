@@ -182,6 +182,7 @@ class AccountMapping(models.Model):
         ('CHEQUES_OUTSTANDING', 'Cheques Issued (Outstanding)'),
         ('SUSPENSE', 'Suspense Account'),
         ('COGS', 'Cost of Goods Sold (perpetual mode)'),
+        ('OPENING_BALANCE_EQUITY', 'Opening Balance Equity'),
     ]
 
     # Default mapping from key to account_code for data migration. These map
@@ -249,6 +250,7 @@ class AccountMapping(models.Model):
         'CHEQUES_OUTSTANDING': '2113',
         'SUSPENSE': '6200',
         'COGS': '5560',
+        'OPENING_BALANCE_EQUITY': '3300',
     }
 
     key = models.CharField(max_length=30, unique=True, choices=KEY_CHOICES)

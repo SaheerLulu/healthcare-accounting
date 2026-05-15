@@ -387,6 +387,45 @@ class StockMovementRO(models.Model):
         db_table = 'inventory_stockmovement'
 
 
+# ─── Opening Stock (inventory-side seeding) ─────────────────────────────────
+
+
+class OpeningStockRO(models.Model):
+    """Read-only proxy onto the inventory app's OpeningStock header."""
+    location = models.ForeignKey(
+        LocationRO, on_delete=models.DO_NOTHING, db_constraint=False
+    )
+    opening_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_by_id = models.PositiveIntegerField(null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'inventory_openingstock'
+
+
+class OpeningStockLineRO(models.Model):
+    """Read-only proxy onto the per-product lines of an opening-stock entry."""
+    opening_stock = models.ForeignKey(
+        OpeningStockRO, on_delete=models.DO_NOTHING, db_constraint=False,
+        related_name='lines',
+    )
+    product = models.ForeignKey(
+        ProductRO, on_delete=models.DO_NOTHING, db_constraint=False
+    )
+    batch_no = models.CharField(max_length=100, blank=True)
+    expiry_month = models.CharField(max_length=7, blank=True)
+    quantity = models.IntegerField()
+    purchase_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    mrp = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'inventory_openingstockline'
+
+
 # ─── User / Role / Location Assignment (read-only from inventory) ────────────
 
 class RoleRO(models.Model):

@@ -11,19 +11,15 @@ import {
   Loader2,
   ArrowRight,
   Package,
-  Send,
   type LucideIcon,
 } from 'lucide-react'
-import { toast } from 'sonner'
 import {
-  getJournalEntries, getClosingStockRecon, postClosingStock,
+  getJournalEntries, getClosingStockRecon,
   type JournalEntry, type ClosingStockRecon,
 } from '../lib/api'
 import { formatDate, formatCurrency } from '../lib/utils'
 import { useLocation as useActiveLocation } from '../contexts/LocationContext'
 import { Card } from '../components/ui/card'
-import { Button } from '../components/ui/button'
-import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { voucherList } from './vouchers/voucherConfig'
 
 const masters = [
@@ -88,8 +84,6 @@ export default function GatewayPage() {
   const { activeLocationId } = useActiveLocation()
   const [stockRecon, setStockRecon] = useState<ClosingStockRecon | null>(null)
   const [stockLoading, setStockLoading] = useState(false)
-  const [syncing, setSyncing] = useState(false)
-  const [syncOpen, setSyncOpen] = useState(false)
 
   async function loadStock() {
     setStockLoading(true)
@@ -99,32 +93,6 @@ export default function GatewayPage() {
     finally { setStockLoading(false) }
   }
   useEffect(() => { loadStock() }, [activeLocationId])
-
-  async function syncClosingStock() {
-    if (!stockRecon) return
-    if (activeLocationId === null) {
-      toast.error('Switch to a specific store to post the closing-stock JV')
-      return
-    }
-    setSyncing(true)
-    try {
-      const res = await postClosingStock({
-        date: new Date().toISOString().slice(0, 10),
-        value: stockRecon.recommended_jv_value,
-        location_id: activeLocationId,
-        narration: 'Closing Stock to match physical inventory',
-      })
-      const entryNo = (res as { entry_no?: string })?.entry_no
-      toast.success(entryNo ? `Posted ${entryNo}` : 'Closing-stock JV posted')
-      setSyncOpen(false)
-      await loadStock()
-    } catch (err) {
-      const e = err as { response?: { data?: { detail?: string } } }
-      toast.error(e.response?.data?.detail || 'Failed to post closing stock')
-    } finally {
-      setSyncing(false)
-    }
-  }
 
   return (
     <div className="max-w-7xl mx-auto pb-20">
@@ -208,15 +176,16 @@ export default function GatewayPage() {
                     />
                   </div>
                   {parseFloat(stockRecon.variance) !== 0 ? (
-                    <Button
-                      size="sm"
-                      onClick={() => setSyncOpen(true)}
-                      disabled={syncing}
-                      className="w-full"
+                    <Link
+                      to="/sync"
+                      className="text-[11px] text-center block py-1.5 rounded hover:underline"
+                      style={{
+                        background: 'rgba(229,153,40,0.10)',
+                        color: 'var(--warning)',
+                      }}
                     >
-                      {syncing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                      Sync Books to Live Inventory
-                    </Button>
+                      Variance — run a sync to post any pending opening-stock or purchase JVs →
+                    </Link>
                   ) : (
                     <div
                       className="text-[11px] text-center py-1.5 rounded"
@@ -308,33 +277,6 @@ export default function GatewayPage() {
               </div>
             </Card>
           </div>
-
-          {/* Confirm dialog for closing-stock sync */}
-          <ConfirmDialog
-            open={syncOpen}
-            onOpenChange={setSyncOpen}
-            title="Post Closing Stock JV?"
-            description={
-              stockRecon ? (
-                <>
-                  <div className="mt-1">
-                    Books: <span className="font-mono">{formatCurrency(stockRecon.books_closing_stock)}</span>
-                  </div>
-                  <div>
-                    Live Inventory: <span className="font-mono">{formatCurrency(stockRecon.inventory_value)}</span>
-                  </div>
-                  <div className="mt-2">
-                    A new JV will be posted: <strong>Dr Closing Stock / Cr Purchases</strong>{' '}
-                    bringing the GL to <span className="font-mono font-semibold">{formatCurrency(stockRecon.recommended_jv_value)}</span>.
-                  </div>
-                </>
-              ) : 'Loading…'
-            }
-            confirmLabel={syncing ? 'Posting…' : 'Post Now'}
-            cancelLabel="Cancel"
-            onConfirm={syncClosingStock}
-            loading={syncing}
-          />
 
           {/* Reports */}
           <div>

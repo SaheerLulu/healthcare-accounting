@@ -8,6 +8,7 @@ from inventory_reader.models import (
     B2BSalesOrderRO,
     SalesReturnRO,
     PurchaseReturnRO,
+    OpeningStockRO,
 )
 from core.models import AccountMapping, AccountingSettings
 from decimal import ROUND_HALF_UP
@@ -86,6 +87,55 @@ class JournalAutoGenerationService:
                 narration='Stock relieved',
             )
         return total
+
+    @transaction.atomic
+    def generate_opening_stock(self, opening_stock_id):
+        """Convert an inventory-side OpeningStock batch into a balanced JV.
+
+        Books `Dr 1190 Closing Stock / Cr 3300 Opening Balance Equity` for
+        the sum of (qty × purchase_rate) across all lines in the batch.
+        Idempotent via reference_type='OpeningStock' so re-running sync
+        won't double-post.
+        """
+        if self._entry_exists('OpeningStock', opening_stock_id):
+            return None
+
+        os_header = OpeningStockRO.objects.select_related('location').get(
+            id=opening_stock_id,
+        )
+        lines = list(os_header.lines.all())
+
+        total_value = Decimal('0.00')
+        for line in lines:
+            qty = Decimal(str(line.quantity or 0))
+            rate = Decimal(str(line.purchase_rate or 0))
+            total_value += (qty * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        if total_value <= 0:
+            # Nothing to book — empty batch or all zero-value lines.
+            return None
+
+        entry_date = os_header.opening_date or os_header.created_at.date()
+        entry = JournalEntry.objects.create(
+            date=entry_date,
+            narration=f'Opening Stock #{opening_stock_id} ({os_header.location.name})',
+            voucher_type='JOURNAL',
+            reference_type='OpeningStock',
+            reference_id=opening_stock_id,
+            location_id=os_header.location_id,
+        )
+        JournalEntryLine.objects.create(
+            entry=entry, account=self._acct('CLOSING_STOCK'),
+            debit=total_value,
+            narration='Opening stock — bring inventory onto the books',
+        )
+        JournalEntryLine.objects.create(
+            entry=entry, account=self._acct('OPENING_BALANCE_EQUITY'),
+            credit=total_value,
+            narration='Opening balance equity',
+        )
+        entry.post()
+        return entry
 
     @transaction.atomic
     def generate_purchase(self, po_id):

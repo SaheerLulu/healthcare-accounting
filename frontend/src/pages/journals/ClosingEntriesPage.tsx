@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 import {
-  postClosingStock, postInventoryAdjustment, postDrugExpiry,
+  postInventoryAdjustment, postDrugExpiry,
   postStockTransfer, postBadDebtsProvision,
 } from '../../lib/api'
 import { Button } from '../../components/ui/button'
@@ -10,9 +10,10 @@ import { Card } from '../../components/ui/card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs'
 
 /**
- * Closing entries wizard — five specialised period-end JV forms in one page.
+ * Closing entries wizard — four specialised period-end JV forms in one page.
  * Each tab is a small standalone form that POSTs to its corresponding
- * journals endpoint and surfaces the result.
+ * journals endpoint and surfaces the result. Opening stock is no longer
+ * a manual entry here — sync auto-posts it from the inventory side.
  */
 export default function ClosingEntriesPage() {
   return (
@@ -26,52 +27,20 @@ export default function ClosingEntriesPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="closing-stock">
+      <Tabs defaultValue="inventory-adj">
         <TabsList>
-          <TabsTrigger value="closing-stock">Closing Stock</TabsTrigger>
           <TabsTrigger value="inventory-adj">Shrinkage / Damage</TabsTrigger>
           <TabsTrigger value="drug-expiry">Drug Expiry</TabsTrigger>
           <TabsTrigger value="stock-transfer">Stock Transfer</TabsTrigger>
           <TabsTrigger value="bad-debts">Bad Debts Provision</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="closing-stock"><ClosingStockForm /></TabsContent>
         <TabsContent value="inventory-adj"><InventoryAdjustmentForm /></TabsContent>
         <TabsContent value="drug-expiry"><DrugExpiryForm /></TabsContent>
         <TabsContent value="stock-transfer"><StockTransferForm /></TabsContent>
         <TabsContent value="bad-debts"><BadDebtsForm /></TabsContent>
       </Tabs>
     </div>
-  )
-}
-
-function ClosingStockForm() {
-  const [data, setData] = useState({
-    date: new Date().toISOString().slice(0, 10),
-    value: '', location_id: '', narration: '',
-  })
-  return (
-    <Card className="p-5 space-y-3">
-      <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
-        Posts <strong>Dr Closing Stock / Cr Purchases</strong> to bring the GL to your physical-count value.
-        Idempotent — re-running with the same value is a no-op.
-      </p>
-      <Input type="date" value={data.date} onChange={(e) => setData({ ...data, date: e.target.value })} />
-      <Input placeholder="Physical count value ₹" value={data.value}
-             onChange={(e) => setData({ ...data, value: e.target.value })} />
-      <Input placeholder="Location ID (optional)" value={data.location_id}
-             onChange={(e) => setData({ ...data, location_id: e.target.value })} />
-      <Input placeholder="Narration (optional)" value={data.narration}
-             onChange={(e) => setData({ ...data, narration: e.target.value })} />
-      <Button onClick={async () => {
-        try {
-          const r = await postClosingStock({
-            ...data, location_id: data.location_id ? parseInt(data.location_id) : undefined,
-          })
-          toast.success(r?.entry_no ? `Posted ${r.entry_no}` : (r?.detail ?? 'Done'))
-        } catch (e: any) { toast.error(e?.response?.data?.detail || 'Failed') }
-      }}>Post</Button>
-    </Card>
   )
 }
 

@@ -2,7 +2,8 @@ import logging
 import traceback
 from django.db import transaction
 from inventory_reader.models import (
-    PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO
+    PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO,
+    OpeningStockRO,
 )
 from journals.models import JournalEntry
 from journals.services import JournalAutoGenerationService
@@ -152,6 +153,33 @@ class InventorySyncService:
         )
         return count
 
+    def sync_opening_stocks(self, since_id: int = 0) -> int:
+        """Convert inventory-side OpeningStock batches into the matching JV.
+
+        Runs first in sync_all() so the books reflect on-hand inventory before
+        any subsequent purchase/sale JV references the stock account.
+        """
+        already_synced = self._synced_ids('OpeningStock')
+        batches = OpeningStockRO.objects.exclude(id__in=already_synced).order_by('id')
+
+        count = 0
+        last_id = since_id
+        for os_header in batches:
+            try:
+                entry = self.journal_service.generate_opening_stock(os_header.id)
+                if entry:
+                    count += 1
+                self._resolve_error('opening_stock', os_header.id)
+                last_id = max(last_id, os_header.id)
+            except Exception as e:
+                self._log_error('opening_stock', os_header.id, e)
+
+        SyncLog.objects.update_or_create(
+            sync_type='opening_stock',
+            defaults={'last_synced_id': last_id, 'records_processed': count}
+        )
+        return count
+
     def sync_purchase_returns(self, since_id: int = 0) -> int:
         """Sync purchase returns from inventory system (Phase 4A)."""
         already_synced = self._synced_ids('PurchaseReturn')
@@ -184,7 +212,9 @@ class InventorySyncService:
 
         for error in errors:
             try:
-                if error.sync_type == 'purchase':
+                if error.sync_type == 'opening_stock':
+                    self.journal_service.generate_opening_stock(error.source_id)
+                elif error.sync_type == 'purchase':
                     self.journal_service.generate_purchase(error.source_id)
                 elif error.sync_type == 'pos':
                     self.journal_service.generate_pos_sale(error.source_id)
@@ -212,13 +242,15 @@ class InventorySyncService:
         return results
 
     def sync_all(self) -> dict:
+        opening_stock_count = self.sync_opening_stocks(SyncLog.get_last_id('opening_stock'))
         purchase_count = self.sync_purchases(SyncLog.get_last_id('purchase'))
         pos_count = self.sync_pos(SyncLog.get_last_id('pos'))
         b2b_count = self.sync_b2b(SyncLog.get_last_id('b2b'))
         return_count = self.sync_returns(SyncLog.get_last_id('return'))
         purchase_return_count = self.sync_purchase_returns(SyncLog.get_last_id('purchase_return'))
 
-        total = purchase_count + pos_count + b2b_count + return_count + purchase_return_count
+        total = (opening_stock_count + purchase_count + pos_count + b2b_count
+                 + return_count + purchase_return_count)
         SyncLog.objects.create(
             sync_type='all',
             last_synced_id=0,
@@ -226,6 +258,7 @@ class InventorySyncService:
         )
 
         return {
+            'opening_stocks': opening_stock_count,
             'purchases': purchase_count,
             'pos': pos_count,
             'b2b': b2b_count,
@@ -238,6 +271,7 @@ class InventorySyncService:
 # Reference types that come from the inventory pipeline. Hand-edited 'Manual'
 # JVs are NOT in this list and never get touched by full re-sync.
 AUTO_GEN_REF_TYPES = (
+    'OpeningStock',
     'PurchaseOrder', 'POSOrder', 'B2BSalesOrder',
     'SalesReturn', 'PurchaseReturn',
 )
