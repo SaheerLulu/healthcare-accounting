@@ -198,6 +198,8 @@ export interface JournalLine {
   debit: string
   credit: string
   narration?: string
+  party_type?: 'Supplier' | 'Customer' | 'None' | null
+  party_id?: number | null
 }
 
 export interface JournalEntry {

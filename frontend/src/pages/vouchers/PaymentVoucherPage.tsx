@@ -1,5 +1,5 @@
-import VoucherEditor from './VoucherEditor'
+import SimplePaymentVoucher from './SimplePaymentVoucher'
 
 export default function PaymentVoucherPage() {
-  return <VoucherEditor voucherType="PAYMENT" />
+  return <SimplePaymentVoucher />
 }
