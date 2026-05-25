@@ -91,7 +91,9 @@ class AccountMappingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AccountMapping
-        fields = ['id', 'key', 'account', 'account_code', 'account_name']
+        # location_id exposed since 53f6624c so the UI can read/write
+        # per-store overrides; NULL = the shared default applies.
+        fields = ['id', 'key', 'account', 'account_code', 'account_name', 'location_id']
 
 
 class LockedPeriodSerializer(serializers.ModelSerializer):

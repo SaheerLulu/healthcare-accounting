@@ -177,6 +177,21 @@ class AccountMappingViewSet(viewsets.ModelViewSet):
     serializer_class = AccountMappingSerializer
     pagination_class = None
 
+    def get_queryset(self):
+        """Filter by location_id when given. `location_id=null` returns only
+        the shared NULL defaults; a numeric `location_id` returns rows scoped
+        to that location (per-store overrides). Omitted = all rows (admin)."""
+        qs = AccountMapping.objects.select_related('account').order_by('key', 'location_id')
+        loc = self.request.query_params.get('location_id')
+        if loc == 'null':
+            qs = qs.filter(location_id__isnull=True)
+        elif loc is not None and loc != '':
+            try:
+                qs = qs.filter(location_id=int(loc))
+            except ValueError:
+                pass
+        return qs
+
     def perform_create(self, serializer):
         instance = serializer.save()
         log_action('CREATE', 'AccountMapping', instance.pk, str(instance), request=self.request)
@@ -187,37 +202,81 @@ class AccountMappingViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='reset')
     def reset(self, request):
-        """Reset account mappings to defaults based on existing COA codes."""
+        """Reset NULL-location (shared) mappings to defaults based on existing COA
+        codes. Per-store overrides are left intact. Pass `keys=[...]` in the
+        body to reset only those keys (e.g. to reset just the Payroll group)."""
+        wanted = set(request.data.get('keys') or AccountMapping.DEFAULT_CODES.keys())
         created = 0
+        updated = 0
         for key, code in AccountMapping.DEFAULT_CODES.items():
-            account = ChartOfAccount.objects.filter(account_code=code).first()
+            if key not in wanted:
+                continue
+            account = ChartOfAccount.objects.filter(
+                account_code=code, location_id__isnull=True,
+            ).first()
             if account:
                 _, was_created = AccountMapping.objects.update_or_create(
-                    key=key, defaults={'account': account}
+                    key=key, location_id=None,
+                    defaults={'account': account},
                 )
                 if was_created:
                     created += 1
-        log_action('UPDATE', 'AccountMapping', 'all', 'Reset account mappings', request=request)
-        return Response({'detail': f'Mappings reset. {created} new mappings created.'})
+                else:
+                    updated += 1
+        log_action('UPDATE', 'AccountMapping', 'reset',
+                   f'Reset {created+updated} shared mappings', request=request)
+        return Response({
+            'detail': f'Mappings reset. {created} created, {updated} updated.',
+            'created': created, 'updated': updated,
+        })
 
     @action(detail=False, methods=['get'], url_path='all-keys')
     def all_keys(self, request):
-        """Return every defined mapping key + its display label + the
-        existing AccountMapping row (if any). Lets the Settings page show
-        unmapped keys with a "Map to..." dropdown rather than hiding them.
+        """Return every defined mapping key + its display label + the existing
+        AccountMapping row (if any) at the requested scope. When `location_id`
+        is given, each row also reports `has_override` so the UI can show
+        per-store overrides distinctly from the shared default fallback.
         """
-        existing = {m.key: m for m in AccountMapping.objects.select_related('account').all()}
+        loc = request.query_params.get('location_id')
+        loc_int = None
+        if loc and loc != 'null':
+            try:
+                loc_int = int(loc)
+            except ValueError:
+                loc_int = None
+
+        # Defaults (NULL location) — used as the fallback for any key without
+        # a per-store override.
+        defaults = {
+            m.key: m for m in
+            AccountMapping.objects.select_related('account').filter(location_id__isnull=True)
+        }
+        # Per-store overrides for the requested location.
+        overrides = {}
+        if loc_int is not None:
+            overrides = {
+                m.key: m for m in
+                AccountMapping.objects.select_related('account')
+                .filter(location_id=loc_int)
+            }
+
+        shared_keys = AccountMapping.SHARED_KEYS
         rows = []
         for key, label in AccountMapping.KEY_CHOICES:
-            m = existing.get(key)
+            override = overrides.get(key)
+            default = defaults.get(key)
+            effective = override or default
             rows.append({
                 'key': key,
                 'label': label,
                 'default_code': AccountMapping.DEFAULT_CODES.get(key),
-                'mapping_id': m.pk if m else None,
-                'account': m.account_id if m else None,
-                'account_code': m.account.account_code if m else None,
-                'account_name': m.account.account_name if m else None,
+                'is_shared_key': key in shared_keys,
+                'mapping_id': effective.pk if effective else None,
+                'account': effective.account_id if effective else None,
+                'account_code': effective.account.account_code if effective else None,
+                'account_name': effective.account.account_name if effective else None,
+                'has_override': override is not None,
+                'override_id': override.pk if override else None,
             })
         return Response(rows)
 

@@ -132,10 +132,12 @@ export interface AccountMapping {
   account: number
   account_code: string
   account_name: string
+  /** null = shared/default; non-null = per-store override */
+  location_id: number | null
 }
 
-export async function getAccountMappings() {
-  const res = await api.get('/accounts/account-mappings/')
+export async function getAccountMappings(params?: { location_id?: number | 'null' }) {
+  const res = await api.get('/accounts/account-mappings/', { params })
   return res.data as AccountMapping[]
 }
 
@@ -143,29 +145,42 @@ export interface AccountMappingKeyRow {
   key: string
   label: string
   default_code: string | null
+  /** True for keys that must stay shared (GST, TDS, equity, suspense, etc.). */
+  is_shared_key: boolean
   mapping_id: number | null
   account: number | null
   account_code: string | null
   account_name: string | null
+  /** True when a per-location override exists for the queried location. */
+  has_override: boolean
+  override_id: number | null
 }
 
-export async function getAllAccountMappingKeys() {
-  const res = await api.get('/accounts/account-mappings/all-keys/')
+export async function getAllAccountMappingKeys(params?: { location_id?: number | 'null' }) {
+  const res = await api.get('/accounts/account-mappings/all-keys/', { params })
   return res.data as AccountMappingKeyRow[]
 }
 
-export async function updateAccountMapping(id: number, data: { account: number }) {
+export async function updateAccountMapping(
+  id: number, data: { account: number; location_id?: number | null },
+) {
   const res = await api.patch(`/accounts/account-mappings/${id}/`, data)
   return res.data as AccountMapping
 }
 
-export async function createAccountMapping(data: { key: string; account: number }) {
+export async function createAccountMapping(
+  data: { key: string; account: number; location_id?: number | null },
+) {
   const res = await api.post('/accounts/account-mappings/', data)
   return res.data as AccountMapping
 }
 
-export async function resetAccountMappings() {
-  const res = await api.post('/accounts/account-mappings/reset/')
+export async function deleteAccountMapping(id: number) {
+  await api.delete(`/accounts/account-mappings/${id}/`)
+}
+
+export async function resetAccountMappings(keys?: string[]) {
+  const res = await api.post('/accounts/account-mappings/reset/', keys ? { keys } : {})
   return res.data
 }
 

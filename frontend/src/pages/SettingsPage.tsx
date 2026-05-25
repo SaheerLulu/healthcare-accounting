@@ -1,20 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { Loader2, Save, RotateCcw } from 'lucide-react'
+import { Loader2, Save, RotateCcw, Search, ChevronDown, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getSettings, updateSettings, type AccountingSettings,
   getAllAccountMappingKeys, updateAccountMapping, createAccountMapping,
+  deleteAccountMapping,
   resetAccountMappings, type AccountMappingKeyRow,
   getChartOfAccounts, type Account,
   getTDSRateConfigs, updateTDSRateConfig, type TDSRateConfig,
 } from '../lib/api'
+import { useLocation } from '../contexts/LocationContext'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Badge } from '../components/ui/badge'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
+import { cn } from '../lib/utils'
 
 const FIELD_CONFIG: { key: keyof AccountingSettings; label: string; placeholder: string; type?: string }[] = [
   { key: 'company_name', label: 'Company Name', placeholder: 'e.g. Seefmed Pvt Ltd' },
@@ -84,15 +87,119 @@ function CompanyInfoTab() {
   )
 }
 
+// ── Account-Mapping helpers ────────────────────────────────────────────────
+
+// Group the 61 KEY_CHOICES into domains for the UI. Static mapping kept in
+// sync with backend/core/models.py:AccountMapping.KEY_CHOICES. Any key not
+// listed here ends up in "Other".
+const KEY_GROUPS: { title: string; description: string; keys: string[] }[] = [
+  {
+    title: 'Settlement',
+    description: 'Cash, bank, petty cash — the accounts vouchers settle into.',
+    keys: ['CASH', 'BANK', 'PETTY_CASH'],
+  },
+  {
+    title: 'Parties',
+    description: 'Trade receivables, payables, customer/supplier/staff advances.',
+    keys: ['TRADE_RECEIVABLES', 'TRADE_PAYABLES',
+      'CUSTOMER_ADVANCE', 'SUPPLIER_ADVANCE', 'STAFF_ADVANCE'],
+  },
+  {
+    title: 'Sales',
+    description: 'POS and B2B sales accounts, returns, discounts allowed.',
+    keys: ['SALES_POS', 'SALES_B2B', 'SALES_RETURNS', 'DISCOUNT_ALLOWED'],
+  },
+  {
+    title: 'Purchases & Stock',
+    description: 'Purchases (rare in perpetual mode), returns, COGS, stock.',
+    keys: ['PURCHASES', 'PURCHASE_RETURNS', 'COGS', 'DISCOUNT_RECEIVED',
+      'CLOSING_STOCK', 'INVENTORY_LOSS', 'EXPIRY_LOSS', 'STOCK_TRANSFER_TRANSIT'],
+  },
+  {
+    title: 'GST',
+    description: 'Output/Input GST and RCM — stay shared across stores (single GSTIN).',
+    keys: ['OUTPUT_CGST', 'OUTPUT_SGST', 'OUTPUT_IGST',
+      'INPUT_CGST', 'INPUT_SGST', 'INPUT_IGST',
+      'RCM_LIABILITY', 'GST_LATE_FEE'],
+  },
+  {
+    title: 'TDS / TCS',
+    description: 'Direct tax withholdings — shared across stores (single TAN).',
+    keys: ['TDS_RECEIVABLE', 'TDS_PAYABLE', 'TCS_PAYABLE'],
+  },
+  {
+    title: 'Banking',
+    description: 'Bank charges and outstanding cheques.',
+    keys: ['BANK_CHARGES', 'CHEQUES_OUTSTANDING'],
+  },
+  {
+    title: 'Payroll',
+    description: 'Salary expense and statutory withholdings.',
+    keys: ['SALARY_EXPENSE', 'NET_SALARY_PAYABLE',
+      'PF_PAYABLE', 'ESI_PAYABLE', 'PT_PAYABLE', 'STAFF_WELFARE'],
+  },
+  {
+    title: 'Operating expenses',
+    description: 'P&L lines for facility, professional, and admin costs.',
+    keys: ['RENT_EXPENSE', 'ELECTRICITY_EXPENSE', 'INTEREST_EXPENSE', 'INTEREST_INCOME',
+      'DOCTOR_FEES', 'PROFESSIONAL_FEES', 'AUDIT_FEES', 'LEGAL_FEES',
+      'INSURANCE_EXPENSE', 'TRAVEL_CONVEYANCE', 'AMC_CHARGES',
+      'REPAIRS_MAINTENANCE', 'OFFICE_MAINTENANCE',
+      'PRINTING_STATIONERY', 'POSTAGE_COURIER', 'INTERNET_TELEPHONE',
+      'DEPRECIATION_EXPENSE'],
+  },
+  {
+    title: 'Period-end & control',
+    description: 'Bad debts, round-off, suspense, equity — typically shared.',
+    keys: ['BAD_DEBTS_EXPENSE', 'PROVISION_BAD_DEBTS', 'ROUND_OFF',
+      'RETAINED_EARNINGS', 'OPENING_BALANCE_EQUITY', 'SUSPENSE'],
+  },
+]
+
+// Narrow the account dropdown for keys whose mapping target has an obvious
+// account_subtype. Anything missing here gets the unfiltered list.
+const KEY_TO_SUBTYPE: Record<string, string> = {
+  CASH: 'Cash', PETTY_CASH: 'Cash',
+  BANK: 'Bank',
+  TRADE_RECEIVABLES: 'Receivable',
+  TRADE_PAYABLES: 'Payable',
+  PF_PAYABLE: 'Payable', ESI_PAYABLE: 'Payable', PT_PAYABLE: 'Payable',
+  NET_SALARY_PAYABLE: 'Payable', CHEQUES_OUTSTANDING: 'Payable',
+  OUTPUT_CGST: 'Output_GST', OUTPUT_SGST: 'Output_GST', OUTPUT_IGST: 'Output_GST',
+  RCM_LIABILITY: 'Output_GST',
+  INPUT_CGST: 'Input_GST', INPUT_SGST: 'Input_GST', INPUT_IGST: 'Input_GST',
+  TDS_RECEIVABLE: 'TDS_Receivable',
+  TDS_PAYABLE: 'TDS_Payable', TCS_PAYABLE: 'TDS_Payable',
+  RETAINED_EARNINGS: 'Retained_Earnings',
+  OPENING_BALANCE_EQUITY: 'Capital',
+  SALES_POS: 'Sales', SALES_B2B: 'Sales', SALES_RETURNS: 'Sales',
+  PURCHASES: 'Purchases', PURCHASE_RETURNS: 'Purchases',
+}
+
 function AccountMappingsTab() {
+  const { activeLocationId, activeLocation } = useLocation()
   const [rows, setRows] = useState<AccountMappingKeyRow[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<'all' | 'mapped' | 'unmapped' | 'overridden'>('all')
+  // 'auto' = if a location is active, edit its overrides; otherwise edit shared.
+  // 'shared' = always edit the shared (NULL-location) row, regardless of active loc.
+  const [scope, setScope] = useState<'auto' | 'shared'>('auto')
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+
+  const editingLocationId = scope === 'shared' ? null : activeLocationId
 
   async function load() {
     setLoading(true)
     try {
-      const [r, a] = await Promise.all([getAllAccountMappingKeys(), getChartOfAccounts()])
+      const [r, a] = await Promise.all([
+        getAllAccountMappingKeys(
+          editingLocationId == null ? { location_id: 'null' } : { location_id: editingLocationId },
+        ),
+        // location_scope=auto restricts the dropdown to current-store + shared.
+        getChartOfAccounts({ is_active: 'true', location_scope: 'auto' }),
+      ])
       setRows(r)
       setAccounts(a)
     } catch {
@@ -101,29 +208,94 @@ function AccountMappingsTab() {
       setLoading(false)
     }
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [editingLocationId])
 
   async function applyAccount(row: AccountMappingKeyRow, accountId: number) {
     try {
-      if (row.mapping_id) {
-        await updateAccountMapping(row.mapping_id, { account: accountId })
+      // When editing per-location:
+      //   - if an override already exists, PATCH it
+      //   - else POST a new row scoped to this location
+      // When editing shared (NULL):
+      //   - if the *default* row exists, PATCH it (mapping_id with no override)
+      //   - else POST a new shared row.
+      if (editingLocationId == null) {
+        if (row.mapping_id && !row.has_override) {
+          await updateAccountMapping(row.mapping_id, { account: accountId, location_id: null })
+        } else {
+          await createAccountMapping({ key: row.key, account: accountId, location_id: null })
+        }
       } else {
-        await createAccountMapping({ key: row.key, account: accountId })
+        if (row.override_id) {
+          await updateAccountMapping(row.override_id, { account: accountId, location_id: editingLocationId })
+        } else {
+          await createAccountMapping({ key: row.key, account: accountId, location_id: editingLocationId })
+        }
       }
-      // Refresh in place to reflect created mapping_id and labels.
       await load()
     } catch {
       toast.error('Failed to update mapping')
     }
   }
 
-  async function handleReset() {
+  async function clearOverride(row: AccountMappingKeyRow) {
+    if (!row.override_id) return
     try {
-      await resetAccountMappings()
+      await deleteAccountMapping(row.override_id)
+      toast.success('Override cleared — using shared default')
       await load()
-      toast.success('Mappings reset to defaults')
-    } catch { toast.error('Failed to reset mappings') }
+    } catch {
+      toast.error('Failed to clear override')
+    }
   }
+
+  async function resetGroup(groupKeys: string[]) {
+    try {
+      const result = await resetAccountMappings(groupKeys)
+      toast.success(`Reset ${(result.created ?? 0) + (result.updated ?? 0)} mapping(s) to default`)
+      await load()
+    } catch {
+      toast.error('Failed to reset group')
+    }
+  }
+
+  function toggleGroup(title: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(title)) next.delete(title)
+      else next.add(title)
+      return next
+    })
+  }
+
+  const rowByKey = useMemo(() => {
+    const m = new Map<string, AccountMappingKeyRow>()
+    for (const r of rows) m.set(r.key, r)
+    return m
+  }, [rows])
+
+  const filteredVisible = useMemo(() => {
+    const lower = search.toLowerCase()
+    return (row: AccountMappingKeyRow) => {
+      if (lower) {
+        if (
+          !row.key.toLowerCase().includes(lower) &&
+          !row.label.toLowerCase().includes(lower) &&
+          !(row.account_code ?? '').toLowerCase().includes(lower) &&
+          !(row.account_name ?? '').toLowerCase().includes(lower)
+        ) return false
+      }
+      if (filter === 'mapped' && !row.mapping_id) return false
+      if (filter === 'unmapped' && row.mapping_id) return false
+      if (filter === 'overridden' && !row.has_override) return false
+      return true
+    }
+  }, [search, filter])
+
+  const counts = useMemo(() => ({
+    mapped: rows.filter((r) => r.mapping_id !== null).length,
+    unmapped: rows.filter((r) => r.mapping_id === null).length,
+    overridden: rows.filter((r) => r.has_override).length,
+  }), [rows])
 
   if (loading) return (
     <div className="flex items-center justify-center h-40">
@@ -131,80 +303,224 @@ function AccountMappingsTab() {
     </div>
   )
 
-  const mapped = rows.filter((r) => r.mapping_id !== null)
-  const unmapped = rows.filter((r) => r.mapping_id === null)
+  const scopeLabel = editingLocationId == null
+    ? 'Shared (all stores)'
+    : `${activeLocation?.name ?? 'Store ' + editingLocationId} override`
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-4">
-        <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
-          Map semantic account keys to your Chart of Accounts.{' '}
-          <span style={{ color: 'var(--ink)' }}>{mapped.length}</span> mapped ·{' '}
-          <span style={{ color: unmapped.length ? 'var(--warning)' : 'var(--ink-3)' }}>
-            {unmapped.length}
-          </span>{' '}
-          unmapped
-        </p>
-        <Button onClick={handleReset} variant="secondary" size="sm">
-          <RotateCcw size={12} /> Reset Defaults
+    <div className="space-y-4">
+      {/* Header strip */}
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
+            Map each semantic key to a Chart-of-Accounts row. The accounting
+            engine looks up these mappings whenever it auto-posts a JE.
+          </p>
+          <p className="text-xs mt-1" style={{ color: 'var(--ink-3)' }}>
+            Editing:{' '}
+            <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{scopeLabel}</span>
+            {' · '}
+            <span style={{ color: 'var(--ink)' }}>{counts.mapped}</span> mapped ·{' '}
+            <span style={{ color: counts.unmapped ? 'var(--warning)' : 'var(--ink-3)' }}>
+              {counts.unmapped}
+            </span> unmapped
+            {activeLocationId != null && (
+              <> · <span style={{ color: 'var(--brand)' }}>{counts.overridden}</span> per-store overrides</>
+            )}
+          </p>
+        </div>
+        <Button onClick={() => resetGroup(Object.values(KEY_GROUPS).flatMap((g) => g.keys))} variant="secondary" size="sm">
+          <RotateCcw size={12} /> Reset all to defaults
         </Button>
       </div>
-      <Card className="overflow-hidden">
-        <Table>
-          <Thead>
-            <Tr style={{ background: 'var(--surface-1)' }}>
-              <Th>Key</Th>
-              <Th>Description</Th>
-              <Th>Account</Th>
-              <Th>Status</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {rows.map((row) => {
-              const isMapped = row.mapping_id !== null
-              return (
-                <Tr key={row.key}>
-                  <Td className="font-mono text-xs" style={{ color: 'var(--ink-2)' }}>{row.key}</Td>
-                  <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{row.label}</Td>
-                  <Td>
-                    <select
-                      value={row.account ?? ''}
-                      onChange={(e) => {
-                        const v = e.target.value
-                        if (v) applyAccount(row, Number(v))
-                      }}
-                      className="w-full h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
-                      style={{
-                        backgroundColor: 'var(--surface-0)',
-                        borderColor: isMapped ? 'var(--line)' : 'var(--warning)',
-                        color: 'var(--ink)',
-                      }}
-                    >
-                      {!isMapped && (
-                        <option value="">
-                          — Not mapped{row.default_code ? ` (suggested: ${row.default_code})` : ''} —
-                        </option>
-                      )}
-                      {accounts.map((acc) => (
-                        <option key={acc.id} value={acc.id}>
-                          {acc.account_code} — {acc.account_name}
-                        </option>
-                      ))}
-                    </select>
-                  </Td>
-                  <Td>
-                    {isMapped ? (
-                      <Badge variant="success">Mapped</Badge>
-                    ) : (
-                      <Badge variant="warning">Not mapped</Badge>
-                    )}
-                  </Td>
-                </Tr>
-              )
-            })}
-          </Tbody>
-        </Table>
-      </Card>
+
+      {/* Filter bar */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 max-w-md">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2"
+                 style={{ color: 'var(--ink-3)' }} />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search keys, labels, account codes…"
+            className="pl-9 py-1.5"
+          />
+        </div>
+        <select
+          value={filter}
+          onChange={(e) => setFilter(e.target.value as typeof filter)}
+          className="px-3 py-1.5 text-sm border rounded-lg"
+          style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+        >
+          <option value="all">All ({rows.length})</option>
+          <option value="mapped">Mapped ({counts.mapped})</option>
+          <option value="unmapped">Unmapped ({counts.unmapped})</option>
+          {activeLocationId != null && (
+            <option value="overridden">With override ({counts.overridden})</option>
+          )}
+        </select>
+        {activeLocationId != null && (
+          <select
+            value={scope}
+            onChange={(e) => setScope(e.target.value as typeof scope)}
+            className="px-3 py-1.5 text-sm border rounded-lg"
+            style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+            title="Edit per-store overrides, or the shared defaults that apply when no override exists"
+          >
+            <option value="auto">Edit: per-store override</option>
+            <option value="shared">Edit: shared defaults</option>
+          </select>
+        )}
+      </div>
+
+      {/* Grouped cards */}
+      <div className="space-y-3">
+        {KEY_GROUPS.map((group) => {
+          const groupRows = group.keys
+            .map((k) => rowByKey.get(k))
+            .filter((r): r is AccountMappingKeyRow => !!r)
+            .filter(filteredVisible)
+          if (groupRows.length === 0) return null
+          const unmappedInGroup = groupRows.filter((r) => !r.mapping_id).length
+          const collapsed = collapsedGroups.has(group.title)
+          return (
+            <Card key={group.title} className="overflow-hidden">
+              <button
+                onClick={() => toggleGroup(group.title)}
+                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[var(--color-hover-bg)]"
+                style={{ background: 'var(--surface-1)' }}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  {collapsed
+                    ? <ChevronRight size={14} style={{ color: 'var(--ink-3)' }} />
+                    : <ChevronDown size={14} style={{ color: 'var(--ink-3)' }} />}
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium truncate" style={{ color: 'var(--ink)' }}>
+                      {group.title}
+                    </h3>
+                    <p className="text-xs truncate" style={{ color: 'var(--ink-3)' }}>
+                      {group.description}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <Badge variant="default">{groupRows.length}</Badge>
+                  {unmappedInGroup > 0 && (
+                    <Badge variant="warning">{unmappedInGroup} unmapped</Badge>
+                  )}
+                  <Button
+                    onClick={(e) => { e.stopPropagation(); resetGroup(group.keys) }}
+                    variant="ghost" size="sm" title="Reset this group's shared defaults"
+                  >
+                    <RotateCcw size={12} />
+                  </Button>
+                </div>
+              </button>
+              {!collapsed && (
+                <Table>
+                  <Thead>
+                    <Tr style={{ background: 'var(--surface-0)' }}>
+                      <Th className="w-[180px]">Key</Th>
+                      <Th>Description</Th>
+                      <Th className="w-[320px]">Account</Th>
+                      <Th className="w-[160px]">Status</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {groupRows.map((row) => {
+                      const isMapped = row.mapping_id !== null
+                      const isSharedKey = row.is_shared_key
+                      const editingThisIsBlocked = isSharedKey && editingLocationId != null
+                      const subtype = KEY_TO_SUBTYPE[row.key]
+                      const dropdownAccounts = subtype
+                        ? accounts.filter((a) => a.account_subtype === subtype)
+                        : accounts
+                      return (
+                        <Tr key={row.key}>
+                          <Td className="font-mono text-xs align-top pt-3"
+                              style={{ color: 'var(--ink-2)' }}>
+                            <div className="flex flex-col gap-1">
+                              <span>{row.key}</span>
+                              {isSharedKey && (
+                                <Badge variant="default" className="self-start text-[10px]">Shared only</Badge>
+                              )}
+                              {row.has_override && editingLocationId != null && (
+                                <Badge variant="success" className="self-start text-[10px]">Override</Badge>
+                              )}
+                            </div>
+                          </Td>
+                          <Td className="text-sm align-top pt-3" style={{ color: 'var(--ink-2)' }}>
+                            {row.label}
+                            {row.default_code && (
+                              <span className="ml-2 text-xs" style={{ color: 'var(--ink-3)' }}>
+                                default: {row.default_code}
+                              </span>
+                            )}
+                          </Td>
+                          <Td>
+                            <select
+                              value={row.account ?? ''}
+                              disabled={editingThisIsBlocked}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                if (v) applyAccount(row, Number(v))
+                              }}
+                              className={cn(
+                                'w-full h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]',
+                                editingThisIsBlocked && 'opacity-50 cursor-not-allowed',
+                              )}
+                              style={{
+                                backgroundColor: 'var(--surface-0)',
+                                borderColor: isMapped ? 'var(--line)' : 'var(--warning)',
+                                color: 'var(--ink)',
+                              }}
+                            >
+                              {!isMapped && (
+                                <option value="">
+                                  — Not mapped{row.default_code ? ` (suggested: ${row.default_code})` : ''} —
+                                </option>
+                              )}
+                              {dropdownAccounts.map((acc) => (
+                                <option key={acc.id} value={acc.id}>
+                                  {acc.account_code} — {acc.account_name}
+                                </option>
+                              ))}
+                            </select>
+                            {editingThisIsBlocked && (
+                              <p className="mt-1 text-[11px]" style={{ color: 'var(--ink-3)' }}>
+                                Shared key — switch scope to "Edit: shared defaults" to change.
+                              </p>
+                            )}
+                          </Td>
+                          <Td className="align-top pt-3">
+                            <div className="flex flex-col gap-1.5 items-start">
+                              {isMapped ? (
+                                <Badge variant="success">Mapped</Badge>
+                              ) : (
+                                <Badge variant="warning">Not mapped</Badge>
+                              )}
+                              {row.has_override && editingLocationId != null && (
+                                <button
+                                  onClick={() => clearOverride(row)}
+                                  className="text-[11px] underline"
+                                  style={{ color: 'var(--ink-3)' }}
+                                  title="Remove this per-store override, fall back to shared default"
+                                >
+                                  Clear override
+                                </button>
+                              )}
+                            </div>
+                          </Td>
+                        </Tr>
+                      )
+                    })}
+                  </Tbody>
+                </Table>
+              )}
+            </Card>
+          )
+        })}
+      </div>
     </div>
   )
 }
