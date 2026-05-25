@@ -2259,6 +2259,23 @@ export async function markAllNotificationsRead() {
   return res.data as { marked_read: number }
 }
 
+export interface NotificationKindPref {
+  kind: string
+  label: string
+  muted: boolean
+  preference_id: number | null
+}
+
+export async function listNotificationKindPrefs() {
+  const res = await api.get('/notifications/preferences/all-kinds/')
+  return res.data as NotificationKindPref[]
+}
+
+export async function setNotificationKindPref(kind: string, muted: boolean) {
+  const res = await api.post('/notifications/preferences/set/', { kind, muted })
+  return res.data
+}
+
 // ─── Wave 6 — Closing-entries wizard helpers ────────────────────────────────
 
 export interface InventoryAdjustmentPayload {

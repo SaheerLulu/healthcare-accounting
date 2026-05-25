@@ -22,6 +22,8 @@ class Notification(models.Model):
         ('cheque_pending_long', 'Cheque pending > 30 days'),
         ('budget_overrun', 'Budget exceeded'),
         ('approval_required', 'Bill awaiting approval'),
+        ('sync_failure', 'Sync failure (unresolved > 1h)'),
+        ('period_lock_change', 'Period lock changed'),
         ('other', 'Other'),
     ]
 
@@ -76,3 +78,23 @@ class Notification(models.Model):
 
     def __str__(self):
         return f'[{self.priority}] {self.kind}: {self.title}'
+
+
+class NotificationPreference(models.Model):
+    """Per-user mute list. A row here means: 'this user does NOT want to see
+    notifications of this kind anymore'. Absence of a row = default (show)."""
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='notification_preferences',
+    )
+    kind = models.CharField(max_length=30, choices=Notification.KIND_CHOICES)
+    muted = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'kind'], name='notif_pref_uniq'),
+        ]
+        indexes = [models.Index(fields=['user', 'muted'])]
+
+    def __str__(self):
+        return f'{self.user_id}: {self.kind} {"muted" if self.muted else "active"}'

@@ -188,6 +188,51 @@ def alert_pending_cheques(*, today=None, days=30):
     return n
 
 
+def alert_sync_failures(*, now=None):
+    """Flag any SyncError that has been unresolved for over an hour.
+    Operationally important — silent inventory sync failures eventually
+    drift the books out of sync with the source data."""
+    from django.utils import timezone
+    from sync.models import SyncError
+    now = now or timezone.now()
+    cutoff = now - timedelta(hours=1)
+    stale = SyncError.objects.filter(resolved=False, created_at__lt=cutoff)
+    n = 0
+    for err in stale:
+        if _create_or_skip(
+            kind='sync_failure', priority='high', role_code='BOOKKEEPER',
+            title=f'Sync failure: {err.sync_type} #{err.source_id}',
+            body=(f'Unresolved for {(now - err.created_at).total_seconds() // 3600:.0f}h+. '
+                  f'Error: {err.error_message[:200]}'),
+            related_model='SyncError', related_id=err.id,
+            link_url='/sync',
+        ):
+            n += 1
+    return n
+
+
+def alert_period_lock_change(*, since=None):
+    """Notify CFO/Senior Accountant of period-lock additions in the last
+    24h. Lock changes are sensitive — finance leadership should be aware."""
+    from django.utils import timezone
+    from core.period_lock import LockedPeriod
+    since = since or (timezone.now() - timedelta(hours=24))
+    locks = LockedPeriod.objects.filter(locked_at__gte=since)
+    n = 0
+    for lock in locks:
+        if _create_or_skip(
+            kind='period_lock_change', priority='critical', role_code='CFO',
+            title=f'Period locked: {lock.period}',
+            body=(f'{lock.locked_by.username if lock.locked_by else "system"} '
+                  f'locked {lock.period} at {lock.locked_at:%Y-%m-%d %H:%M}. '
+                  f'Reason: {lock.reason or "—"}'),
+            related_model='LockedPeriod', related_id=lock.id,
+            link_url='/settings',
+        ):
+            n += 1
+    return n
+
+
 def generate_alerts(*, today=None) -> dict:
     """Run every alert rule and return per-rule counts."""
     return {
@@ -197,4 +242,6 @@ def generate_alerts(*, today=None) -> dict:
         'gstr3b_due': alert_gst_filing_due(today=today),
         'msme_window': alert_msme_window(today=today),
         'pending_cheques': alert_pending_cheques(today=today),
+        'sync_failures': alert_sync_failures(),
+        'period_lock_change': alert_period_lock_change(),
     }
