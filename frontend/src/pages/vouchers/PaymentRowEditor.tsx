@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react'
-import { Trash2, X, Loader2 } from 'lucide-react'
+import { Trash2, X, Loader2, ChevronDown } from 'lucide-react'
 import { AccountPicker } from '../journals/AccountPicker'
 import { PartySearchPicker } from '../parties/PartySearchPicker'
 import { Input } from '../../components/ui/input'
@@ -214,11 +214,9 @@ export function PaymentRowEditor({
         ) : (
           // Party set — auto-loaded outstanding bills as inline dropdown,
           // plus an escape hatch to the full sheet for Advance / On Account /
-          // Freeform references.
-          <div className="flex items-center gap-1.5">
-            {pendingLoading ? (
-              <Loader2 size={12} className="animate-spin" style={{ color: 'var(--ink-3)' }} />
-            ) : null}
+          // Freeform references.  Styled to match the input/picker primitives
+          // used elsewhere on the row instead of a raw native <select>.
+          <div className="relative">
             <select
               value=""
               onChange={(e) => {
@@ -226,7 +224,8 @@ export function PaymentRowEditor({
                 if (v === '__other__') setRefOpen(true)
                 else if (v !== '') handlePendingPick(Number(v))
               }}
-              className="flex-1 min-w-0 h-9 px-2 text-xs border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+              disabled={pendingLoading}
+              className="w-full h-9 pl-3 pr-9 text-xs border rounded-md outline-none transition-shadow focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)] appearance-none cursor-pointer disabled:cursor-wait"
               style={{
                 background: 'var(--surface-0)',
                 borderColor: 'var(--line)',
@@ -237,15 +236,24 @@ export function PaymentRowEditor({
                 : `${pendingRefs.length} outstanding reference(s) — pick to allocate`}
             >
               <option value="" disabled>
-                {pendingRefs.length === 0
-                  ? 'No outstanding refs'
-                  : `Pick from ${pendingRefs.length} outstanding ref${pendingRefs.length === 1 ? '' : 's'}…`}
+                {pendingLoading
+                  ? 'Loading references…'
+                  : pendingRefs.length === 0
+                    ? 'No outstanding refs'
+                    : `${pendingRefs.length} outstanding ref${pendingRefs.length === 1 ? '' : 's'} — pick…`}
               </option>
               {pendingRefs.map((p, i) => (
                 <option key={i} value={i}>{p.label}</option>
               ))}
               <option value="__other__">＋ Other reference (Advance / On Account / Freeform)…</option>
             </select>
+            {/* Custom chevron — native arrows differ across browsers and clash
+                with the AccountPicker on the same row. */}
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2">
+              {pendingLoading
+                ? <Loader2 size={12} className="animate-spin" style={{ color: 'var(--ink-3)' }} />
+                : <ChevronDown size={14} style={{ color: 'var(--ink-3)' }} />}
+            </span>
           </div>
         )}
       </td>

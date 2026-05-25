@@ -14,6 +14,7 @@ import { Card } from '../../components/ui/card'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs'
+import { Switch } from '../../components/ui/switch'
 
 const PRIORITY_VARIANT: Record<string, 'default' | 'success' | 'error' | 'warning'> = {
   low: 'default', normal: 'default', high: 'warning', critical: 'error',
@@ -164,22 +165,17 @@ function PreferencesPanel() {
               <div className="text-sm font-medium" style={{ color: 'var(--ink)' }}>{r.label}</div>
               <div className="text-xs mono" style={{ color: 'var(--ink-3)' }}>{r.kind}</div>
             </div>
-            <label className="inline-flex items-center gap-2 cursor-pointer">
-              <span className="text-xs" style={{ color: 'var(--ink-2)' }}>
+            <div className="inline-flex items-center gap-2.5">
+              <span className="text-xs" style={{ color: r.muted ? 'var(--ink-3)' : 'var(--ink-2)' }}>
                 {r.muted ? 'Muted' : 'Active'}
               </span>
-              <input
-                type="checkbox"
+              <Switch
                 checked={!r.muted}
                 disabled={saving === r.kind}
-                onChange={(e) => toggle(r.kind, !e.target.checked)}
-                className="w-9 h-5 rounded-full appearance-none relative cursor-pointer transition-colors"
-                style={{
-                  background: r.muted ? 'var(--surface-1)' : 'var(--brand)',
-                  border: '1px solid var(--line)',
-                }}
+                onCheckedChange={(active) => toggle(r.kind, !active)}
+                aria-label={`Toggle ${r.label}`}
               />
-            </label>
+            </div>
           </li>
         ))}
       </ul>
