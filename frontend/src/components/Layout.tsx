@@ -5,8 +5,6 @@ import {
   BookOpen,
   Receipt,
   FileBarChart,
-  Scale,
-  Ellipsis,
   ChevronDown,
   MapPin,
   Check,
@@ -18,6 +16,7 @@ import {
   Users,
   Landmark,
   Home,
+  ArrowLeftRight,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { cn } from '../lib/utils'
@@ -32,113 +31,190 @@ interface MenuItem {
   id: string
   label: string
   to: string
+  keycap?: string
+}
+
+interface MenuSection {
+  /** Section header inside a dropdown; omit for "ungrouped" sections. */
+  title?: string
+  items: MenuItem[]
 }
 
 interface MenuGroup {
   label: string
   icon: React.ComponentType<{ className?: string }>
-  items: MenuItem[]
+  sections: MenuSection[]
 }
 
+// Reduced from 10 to 8 top-level entries (2 standalone + 6 grouped) by
+// merging Ledger/Bills/Vouchers into Books+Transactions, Banking+Assets,
+// GST+TDS+Payroll into Tax & Compliance, and dissolving the "More" bucket
+// into Reports & Admin. Each long dropdown is split into named sections
+// so a 14-item menu reads as 3 mini-groups instead of a wall of text.
 const menuGroups: MenuGroup[] = [
   {
     label: 'Gateway',
     icon: Home,
-    items: [{ id: 'gateway', label: 'Gateway of Tally', to: '/' }],
+    sections: [{ items: [{ id: 'gateway', label: 'Gateway of Tally', to: '/' }] }],
   },
   {
     label: 'Dashboard',
     icon: LayoutDashboard,
-    items: [{ id: 'dashboard', label: 'Dashboard', to: '/dashboard' }],
+    sections: [{ items: [{ id: 'dashboard', label: 'Dashboard', to: '/dashboard' }] }],
   },
   {
-    label: 'Ledger',
+    label: 'Books',
     icon: BookOpen,
-    items: [
-      { id: 'accounts', label: 'Chart of Accounts', to: '/accounts' },
-      { id: 'cost-centres', label: 'Cost Centres', to: '/cost-centres' },
-      { id: 'voucher-types', label: 'Voucher Types', to: '/voucher-types' },
-      { id: 'journals', label: 'Journal Entries', to: '/journals' },
-      { id: 'recurring-journals', label: 'Recurring Journals', to: '/journals/recurring' },
-      { id: 'closing-entries', label: 'Closing Entries', to: '/journals/closing-entries' },
-      { id: 'bills', label: 'Bills', to: '/bills' },
-      { id: 'recurring-bills', label: 'Recurring Bills', to: '/bills/recurring' },
-      { id: 'expenses', label: 'Expenses', to: '/expenses' },
-      { id: 'receivables', label: 'Receivables', to: '/receivables' },
-      { id: 'payables', label: 'Payables', to: '/payables' },
+    sections: [
+      {
+        title: 'Master',
+        items: [
+          { id: 'accounts', label: 'Chart of Accounts', to: '/accounts' },
+          { id: 'cost-centres', label: 'Cost Centres', to: '/cost-centres' },
+          { id: 'voucher-types', label: 'Voucher Types', to: '/voucher-types' },
+        ],
+      },
+      {
+        title: 'Journals',
+        items: [
+          { id: 'journals', label: 'Journal Entries', to: '/journals' },
+          { id: 'recurring-journals', label: 'Recurring Journals', to: '/journals/recurring' },
+          { id: 'closing-entries', label: 'Closing Entries', to: '/journals/closing-entries' },
+        ],
+      },
+    ],
+  },
+  {
+    label: 'Transactions',
+    icon: ArrowLeftRight,
+    sections: [
+      {
+        title: 'Vouchers',
+        items: [
+          { id: 'v-payment', label: 'Payment', to: '/vouchers/payment', keycap: 'F5' },
+          { id: 'v-receipt', label: 'Receipt', to: '/vouchers/receipt', keycap: 'F6' },
+          { id: 'v-contra', label: 'Contra', to: '/vouchers/contra', keycap: 'F4' },
+          { id: 'v-journal', label: 'Journal', to: '/vouchers/journal', keycap: 'F7' },
+          { id: 'v-sales', label: 'Sales', to: '/vouchers/sales', keycap: 'F8' },
+          { id: 'v-purchase', label: 'Purchase', to: '/vouchers/purchase', keycap: 'F9' },
+          { id: 'v-credit-note', label: 'Credit Note', to: '/vouchers/credit-note', keycap: 'Ctrl+F8' },
+          { id: 'v-debit-note', label: 'Debit Note', to: '/vouchers/debit-note', keycap: 'Ctrl+F9' },
+        ],
+      },
+      {
+        title: 'Records',
+        items: [
+          { id: 'bills', label: 'Bills', to: '/bills' },
+          { id: 'recurring-bills', label: 'Recurring Bills', to: '/bills/recurring' },
+          { id: 'expenses', label: 'Expenses', to: '/expenses' },
+        ],
+      },
+      {
+        title: 'Outstanding',
+        items: [
+          { id: 'receivables', label: 'Receivables', to: '/receivables' },
+          { id: 'payables', label: 'Payables', to: '/payables' },
+        ],
+      },
     ],
   },
   {
     label: 'Parties',
     icon: Users,
-    items: [
-      { id: 'suppliers', label: 'Suppliers', to: '/parties/suppliers' },
-      { id: 'customers', label: 'Customers', to: '/parties/customers' },
+    sections: [
+      {
+        items: [
+          { id: 'suppliers', label: 'Suppliers', to: '/parties/suppliers' },
+          { id: 'customers', label: 'Customers', to: '/parties/customers' },
+        ],
+      },
     ],
   },
   {
-    label: 'Banking',
+    label: 'Banking & Assets',
     icon: Landmark,
-    items: [
-      { id: 'banking', label: 'Bank Accounts', to: '/banking' },
-      { id: 'cheques', label: 'Cheques', to: '/banking/cheques' },
-      { id: 'petty-cash', label: 'Petty Cash', to: '/banking/petty-cash' },
+    sections: [
+      {
+        title: 'Banking',
+        items: [
+          { id: 'banking', label: 'Bank Accounts', to: '/banking' },
+          { id: 'cheques', label: 'Cheques', to: '/banking/cheques' },
+          { id: 'petty-cash', label: 'Petty Cash', to: '/banking/petty-cash' },
+        ],
+      },
+      {
+        title: 'Assets',
+        items: [
+          { id: 'fixed-assets', label: 'Fixed Assets', to: '/fixed-assets' },
+          { id: 'loans', label: 'Loans & EMI', to: '/loans' },
+        ],
+      },
     ],
   },
   {
-    label: 'Assets & Loans',
-    icon: Landmark,
-    items: [
-      { id: 'fixed-assets', label: 'Fixed Assets', to: '/fixed-assets' },
-      { id: 'loans', label: 'Loans & EMI', to: '/loans' },
-    ],
-  },
-  {
-    label: 'GST',
+    label: 'Tax & Compliance',
     icon: Receipt,
-    items: [
-      { id: 'gstr1', label: 'GSTR-1', to: '/gst/gstr1' },
-      { id: 'gstr2b', label: 'GSTR-2B', to: '/gst/gstr2b' },
-      { id: 'gstr3b', label: 'GSTR-3B', to: '/gst/gstr3b' },
-      { id: 'itc', label: 'ITC Reconciliation', to: '/gst/itc-reconciliation' },
+    sections: [
+      {
+        title: 'GST',
+        items: [
+          { id: 'gstr1', label: 'GSTR-1', to: '/gst/gstr1' },
+          { id: 'gstr2b', label: 'GSTR-2B', to: '/gst/gstr2b' },
+          { id: 'gstr3b', label: 'GSTR-3B', to: '/gst/gstr3b' },
+          { id: 'itc', label: 'ITC Reconciliation', to: '/gst/itc-reconciliation' },
+          { id: 'gst-comp', label: 'GST Computation', to: '/reports/gst-computation' },
+          { id: 'hsn', label: 'HSN Summary', to: '/reports/hsn-summary' },
+        ],
+      },
+      {
+        title: 'Other',
+        items: [
+          { id: 'tds', label: 'TDS', to: '/tds' },
+          { id: 'payroll', label: 'Payroll', to: '/payroll' },
+        ],
+      },
     ],
   },
   {
-    label: 'Tax & Payroll',
+    label: 'Reports & Admin',
     icon: FileBarChart,
-    items: [
-      { id: 'tds', label: 'TDS', to: '/tds' },
-      { id: 'payroll', label: 'Payroll', to: '/payroll' },
-    ],
-  },
-  {
-    label: 'Reports',
-    icon: Scale,
-    items: [
-      { id: 'trial', label: 'Trial Balance', to: '/reports/trial-balance' },
-      { id: 'pl', label: 'Profit & Loss', to: '/reports/profit-loss' },
-      { id: 'bs', label: 'Balance Sheet', to: '/reports/balance-sheet' },
-      { id: 'gst-comp', label: 'GST Computation', to: '/reports/gst-computation' },
-      { id: 'hsn', label: 'HSN Summary', to: '/reports/hsn-summary' },
-      { id: 'party', label: 'Party Outstanding', to: '/reports/party-outstanding' },
-      { id: 'bank', label: 'Bank Book', to: '/reports/bank-book' },
-      { id: 'cash', label: 'Cash Book', to: '/reports/cash-book' },
-      { id: 'daybook', label: 'Daybook', to: '/reports/daybook' },
-      { id: 'stock', label: 'Stock Summary', to: '/reports/stock-summary' },
-    ],
-  },
-  {
-    label: 'More',
-    icon: Ellipsis,
-    items: [
-      { id: 'setup', label: 'Setup Checklist', to: '/setup' },
-      { id: 'activity-map', label: 'Activity → Account Map', to: '/activity-map' },
-      { id: 'sync', label: 'Sync', to: '/sync' },
-      { id: 'audit', label: 'Audit Log', to: '/audit' },
-      { id: 'settings', label: 'Settings', to: '/settings' },
+    sections: [
+      {
+        title: 'Financial',
+        items: [
+          { id: 'trial', label: 'Trial Balance', to: '/reports/trial-balance' },
+          { id: 'pl', label: 'Profit & Loss', to: '/reports/profit-loss' },
+          { id: 'bs', label: 'Balance Sheet', to: '/reports/balance-sheet' },
+        ],
+      },
+      {
+        title: 'Operational',
+        items: [
+          { id: 'party', label: 'Party Outstanding', to: '/reports/party-outstanding' },
+          { id: 'bank', label: 'Bank Book', to: '/reports/bank-book' },
+          { id: 'cash', label: 'Cash Book', to: '/reports/cash-book' },
+          { id: 'daybook', label: 'Daybook', to: '/reports/daybook' },
+          { id: 'stock', label: 'Stock Summary', to: '/reports/stock-summary' },
+        ],
+      },
+      {
+        title: 'Admin',
+        items: [
+          { id: 'setup', label: 'Setup Checklist', to: '/setup' },
+          { id: 'activity-map', label: 'Activity → Account Map', to: '/activity-map' },
+          { id: 'sync', label: 'Sync', to: '/sync' },
+          { id: 'audit', label: 'Audit Log', to: '/audit' },
+          { id: 'settings', label: 'Settings', to: '/settings' },
+        ],
+      },
     ],
   },
 ]
+
+/** Flatten a group's sections into a single items array. */
+function allItems(g: MenuGroup): MenuItem[] {
+  return g.sections.flatMap((s) => s.items)
+}
 
 function Wordmark() {
   return (
@@ -279,7 +355,7 @@ function findActiveItemId(path: string): string | null {
   let bestId: string | null = null
   let bestLen = -1
   for (const g of menuGroups) {
-    for (const item of g.items) {
+    for (const item of allItems(g)) {
       if (item.to === '/') {
         if (path === '/' && bestLen < 1) { bestId = item.id; bestLen = 1 }
         continue
@@ -329,12 +405,13 @@ function TopNav() {
   }
 
   function isGroupActive(group: MenuGroup) {
-    return activeItemId !== null && group.items.some((item) => item.id === activeItemId)
+    return activeItemId !== null && allItems(group).some((item) => item.id === activeItemId)
   }
 
   function handleGroupClick(group: MenuGroup) {
-    if (group.items.length === 1) {
-      navigate(group.items[0].to)
+    const items = allItems(group)
+    if (items.length === 1) {
+      navigate(items[0].to)
       setOpenMenu(null)
     } else {
       setOpenMenu(openMenu === group.label ? null : group.label)
@@ -359,7 +436,7 @@ function TopNav() {
         {menuGroups.map((group) => {
           const active = isGroupActive(group)
           const isOpen = openMenu === group.label
-          const hasSubs = group.items.length > 1
+          const hasSubs = allItems(group).length > 1
           const Icon = group.icon
 
           return (
@@ -367,7 +444,7 @@ function TopNav() {
               <button
                 onClick={() => handleGroupClick(group)}
                 className={cn(
-                  'relative flex items-center justify-center gap-1 px-3 py-2 rounded-md text-sm font-medium w-full max-w-[150px]',
+                  'relative flex items-center justify-center gap-1 px-3 py-2 rounded-md text-sm font-medium w-full max-w-[170px]',
                   !active && 'hover:bg-[var(--color-hover-bg)]'
                 )}
                 style={
@@ -377,7 +454,7 @@ function TopNav() {
                 }
               >
                 <Icon className="w-4 h-4" />
-                <span className="hidden md:inline">{group.label}</span>
+                <span className="hidden md:inline truncate">{group.label}</span>
                 {hasSubs && (
                   <ChevronDown
                     className={cn('w-3 h-3 transition-transform', isOpen && 'rotate-180')}
@@ -393,31 +470,66 @@ function TopNav() {
 
               {isOpen && hasSubs && (
                 <div
-                  className="absolute top-full left-1/2 -translate-x-1/2 mt-1 rounded-lg shadow-lg py-1 min-w-[220px] z-50 dropdown-animate"
+                  className="absolute top-full left-1/2 -translate-x-1/2 mt-1 rounded-lg shadow-lg py-2 min-w-[260px] z-50 dropdown-animate"
                   style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
                 >
-                  {group.items.map((item) => {
-                    const itemActive = item.id === activeItemId
-                    return (
-                      <NavLink
-                        key={item.id}
-                        to={item.to}
-                        end={item.to === '/'}
-                        onClick={() => setOpenMenu(null)}
-                        className={cn(
-                          'block w-full text-left px-4 py-2 text-sm hover:translate-x-0.5 transition-transform',
-                          itemActive && 'font-medium'
-                        )}
-                        style={
-                          itemActive
-                            ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)' }
-                            : { color: 'var(--ink)' }
-                        }
-                      >
-                        {item.label}
-                      </NavLink>
-                    )
-                  })}
+                  {group.sections.map((section, sectionIdx) => (
+                    <div key={section.title ?? `s${sectionIdx}`}>
+                      {sectionIdx > 0 && (
+                        <div
+                          className="my-1 mx-3 border-t"
+                          style={{ borderColor: 'var(--line)' }}
+                        />
+                      )}
+                      {section.title && (
+                        <div
+                          className="px-4 pt-1.5 pb-1 mono uppercase"
+                          style={{
+                            fontSize: 10,
+                            color: 'var(--ink-3)',
+                            letterSpacing: '0.1em',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {section.title}
+                        </div>
+                      )}
+                      {section.items.map((item) => {
+                        const itemActive = item.id === activeItemId
+                        return (
+                          <NavLink
+                            key={item.id}
+                            to={item.to}
+                            end={item.to === '/'}
+                            onClick={() => setOpenMenu(null)}
+                            className={cn(
+                              'flex items-center justify-between w-full text-left px-4 py-2 text-sm hover:translate-x-0.5 transition-transform',
+                              itemActive && 'font-medium'
+                            )}
+                            style={
+                              itemActive
+                                ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)' }
+                                : { color: 'var(--ink)' }
+                            }
+                          >
+                            <span className="truncate">{item.label}</span>
+                            {item.keycap && (
+                              <kbd
+                                className="ml-3 px-1.5 py-0.5 rounded mono text-[10px] uppercase tracking-wider flex-shrink-0"
+                                style={{
+                                  color: 'var(--ink-3)',
+                                  border: '1px solid var(--line)',
+                                  background: 'var(--surface-1)',
+                                }}
+                              >
+                                {item.keycap}
+                              </kbd>
+                            )}
+                          </NavLink>
+                        )
+                      })}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
