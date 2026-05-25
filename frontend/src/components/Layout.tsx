@@ -514,8 +514,12 @@ function TopNav() {
                           >
                             <span className="truncate">{item.label}</span>
                             {item.keycap && (
+                              // Keycaps only appear at >=lg (1024px) to keep
+                              // dropdown widths sane on narrower viewports.
+                              // The shortcut still works — it's just not
+                              // visually advertised on the menu item.
                               <kbd
-                                className="ml-3 px-1.5 py-0.5 rounded mono text-[10px] uppercase tracking-wider flex-shrink-0"
+                                className="ml-3 px-1.5 py-0.5 rounded mono text-[10px] uppercase tracking-wider flex-shrink-0 hidden lg:inline-block"
                                 style={{
                                   color: 'var(--ink-3)',
                                   border: '1px solid var(--line)',

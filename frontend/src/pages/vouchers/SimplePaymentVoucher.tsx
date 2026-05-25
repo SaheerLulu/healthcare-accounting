@@ -606,36 +606,16 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
             # {originalEntry?.entry_no || 'Auto on save'}
           </span>
           <span className="text-sm" style={{ color: 'var(--ink-2)' }}>{cfg.subtitle}</span>
-          {(costCenter || costCentreId) && (
-            <button
-              type="button"
-              onClick={() => setCostCenterOpen(true)}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] mono uppercase tracking-wide hover:opacity-90"
-              style={{
-                background: 'rgba(15,157,154,0.10)',
-                color: 'var(--brand)',
-                border: '1px solid rgba(15,157,154,0.25)',
-              }}
-              title="Cost Centre — Ctrl+L to change"
-            >
-              <Layers size={10} /> {costCenter || `Centre #${costCentreId}`}
-            </button>
-          )}
         </div>
         <div className="flex items-center gap-2">
-          {!costCenter && !costCentreId && (
-            <Button variant="ghost" size="sm" onClick={() => setCostCenterOpen(true)}>
-              <Layers size={14} /> Cost Centre
-              <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Ctrl+L</kbd>
-            </Button>
-          )}
           {originalEntry && <Badge variant="warning">Draft</Badge>}
         </div>
       </div>
 
-      {/* Header strip — just Date + Bank/Cash side. Party is per-row only; the
-          row's own narration is the only narration field (no top-level
-          duplicate). */}
+      {/* Header strip — Date / Bank-Cash / Cost Centre. Party is per-row
+          only; the row's own narration is the only narration (no top-level
+          duplicate). The 3-6-3 grid balances visual weight: Cost Centre
+          gets first-class placement instead of being a one-off button. */}
       <Card className="p-5">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
           <div className="md:col-span-3">
@@ -644,7 +624,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
             </Field>
           </div>
 
-          <div className="md:col-span-9">
+          <div className="md:col-span-6">
             <Field label={cfg.bankCashLabel} required hint={cfg.bankCashHint}>
               <div className="flex gap-2">
                 <div className="flex gap-0.5 rounded-md border overflow-hidden" style={{ borderColor: 'var(--line)' }}>
@@ -677,6 +657,31 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
                   />
                 </div>
               </div>
+            </Field>
+          </div>
+
+          <div className="md:col-span-3">
+            <Field label="Cost Centre" hint="Optional — Ctrl+L to change">
+              <button
+                type="button"
+                onClick={() => setCostCenterOpen(true)}
+                className="w-full h-9 px-3 text-sm border rounded-md outline-none transition-shadow focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)] flex items-center justify-between gap-2"
+                style={{
+                  background: 'var(--surface-0)',
+                  borderColor: 'var(--line)',
+                  color: (costCenter || costCentreId) ? 'var(--ink)' : 'var(--ink-3)',
+                }}
+              >
+                <span className="inline-flex items-center gap-1.5 truncate">
+                  <Layers size={12} style={{ color: (costCenter || costCentreId) ? 'var(--brand)' : 'var(--ink-3)' }} />
+                  <span className="truncate">
+                    {costCenter || (costCentreId ? `Centre #${costCentreId}` : 'No centre')}
+                  </span>
+                </span>
+                <kbd className="hidden lg:inline mono text-[10px] flex-shrink-0" style={{ color: 'var(--ink-3)' }}>
+                  Ctrl+L
+                </kbd>
+              </button>
             </Field>
           </div>
         </div>

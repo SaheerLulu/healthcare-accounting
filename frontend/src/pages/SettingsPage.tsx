@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { Loader2, Save, RotateCcw, Search, ChevronDown, ChevronRight } from 'lucide-react'
+import { Loader2, Save, RotateCcw, Search, ChevronDown, Undo2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getSettings, updateSettings, type AccountingSettings,
@@ -387,13 +387,18 @@ function AccountMappingsTab() {
             <Card key={group.title} className="overflow-hidden">
               <button
                 onClick={() => toggleGroup(group.title)}
-                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[var(--color-hover-bg)]"
+                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[var(--color-hover-bg)] transition-colors"
                 style={{ background: 'var(--surface-1)' }}
               >
                 <div className="flex items-center gap-2 min-w-0">
-                  {collapsed
-                    ? <ChevronRight size={14} style={{ color: 'var(--ink-3)' }} />
-                    : <ChevronDown size={14} style={{ color: 'var(--ink-3)' }} />}
+                  <ChevronDown
+                    size={14}
+                    className="transition-transform"
+                    style={{
+                      color: 'var(--ink-3)',
+                      transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                    }}
+                  />
                   <div className="min-w-0">
                     <h3 className="text-sm font-medium truncate" style={{ color: 'var(--ink)' }}>
                       {group.title}
@@ -493,7 +498,7 @@ function AccountMappingsTab() {
                             )}
                           </Td>
                           <Td className="align-top pt-3">
-                            <div className="flex flex-col gap-1.5 items-start">
+                            <div className="flex items-center gap-2">
                               {isMapped ? (
                                 <Badge variant="success">Mapped</Badge>
                               ) : (
@@ -502,11 +507,12 @@ function AccountMappingsTab() {
                               {row.has_override && editingLocationId != null && (
                                 <button
                                   onClick={() => clearOverride(row)}
-                                  className="text-[11px] underline"
+                                  className="p-1.5 rounded transition-colors hover:bg-[var(--color-hover-bg)]"
                                   style={{ color: 'var(--ink-3)' }}
-                                  title="Remove this per-store override, fall back to shared default"
+                                  title="Clear this per-store override — fall back to shared default"
+                                  aria-label="Clear per-store override"
                                 >
-                                  Clear override
+                                  <Undo2 size={13} />
                                 </button>
                               )}
                             </div>
