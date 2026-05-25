@@ -1,5 +1,7 @@
 import logging
+import time
 import traceback
+from decimal import Decimal
 from django.db import transaction
 from inventory_reader.models import (
     PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO,
@@ -16,6 +18,19 @@ class InventorySyncService:
 
     def __init__(self):
         self.journal_service = JournalAutoGenerationService()
+
+    def _record_metrics(self, sync_type: str, started_at: float, errors_before: int):
+        """Patch duration + error_count onto the SyncLog just written by a
+        sync_X method. Decoupled so we only have to touch each sync_X with a
+        single extra line at the end."""
+        errors_after = SyncError.objects.filter(
+            sync_type=sync_type, resolved=False,
+        ).count()
+        duration = Decimal(str(round(time.monotonic() - started_at, 2)))
+        SyncLog.objects.filter(sync_type=sync_type).update(
+            duration_seconds=duration,
+            error_count=max(0, errors_after - errors_before),
+        )
 
     def _synced_ids(self, reference_type: str) -> set:
         """All inventory ids already represented by a JournalEntry for this ref type.
@@ -58,6 +73,8 @@ class InventorySyncService:
         ).update(resolved=True)
 
     def sync_purchases(self, since_id: int = 0) -> int:
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='purchase', resolved=False).count()
         already_synced = self._synced_ids('PurchaseOrder')
         orders = PurchaseOrderRO.objects.filter(
             state__in=['confirmed', 'done', 'approved'],
@@ -79,9 +96,12 @@ class InventorySyncService:
             sync_type='purchase',
             defaults={'last_synced_id': last_id, 'records_processed': count}
         )
+        self._record_metrics('purchase', started, errors_before)
         return count
 
     def sync_pos(self, since_id: int = 0) -> int:
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='pos', resolved=False).count()
         already_synced = self._synced_ids('POSOrder')
         orders = POSOrderRO.objects.filter(
             status__in=['confirmed', 'completed'],
@@ -103,9 +123,12 @@ class InventorySyncService:
             sync_type='pos',
             defaults={'last_synced_id': last_id, 'records_processed': count}
         )
+        self._record_metrics('pos', started, errors_before)
         return count
 
     def sync_b2b(self, since_id: int = 0) -> int:
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='b2b', resolved=False).count()
         already_synced = self._synced_ids('B2BSalesOrder')
         orders = B2BSalesOrderRO.objects.filter(
             status__in=['confirmed', 'delivered', 'invoiced'],
@@ -127,9 +150,12 @@ class InventorySyncService:
             sync_type='b2b',
             defaults={'last_synced_id': last_id, 'records_processed': count}
         )
+        self._record_metrics('b2b', started, errors_before)
         return count
 
     def sync_returns(self, since_id: int = 0) -> int:
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='return', resolved=False).count()
         already_synced = self._synced_ids('SalesReturn')
         returns = SalesReturnRO.objects.filter(
             status__in=['confirmed', 'completed'],
@@ -151,6 +177,7 @@ class InventorySyncService:
             sync_type='return',
             defaults={'last_synced_id': last_id, 'records_processed': count}
         )
+        self._record_metrics('return', started, errors_before)
         return count
 
     def sync_opening_stocks(self, since_id: int = 0) -> int:
@@ -159,6 +186,8 @@ class InventorySyncService:
         Runs first in sync_all() so the books reflect on-hand inventory before
         any subsequent purchase/sale JV references the stock account.
         """
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='opening_stock', resolved=False).count()
         already_synced = self._synced_ids('OpeningStock')
         batches = OpeningStockRO.objects.exclude(id__in=already_synced).order_by('id')
 
@@ -178,10 +207,13 @@ class InventorySyncService:
             sync_type='opening_stock',
             defaults={'last_synced_id': last_id, 'records_processed': count}
         )
+        self._record_metrics('opening_stock', started, errors_before)
         return count
 
     def sync_purchase_returns(self, since_id: int = 0) -> int:
         """Sync purchase returns from inventory system (Phase 4A)."""
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='purchase_return', resolved=False).count()
         already_synced = self._synced_ids('PurchaseReturn')
         returns = PurchaseReturnRO.objects.filter(
             status__in=['confirmed', 'completed', 'approved'],
@@ -203,6 +235,7 @@ class InventorySyncService:
             sync_type='purchase_return',
             defaults={'last_synced_id': last_id, 'records_processed': count}
         )
+        self._record_metrics('purchase_return', started, errors_before)
         return count
 
     def retry_failed(self):

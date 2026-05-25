@@ -1838,6 +1838,9 @@ export interface SyncLog {
   sync_type: string
   last_synced_at: string
   records_processed: number
+  error_count: number
+  /** Wall-clock duration of the most recent run, in seconds. */
+  duration_seconds: string | null
   status: string
   error_message?: string
 }
@@ -1847,10 +1850,12 @@ export interface SyncError {
   sync_type: string
   source_id: number
   error_message: string
+  traceback: string
   retry_count: number
   max_retries: number
   resolved: boolean
   created_at: string
+  updated_at: string
 }
 
 export async function runSync() {
@@ -1858,8 +1863,8 @@ export async function runSync() {
   return res.data
 }
 
-export async function getSyncLogs() {
-  const res = await api.get('/sync/logs/')
+export async function getSyncLogs(params?: { sync_type?: string }) {
+  const res = await api.get('/sync/logs/', { params })
   return res.data as SyncLog[]
 }
 
@@ -1868,9 +1873,32 @@ export async function retrySyncErrors() {
   return res.data
 }
 
-export async function getSyncErrors() {
-  const res = await api.get('/sync/errors/')
+export async function getSyncErrors(params?: { status?: 'open' | 'resolved'; sync_type?: string }) {
+  const res = await api.get('/sync/errors/', { params })
   return res.data as SyncError[]
+}
+
+export async function resolveSyncError(id: number) {
+  const res = await api.post(`/sync/errors/${id}/resolve/`)
+  return res.data as SyncError
+}
+
+export interface FullResyncPreview {
+  dry_run: boolean
+  would_delete_journals?: number
+  would_reset_cursors?: number
+  wiped_entries?: number
+  resync?: Record<string, number>
+}
+
+export async function fullResyncDryRun() {
+  const res = await api.get('/sync/full-resync/')
+  return res.data as FullResyncPreview
+}
+
+export async function fullResyncConfirm() {
+  const res = await api.post('/sync/full-resync/', { confirm: true })
+  return res.data as FullResyncPreview
 }
 
 // ─── Settings ────────────────────────────────────────────────────────────────

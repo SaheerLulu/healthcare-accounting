@@ -1,6 +1,6 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import serializers
+from rest_framework import serializers, status
 from .services import InventorySyncService, full_resync
 from .models import SyncLog, SyncError
 from audit.utils import log_action
@@ -28,8 +28,12 @@ class SyncRunView(APIView):
 
 class SyncLogListView(APIView):
     def get(self, request):
-        logs = SyncLog.objects.all()[:50]
-        serializer = SyncLogSerializer(logs, many=True)
+        """Optional ?sync_type=X filter so the UI can show a single type's history."""
+        qs = SyncLog.objects.all()
+        sync_type = request.query_params.get('sync_type')
+        if sync_type:
+            qs = qs.filter(sync_type=sync_type)
+        serializer = SyncLogSerializer(qs[:50], many=True)
         return Response(serializer.data)
 
 
@@ -43,9 +47,36 @@ class SyncRetryView(APIView):
 
 class SyncErrorListView(APIView):
     def get(self, request):
-        errors = SyncError.objects.filter(resolved=False)[:50]
-        serializer = SyncErrorSerializer(errors, many=True)
+        """Default returns unresolved errors. Pass ?include_resolved=true to
+        see everything, or ?status=resolved/open to filter explicitly."""
+        qs = SyncError.objects.all()
+        s = request.query_params.get('status')
+        include_resolved = request.query_params.get('include_resolved', '').lower() in ('true', '1', 'yes')
+        if s == 'resolved':
+            qs = qs.filter(resolved=True)
+        elif s == 'open' or (not include_resolved and not s):
+            qs = qs.filter(resolved=False)
+        sync_type = request.query_params.get('sync_type')
+        if sync_type:
+            qs = qs.filter(sync_type=sync_type)
+        serializer = SyncErrorSerializer(qs[:200], many=True)
         return Response(serializer.data)
+
+
+class SyncErrorResolveView(APIView):
+    """POST /api/sync/errors/{pk}/resolve/ — flip resolved=True without retrying."""
+    def post(self, request, pk):
+        try:
+            err = SyncError.objects.get(pk=pk)
+        except SyncError.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        if not err.resolved:
+            err.resolved = True
+            err.save(update_fields=['resolved', 'updated_at'])
+            log_action('UPDATE', 'SyncError', err.pk,
+                       f'Manually resolved {err.sync_type}:{err.source_id}',
+                       request=request)
+        return Response(SyncErrorSerializer(err).data)
 
 
 class FullResyncView(APIView):

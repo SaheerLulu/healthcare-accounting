@@ -15,6 +15,11 @@ class SyncLog(models.Model):
     last_synced_id = models.PositiveIntegerField(default=0)
     last_synced_at = models.DateTimeField(auto_now=True)
     records_processed = models.IntegerField(default=0)
+    # Track how many records failed (logged as SyncError) during this run.
+    # Distinct from records_processed which counts successes only.
+    error_count = models.IntegerField(default=0)
+    # Wall-clock duration of the most recent run, useful to spot stalled syncs.
+    duration_seconds = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     status = models.CharField(max_length=20, default='success')
     error_message = models.TextField(blank=True)
 
