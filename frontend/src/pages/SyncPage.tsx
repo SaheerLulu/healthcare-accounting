@@ -13,7 +13,7 @@ import { useLocation } from '../contexts/LocationContext'
 import { formatDate } from '../lib/utils'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
-import { Card, CardHeader } from '../components/ui/card'
+import { Card } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
 import { EmptyState } from '../components/ui/EmptyState'
 import { SkeletonTable } from '../components/ui/Skeletons'
@@ -309,7 +309,10 @@ export default function SyncPage() {
       {/* Errors */}
       {(openErrorCount > 0 || errorView === 'resolved') && (
         <Card className="overflow-hidden p-0">
-          <CardHeader className="flex flex-row items-center justify-between gap-2 flex-wrap">
+          <div
+            className="px-5 py-3 border-b flex items-center justify-between gap-2 flex-wrap"
+            style={{ borderColor: 'var(--line)', background: 'var(--surface-1)' }}
+          >
             <div className="flex items-center gap-2">
               <AlertTriangle size={14} style={{ color: openErrorCount > 0 ? 'var(--danger)' : 'var(--ink-3)' }} />
               <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>
@@ -319,7 +322,7 @@ export default function SyncPage() {
                 {errors.length}
               </Badge>
             </div>
-            <div className="flex items-center bg-[var(--surface-1)] rounded-md p-0.5"
+            <div className="flex items-center bg-[var(--surface-0)] rounded-md p-0.5"
                  style={{ border: '1px solid var(--line)' }}>
               {(['open', 'resolved'] as const).map((v) => (
                 <button
@@ -327,7 +330,7 @@ export default function SyncPage() {
                   onClick={() => setErrorView(v)}
                   className="px-2.5 py-1 text-xs font-medium rounded capitalize"
                   style={errorView === v
-                    ? { background: 'var(--surface-0)', color: 'var(--ink)' }
+                    ? { background: 'var(--surface-1)', color: 'var(--ink)' }
                     : { color: 'var(--ink-3)' }
                   }
                 >
@@ -335,7 +338,7 @@ export default function SyncPage() {
                 </button>
               ))}
             </div>
-          </CardHeader>
+          </div>
           {errors.length === 0 ? (
             <div className="px-5 py-8 text-center text-sm" style={{ color: 'var(--ink-3)' }}>
               No {errorView} errors.
@@ -419,7 +422,10 @@ export default function SyncPage() {
 
       {/* History — main content */}
       <Card className="overflow-hidden p-0">
-        <CardHeader className="flex flex-row items-center justify-between gap-2 flex-wrap">
+        <div
+          className="px-5 py-3 border-b flex items-center justify-between gap-2 flex-wrap"
+          style={{ borderColor: 'var(--line)', background: 'var(--surface-1)' }}
+        >
           <div>
             <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Sync history</h2>
             <p className="text-xs mt-0.5" style={{ color: 'var(--ink-3)' }}>
@@ -427,7 +433,7 @@ export default function SyncPage() {
             </p>
           </div>
           <Button variant="link" size="sm" onClick={loadAll}>Refresh</Button>
-        </CardHeader>
+        </div>
         {loading ? (
           <SkeletonTable rows={6} cols={6} />
         ) : logs.length === 0 ? (
