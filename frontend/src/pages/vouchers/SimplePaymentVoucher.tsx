@@ -20,12 +20,61 @@ import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { useLocation as useActiveLocation } from '../../contexts/LocationContext'
 import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
 import { AccountPicker } from '../journals/AccountPicker'
-import { PartySearchPicker } from '../parties/PartySearchPicker'
 import { CreateLedgerModal } from './CreateLedgerModal'
 import { CostCenterPopup } from './CostCenterPopup'
 import { PaymentRowEditor, type PaymentRow } from './PaymentRowEditor'
 
 type PartyKind = 'Supplier' | 'Customer'
+type VoucherMode = 'payment' | 'receipt'
+
+interface ModeConfig {
+  /** PAYMENT or RECEIPT — the voucher_type written to the JE. */
+  voucherType: 'PAYMENT' | 'RECEIPT'
+  /** F-key chip shown next to the title. */
+  hotkeyLabel: 'F5' | 'F6'
+  /** Page title and "Repeat last" semantics. */
+  title: string
+  /** One-liner shown in the header. */
+  subtitle: string
+  /** Default narration when the user hasn't edited it. */
+  defaultNarration: string
+  /** Header field label for the bank/cash side. */
+  bankCashLabel: string
+  bankCashHint: string
+  /** Default party kind for new rows (rows can still be either). */
+  defaultPartyKind: PartyKind
+  /** Header label on the row table for the per-row account column. */
+  rowLedgerLabel: string
+  /** Bottom hint on the row table. */
+  totalHint: (bankCash: string) => string
+}
+
+const MODE_CONFIG: Record<VoucherMode, ModeConfig> = {
+  payment: {
+    voucherType: 'PAYMENT',
+    hotkeyLabel: 'F5',
+    title: 'Payment Voucher',
+    subtitle: '· Cash & bank outflows',
+    defaultNarration: 'Being payment',
+    bankCashLabel: 'Paid from',
+    bankCashHint: 'The credit side of this voucher',
+    defaultPartyKind: 'Supplier',
+    rowLedgerLabel: 'Ledger (Dr)',
+    totalHint: (bc) => `Sum of debits is credited to ${bc}`,
+  },
+  receipt: {
+    voucherType: 'RECEIPT',
+    hotkeyLabel: 'F6',
+    title: 'Receipt Voucher',
+    subtitle: '· Cash & bank inflows',
+    defaultNarration: 'Being receipt',
+    bankCashLabel: 'Received in',
+    bankCashHint: 'The debit side of this voucher',
+    defaultPartyKind: 'Customer',
+    rowLedgerLabel: 'Ledger (Cr)',
+    totalHint: (bc) => `Sum of credits is debited to ${bc}`,
+  },
+}
 
 function uid() {
   return Math.random().toString(36).slice(2)
@@ -83,7 +132,8 @@ function suggestLedgerForParty(accounts: Account[], partyKind: PartyKind | null)
   return match?.id ?? null
 }
 
-export default function SimplePaymentVoucher() {
+export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: VoucherMode } = {}) {
+  const cfg = MODE_CONFIG[mode]
   const { id } = useParams<{ id?: string }>()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -100,14 +150,12 @@ export default function SimplePaymentVoucher() {
   const [date, setDate] = useState(todayStr())
   const [paymentMode, setPaymentMode] = useState<'bank' | 'cash'>('bank')
   const [bankCashId, setBankCashId] = useState<number | null>(null)
-  const [defaultPartyType, setDefaultPartyType] = useState<PartyKind>('Supplier')
-  const [defaultPartyId, setDefaultPartyId] = useState<number | ''>('')
-  const [narration, setNarration] = useState('Being payment')
+  const [narration, setNarration] = useState(cfg.defaultNarration)
   const [costCenter, setCostCenter] = useState('')
   const [costCentreId, setCostCentreId] = useState<number | null>(null)
   const [voucherTypeProfileId, setVoucherTypeProfileId] = useState<number | null>(null)
 
-  const [rows, setRows] = useState<PaymentRow[]>([makeRow('Supplier')])
+  const [rows, setRows] = useState<PaymentRow[]>([makeRow(cfg.defaultPartyKind)])
 
   const [loading, setLoading] = useState(!!editingId)
   const [saving, setSaving] = useState(false)
@@ -143,18 +191,18 @@ export default function SimplePaymentVoucher() {
           setPaymentMode('cash')
         }
 
-        // ?party_id=… from a quick-action link starts a row pre-populated for
-        // that supplier.
+        // ?party_id=… from a quick-action link starts a row pre-populated
+        // for the mode's default party kind.
         if (initialPartyId && !editingId) {
-          const s = sups.find((p) => p.id === initialPartyId)
-          if (s) {
-            setDefaultPartyId(s.id)
+          const pool = cfg.defaultPartyKind === 'Customer' ? custs : sups
+          const p = pool.find((x) => x.id === initialPartyId)
+          if (p) {
             setRows([{
-              ...makeRow('Supplier', s.id),
-              account_id: suggestLedgerForParty(accs, 'Supplier'),
+              ...makeRow(cfg.defaultPartyKind, p.id),
+              account_id: suggestLedgerForParty(accs, cfg.defaultPartyKind),
             }])
-            if (narration === 'Being payment') {
-              setNarration(`Being payment to ${s.name}`)
+            if (narration === cfg.defaultNarration) {
+              setNarration(`${cfg.defaultNarration} ${cfg.defaultPartyKind === 'Customer' ? 'from' : 'to'} ${p.name}`)
             }
           }
         }
@@ -189,21 +237,25 @@ export default function SimplePaymentVoucher() {
   }, [editingId])
 
   /**
-   * Re-create header + rows from a saved JournalEntry. The Cr line is the
-   * bank/cash header; Dr lines become rows.
+   * Re-create header + rows from a saved JournalEntry. For payment, the Cr
+   * line is the bank/cash header and Dr lines become rows; for receipt it's
+   * the opposite.
    */
   function hydrateFromEntry(entry: JournalEntry) {
-    const cr = entry.lines.find((l) => parseFloat(l.credit) > 0)
-    const drLines = entry.lines.filter((l) => parseFloat(l.debit) > 0)
-    if (cr) {
-      setBankCashId(cr.account)
-      // Best-effort mode detection — if the account's subtype is Cash, switch.
-      // We don't always have the subtype on the line — fall back to bank.
+    const isPayment = mode === 'payment'
+    const headerSide = entry.lines.find((l) =>
+      isPayment ? parseFloat(l.credit) > 0 : parseFloat(l.debit) > 0
+    )
+    const rowLines = entry.lines.filter((l) =>
+      isPayment ? parseFloat(l.debit) > 0 : parseFloat(l.credit) > 0
+    )
+    if (headerSide) {
+      setBankCashId(headerSide.account)
       setPaymentMode('bank')
     }
     setRows(
-      drLines.length > 0
-        ? drLines.map((l): PaymentRow => {
+      rowLines.length > 0
+        ? rowLines.map((l): PaymentRow => {
             const pt = l.party_type
             const partyKind: PartyKind | null =
               pt === 'Supplier' || pt === 'Customer' ? pt : null
@@ -212,14 +264,14 @@ export default function SimplePaymentVoucher() {
               party_type: partyKind,
               party_id: l.party_id ?? null,
               account_id: l.account,
-              amount: l.debit,
+              amount: isPayment ? l.debit : l.credit,
               narration: l.narration || '',
               // Bill references are not re-hydrated here — they'd need a separate
               // fetch via listBillReferences and are not edit-critical for v1.
               ref: null,
             }
           })
-        : [makeRow('Supplier')]
+        : [makeRow(cfg.defaultPartyKind)]
     )
   }
 
@@ -283,31 +335,23 @@ export default function SimplePaymentVoucher() {
   }
 
   function addRow() {
-    setRows((rs) => [
-      ...rs,
-      makeRow(defaultPartyType, defaultPartyId ? Number(defaultPartyId) : null),
-    ])
+    // Cascade the previous row's party_type so a multi-row voucher keeps the
+    // same flavour (all suppliers, or all customers) without the user having
+    // to switch the toggle on each row. The mode's default party_kind is the
+    // fallback for the first row.
+    setRows((rs) => {
+      const lastKind = rs.length > 0 ? rs[rs.length - 1].party_type ?? cfg.defaultPartyKind : cfg.defaultPartyKind
+      return [...rs, makeRow(lastKind)]
+    })
   }
 
   function removeRow(uid: string) {
     setRows((rs) => rs.length <= 1 ? rs : rs.filter((r) => r.uid !== uid))
   }
 
-  function applyDefaultPartyToEmptyRows(kind: PartyKind, pid: number | null) {
-    setRows((rs) => rs.map((r) => {
-      // Only touch rows that have no party yet — don't blow away user edits.
-      if (r.party_id || (r.party_type && r.party_type !== kind)) return r
-      const next: PaymentRow = { ...r, party_type: kind, party_id: pid }
-      if (pid && !r.account_id) {
-        const suggested = suggestLedgerForParty(accounts, kind)
-        if (suggested) next.account_id = suggested
-      }
-      return next
-    }))
-  }
-
   // ─── Save / Post ───────────────────────────────────────────────────────────
   function buildPayload() {
+    const isPayment = mode === 'payment'
     const positiveRows = rows.filter(
       (r) => r.account_id && parseFloat(r.amount) > 0
     )
@@ -316,8 +360,8 @@ export default function SimplePaymentVoucher() {
     const lines: JournalLine[] = [
       ...positiveRows.map((r): JournalLine => ({
         account: r.account_id!,
-        debit: parseFloat(r.amount).toFixed(2),
-        credit: '0',
+        debit: isPayment ? parseFloat(r.amount).toFixed(2) : '0',
+        credit: isPayment ? '0' : parseFloat(r.amount).toFixed(2),
         narration: r.narration || '',
         // Backend uses 'None' (not null) as the no-party sentinel.
         party_type: r.party_type ?? 'None',
@@ -325,8 +369,8 @@ export default function SimplePaymentVoucher() {
       })),
       {
         account: bankCashId!,
-        debit: '0',
-        credit: total.toFixed(2),
+        debit: isPayment ? '0' : total.toFixed(2),
+        credit: isPayment ? total.toFixed(2) : '0',
         narration: '',
         party_type: 'None',
         party_id: null,
@@ -335,7 +379,7 @@ export default function SimplePaymentVoucher() {
     return {
       date,
       narration,
-      voucher_type: 'PAYMENT',
+      voucher_type: cfg.voucherType,
       voucher_type_profile: voucherTypeProfileId,
       reference_type: 'Manual',
       reference_id: null,
@@ -381,12 +425,16 @@ export default function SimplePaymentVoucher() {
         entry = await createJournalEntry(payload)
       }
 
-      // Attach bill references — match rows to lines by order. The Cr line is
-      // appended last, so the first N response lines align with positiveRows.
-      const savedDrLines = entry.lines.filter((l) => parseFloat(l.debit) > 0)
+      // Attach bill references — match rows to lines by order. The header
+      // line (bank/cash) is appended last, so the first N response lines
+      // (filtered to the row side) align with positiveRows.
+      const isPayment = mode === 'payment'
+      const savedRowLines = entry.lines.filter((l) =>
+        isPayment ? parseFloat(l.debit) > 0 : parseFloat(l.credit) > 0
+      )
       for (let i = 0; i < positiveRows.length; i++) {
         const r = positiveRows[i]
-        const drLine = savedDrLines[i]
+        const drLine = savedRowLines[i]
         if (!r.ref || !drLine?.id) continue
         try {
           await createBillReference({
@@ -436,10 +484,10 @@ export default function SimplePaymentVoucher() {
       return
     }
     try {
-      const res = await getJournalEntries({ voucher_type: 'PAYMENT', is_posted: 'true' })
+      const res = await getJournalEntries({ voucher_type: cfg.voucherType, is_posted: 'true' })
       const last = res.results?.[0]
       if (!last) {
-        toast.info('No previous Payment voucher to repeat')
+        toast.info(`No previous ${cfg.title} to repeat`)
         return
       }
       hydrateFromEntry(last)
@@ -454,10 +502,10 @@ export default function SimplePaymentVoucher() {
   // ─── Esc (confirm if dirty) ────────────────────────────────────────────────
   const handleEsc = useCallback(() => {
     const dirty = rows.some((r) => r.account_id || parseFloat(r.amount) > 0)
-      || (narration && narration !== 'Being payment')
+      || (narration && narration !== cfg.defaultNarration)
     if (dirty) setEscConfirmOpen(true)
     else navigate('/')
-  }, [rows, narration, navigate])
+  }, [rows, narration, navigate, cfg.defaultNarration])
 
   // ─── Alt+C ledger create ───────────────────────────────────────────────────
   const handleAltCFromRow = useCallback((rowUid: string) => {
@@ -541,10 +589,10 @@ export default function SimplePaymentVoucher() {
               border: '1px solid rgba(15,157,154,0.25)',
             }}
           >
-            F5
+            {cfg.hotkeyLabel}
           </span>
           <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
-            {editingId ? `Edit ${originalEntry?.entry_no ?? 'Payment'}` : 'Payment Voucher'}
+            {editingId ? `Edit ${originalEntry?.entry_no ?? cfg.title}` : cfg.title}
           </h1>
           <span
             className="mono text-xs font-semibold px-2 py-0.5 rounded"
@@ -557,7 +605,7 @@ export default function SimplePaymentVoucher() {
           >
             # {originalEntry?.entry_no || 'Auto on save'}
           </span>
-          <span className="text-sm" style={{ color: 'var(--ink-2)' }}>· Cash &amp; bank outflows</span>
+          <span className="text-sm" style={{ color: 'var(--ink-2)' }}>{cfg.subtitle}</span>
           {(costCenter || costCentreId) && (
             <button
               type="button"
@@ -585,16 +633,19 @@ export default function SimplePaymentVoucher() {
         </div>
       </div>
 
+      {/* Header strip — just Date + Bank/Cash side. Party is per-row only; the
+          row's own narration is the only narration field (no top-level
+          duplicate). */}
       <Card className="p-5">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-          <div className="md:col-span-2">
+          <div className="md:col-span-3">
             <Field label="Date" required>
               <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
             </Field>
           </div>
 
-          <div className="md:col-span-4">
-            <Field label="Paid from" required hint="The credit side of this voucher">
+          <div className="md:col-span-9">
+            <Field label={cfg.bankCashLabel} required hint={cfg.bankCashHint}>
               <div className="flex gap-2">
                 <div className="flex gap-0.5 rounded-md border overflow-hidden" style={{ borderColor: 'var(--line)' }}>
                   <ModeBtn
@@ -628,61 +679,16 @@ export default function SimplePaymentVoucher() {
               </div>
             </Field>
           </div>
-
-          <div className="md:col-span-6">
-            <Field
-              label="Pay to (default)"
-              hint="Used as the starting party for new rows — each row can override"
-            >
-              <div className="flex gap-2">
-                <div className="flex gap-0.5 rounded-md border overflow-hidden" style={{ borderColor: 'var(--line)' }}>
-                  <ModeBtn
-                    label="Supplier"
-                    active={defaultPartyType === 'Supplier'}
-                    onClick={() => {
-                      setDefaultPartyType('Supplier')
-                      setDefaultPartyId('')
-                    }}
-                  />
-                  <ModeBtn
-                    label="Customer"
-                    active={defaultPartyType === 'Customer'}
-                    onClick={() => {
-                      setDefaultPartyType('Customer')
-                      setDefaultPartyId('')
-                    }}
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <PartySearchPicker
-                    parties={defaultPartyType === 'Customer' ? customers : suppliers}
-                    value={defaultPartyId}
-                    onChange={(id) => {
-                      setDefaultPartyId(id)
-                      const pid = id === '' ? null : Number(id)
-                      applyDefaultPartyToEmptyRows(defaultPartyType, pid)
-                      if (pid) {
-                        const p = (defaultPartyType === 'Customer' ? customers : suppliers).find((x) => x.id === pid)
-                        if (p && narration === 'Being payment') {
-                          setNarration(`Being payment to ${p.name}`)
-                        }
-                      }
-                    }}
-                    storageKey={defaultPartyType}
-                    placeholder={`Search ${defaultPartyType.toLowerCase()}… (optional)`}
-                  />
-                </div>
-              </div>
-            </Field>
-          </div>
         </div>
       </Card>
 
       <Card className="overflow-hidden p-0">
         <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--line)' }}>
-          <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Debit lines</h2>
+          <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>
+            {mode === 'payment' ? 'Debit lines' : 'Credit lines'}
+          </h2>
           <div className="flex items-center gap-3 text-xs" style={{ color: 'var(--ink-2)' }}>
-            <span>Sum of debits is credited to {bankCashAccount?.account_name || 'Bank/Cash'}</span>
+            <span>{cfg.totalHint(bankCashAccount?.account_name || 'Bank/Cash')}</span>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -690,7 +696,7 @@ export default function SimplePaymentVoucher() {
             <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
               <tr>
                 <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>Party</th>
-                <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>Ledger (Dr)</th>
+                <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>{cfg.rowLedgerLabel}</th>
                 <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>Reference</th>
                 <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>Narration</th>
                 <th className="text-right text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>Amount</th>
@@ -736,7 +742,7 @@ export default function SimplePaymentVoucher() {
               </tr>
               <tr>
                 <td colSpan={6} className="px-4 py-1.5 text-right text-xs" style={{ color: 'var(--ink-3)' }}>
-                  = Cr {bankCashAccount
+                  = {mode === 'payment' ? 'Cr' : 'Dr'} {bankCashAccount
                     ? `${bankCashAccount.account_code} ${bankCashAccount.account_name}`
                     : 'Bank/Cash (select above)'} · {formatCurrency(total)}
                 </td>
@@ -744,18 +750,6 @@ export default function SimplePaymentVoucher() {
             </tfoot>
           </table>
         </div>
-      </Card>
-
-      <Card className="p-4">
-        <Field label="Narration" hint="Shown in Day Book and reports">
-          <textarea
-            value={narration}
-            onChange={(e) => setNarration(e.target.value)}
-            rows={2}
-            className="w-full px-3 py-2 text-sm border rounded-lg outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
-            style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
-          />
-        </Field>
       </Card>
 
       <div

@@ -1,5 +1,5 @@
-import VoucherEditor from './VoucherEditor'
+import SimpleReceiptVoucher from './SimpleReceiptVoucher'
 
 export default function ReceiptVoucherPage() {
-  return <VoucherEditor voucherType="RECEIPT" />
+  return <SimpleReceiptVoucher />
 }
