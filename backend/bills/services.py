@@ -17,8 +17,11 @@ from journals.models import JournalEntry, JournalEntryLine
 from .models import Bill, BillLine, BillPayment, RecurringBill
 
 
-def _acct(key: str):
-    return AccountMapping.get_account(key)
+def _acct(key: str, location_id=None):
+    """Resolve a role key to a ChartOfAccount, preferring the per-location
+    mapping and falling back to the NULL-location default. See
+    [[per-location-coa]]."""
+    return AccountMapping.get_account(key, location_id=location_id)
 
 
 @transaction.atomic
@@ -47,12 +50,13 @@ def post_bill(bill: Bill, user=None) -> JournalEntry:
     if bill.total_amount <= 0:
         raise ValidationError('Bill total must be greater than zero.')
 
+    loc = bill.location_id
     entry = JournalEntry.objects.create(
         date=bill.bill_date,
         narration=f"Bill {bill.bill_no or '#' + str(bill.id)} — {bill.vendor_name}",
         voucher_type='PURCHASE',
         reference_type='Manual',
-        location_id=bill.location_id,
+        location_id=loc,
         created_by=user,
     )
 
@@ -69,14 +73,14 @@ def post_bill(bill: Bill, user=None) -> JournalEntry:
 
     # Debit GST inputs (if any)
     if bill.tax_cgst > 0:
-        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_CGST'), debit=bill.tax_cgst)
+        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_CGST', loc), debit=bill.tax_cgst)
     if bill.tax_sgst > 0:
-        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_SGST'), debit=bill.tax_sgst)
+        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_SGST', loc), debit=bill.tax_sgst)
     if bill.tax_igst > 0:
-        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_IGST'), debit=bill.tax_igst)
+        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_IGST', loc), debit=bill.tax_igst)
 
     # Credit Trade Payables
-    payable_args = dict(entry=entry, account=_acct('TRADE_PAYABLES'), credit=bill.total_amount)
+    payable_args = dict(entry=entry, account=_acct('TRADE_PAYABLES', loc), credit=bill.total_amount)
     if bill.vendor_id:
         payable_args.update(party_type='Supplier', party_id=bill.vendor_id)
     JournalEntryLine.objects.create(**payable_args)
@@ -86,7 +90,7 @@ def post_bill(bill: Bill, user=None) -> JournalEntry:
     if diff != 0:
         # Post the rounding to ROUND_OFF so the entry balances
         try:
-            round_acct = _acct('ROUND_OFF')
+            round_acct = _acct('ROUND_OFF', loc)
         except ValueError:
             # If ROUND_OFF isn't mapped, force the user to fix the totals
             entry.delete()
@@ -124,23 +128,24 @@ def record_payment(bill: Bill, *, date, amount, mode='bank',
             f'Payment {amount} exceeds outstanding balance {bill.balance_due}.'
         )
 
+    loc = bill.location_id
     pay_entry = JournalEntry.objects.create(
         date=date,
         narration=f"Payment for bill {bill.bill_no or '#' + str(bill.id)} — {bill.vendor_name}",
         voucher_type='PAYMENT',
         reference_type='Manual',
-        location_id=bill.location_id,
+        location_id=loc,
         created_by=user,
     )
 
     # Debit Trade Payables (matched to the same vendor for outstanding tracking)
-    payable_args = dict(entry=pay_entry, account=_acct('TRADE_PAYABLES'), debit=amount)
+    payable_args = dict(entry=pay_entry, account=_acct('TRADE_PAYABLES', loc), debit=amount)
     if bill.vendor_id:
         payable_args.update(party_type='Supplier', party_id=bill.vendor_id)
     JournalEntryLine.objects.create(**payable_args)
 
     # Credit Bank or Cash
-    credit_acct = _acct('BANK') if mode == 'bank' else _acct('CASH')
+    credit_acct = _acct('BANK', loc) if mode == 'bank' else _acct('CASH', loc)
     JournalEntryLine.objects.create(entry=pay_entry, account=credit_acct, credit=amount)
 
     pay_entry.post()

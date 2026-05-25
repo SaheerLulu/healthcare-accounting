@@ -223,6 +223,7 @@ class ReceiptVoucherSerializer(serializers.Serializer):
     receipt_mode = serializers.ChoiceField(choices=['bank', 'cash'], default='bank')
     narration = serializers.CharField(required=False, allow_blank=True, default='Receipt')
     location_id = serializers.IntegerField(required=True, allow_null=False)
+    skip_ar_check = serializers.BooleanField(required=False, default=False)
 
 
 class ContraVoucherSerializer(serializers.Serializer):

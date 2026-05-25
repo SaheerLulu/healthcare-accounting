@@ -46,6 +46,7 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         from django.db.models import Count
+        from .mixins import get_active_location
         # Annotate document count (number of journal lines) so list view stays fast.
         qs = ChartOfAccount.objects.select_related('parent').annotate(
             _documents_count=Count('journal_lines')
@@ -67,6 +68,22 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
                 models.Q(account_code__icontains=search) |
                 models.Q(account_name__icontains=search)
             )
+        # Per-store scoping: by default a request with X-Location-Id sees this
+        # store's clones + the NULL-location shared accounts (GST, equity etc.).
+        # `location_scope=all` opts the user out (e.g., for the COA admin view).
+        # `location_scope=shared` returns just the NULL-location templates.
+        scope = params.get('location_scope', 'auto')
+        if scope == 'all':
+            pass
+        elif scope == 'shared':
+            qs = qs.filter(location_id__isnull=True)
+        else:  # 'auto' (default) or 'active'
+            location = get_active_location(self.request)
+            if location:
+                qs = qs.filter(
+                    models.Q(location_id=location.id) | models.Q(location_id__isnull=True)
+                )
+            # No active location → show all (legacy behaviour, used by admin).
         return qs
 
     def perform_create(self, serializer):

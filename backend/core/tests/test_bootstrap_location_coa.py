@@ -1,0 +1,121 @@
+"""Per-location COA bootstrap: every non-shared template account should
+get a per-store clone with a suffixed code, parented to the template so
+consolidated reports roll up via parent. AccountMapping defaults are
+overridden per location.
+
+Bootstrap is idempotent — re-running for the same location is a no-op."""
+from unittest.mock import patch
+
+from django.core.management import call_command
+from django.test import TestCase
+
+from core.models import AccountMapping, ChartOfAccount
+from core.management.commands.bootstrap_location_coa import derive_location_code
+from core.tests.utils import seed_chart_and_mappings
+
+
+class DeriveLocationCodeTests(TestCase):
+    def test_simple_name(self):
+        self.assertEqual(derive_location_code('Mumbai'), 'MUM')
+
+    def test_multi_word_takes_alpha_prefix(self):
+        self.assertEqual(derive_location_code('Delhi NCR'), 'DEL')
+
+    def test_trailing_digits_preserved(self):
+        # 'Pune-2' becomes 'PUN' alpha + '2' digit suffix = 'PUN2'.
+        # Re-confirms that a second Pune store gets a distinct code.
+        self.assertEqual(derive_location_code('Pune2'), 'PUN2')
+
+    def test_empty_falls_back(self):
+        self.assertEqual(derive_location_code(''), 'LOC')
+        self.assertEqual(derive_location_code('---'), 'LOC')
+
+
+class _FakeLocation:
+    """SimpleNamespace-ish stand-in for inventory_reader.LocationRO."""
+    def __init__(self, id, name):
+        self.id = id
+        self.name = name
+
+
+class BootstrapLocationCOATests(TestCase):
+    def setUp(self):
+        # Seeds NULL-location template CoA + AccountMapping defaults.
+        seed_chart_and_mappings()
+
+    def _run(self, loc_id=7, loc_name='Mumbai Branch', dry_run=False):
+        loc = _FakeLocation(loc_id, loc_name)
+        with patch('inventory_reader.models.LocationRO') as MockLoc:
+            MockLoc.objects.get.return_value = loc
+            MockLoc.objects.all.return_value.order_by.return_value = [loc]
+            kw = {'location_id': loc_id}
+            if dry_run:
+                kw['dry_run'] = True
+            call_command('bootstrap_location_coa', **kw)
+
+    def test_creates_clone_with_suffixed_code(self):
+        self._run()
+        clone = ChartOfAccount.objects.filter(
+            account_code='1110-MUM', location_id=7,
+        ).first()
+        self.assertIsNotNone(clone, 'expected 1110-MUM clone')
+        # Whatever the template's name is, the clone gets " - <loc>" suffix.
+        template = ChartOfAccount.objects.get(account_code='1110', location_id__isnull=True)
+        self.assertEqual(clone.account_name, f'{template.account_name} - Mumbai Branch')
+        # Parent is the template so consolidated reports roll up.
+        self.assertEqual(clone.parent.account_code, '1110')
+        self.assertIsNone(clone.parent.location_id)
+
+    def test_does_not_clone_shared_accounts(self):
+        self._run()
+        # OUTPUT_CGST (2120) must stay shared at the company level.
+        self.assertFalse(
+            ChartOfAccount.objects.filter(
+                account_code='2120-MUM', location_id=7,
+            ).exists(),
+            'GST output accounts must not be per-store (single-GSTIN filing)',
+        )
+        # Retained earnings (3200) must stay shared.
+        self.assertFalse(
+            ChartOfAccount.objects.filter(
+                account_code='3200-MUM', location_id=7,
+            ).exists(),
+        )
+
+    def test_creates_per_location_mapping_override(self):
+        self._run()
+        cash_clone = ChartOfAccount.objects.get(account_code='1110-MUM', location_id=7)
+        mapping = AccountMapping.objects.get(key='CASH', location_id=7)
+        self.assertEqual(mapping.account, cash_clone)
+
+        # Per-location resolution returns the clone, not the template.
+        resolved = AccountMapping.get_account('CASH', location_id=7)
+        self.assertEqual(resolved, cash_clone)
+
+        # Other locations still hit the NULL default.
+        template_cash = ChartOfAccount.objects.get(
+            account_code='1110', location_id__isnull=True,
+        )
+        self.assertEqual(AccountMapping.get_account('CASH', location_id=99), template_cash)
+
+    def test_shared_key_resolution_unchanged(self):
+        """OUTPUT_CGST asked-for-loc-7 still resolves to the shared template."""
+        self._run()
+        template = ChartOfAccount.objects.get(
+            account_code='2120', location_id__isnull=True,
+        )
+        self.assertEqual(AccountMapping.get_account('OUTPUT_CGST', location_id=7), template)
+
+    def test_idempotent(self):
+        self._run()
+        first_count = ChartOfAccount.objects.filter(location_id=7).count()
+        first_mappings = AccountMapping.objects.filter(location_id=7).count()
+        # Second run must add zero rows.
+        self._run()
+        self.assertEqual(ChartOfAccount.objects.filter(location_id=7).count(), first_count)
+        self.assertEqual(AccountMapping.objects.filter(location_id=7).count(), first_mappings)
+
+    def test_dry_run_writes_nothing(self):
+        self._run(loc_id=8, loc_name='Delhi', dry_run=True)
+        self.assertEqual(ChartOfAccount.objects.filter(location_id=8).count(), 0)
+        self.assertEqual(AccountMapping.objects.filter(location_id=8).count(), 0)

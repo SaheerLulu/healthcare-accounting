@@ -1,5 +1,6 @@
 """Tests for core models — CoA, AccountingSettings, AccountMapping, AccountingRole."""
 from django.test import TestCase
+from django.test.testcases import skipUnlessDBFeature
 
 from core.models import (
     AccountingRole, AccountingSettings, AccountMapping, ChartOfAccount,
@@ -35,11 +36,22 @@ class ChartOfAccountTests(TestCase):
             self.assertTrue(ChartOfAccount.objects.filter(account_code=code).exists(),
                             f'Missing seeded account {code}')
 
-    def test_account_code_unique(self):
+    @skipUnlessDBFeature('supports_nulls_distinct_unique_constraints')
+    def test_account_code_unique_per_location(self):
+        """Under per-location COA, uniqueness is (account_code, location_id)
+        with nulls_distinct=False — so two clones at the same store with the
+        same code, AND two NULL-location templates with the same code, both
+        fail. Django emits W047 on SQLite and skips creating the constraint
+        entirely, so this test runs only on engines that support it (Postgres)."""
         from django.db import IntegrityError
+        ChartOfAccount.objects.create(
+            account_code='1110-MUM', account_name='Cash - Mumbai',
+            account_type='ASSET', location_id=7,
+        )
         with self.assertRaises(IntegrityError):
             ChartOfAccount.objects.create(
-                account_code='1110', account_name='Dup', account_type='ASSET',
+                account_code='1110-MUM', account_name='Dup',
+                account_type='ASSET', location_id=7,
             )
 
     def test_get_balance_no_lines(self):

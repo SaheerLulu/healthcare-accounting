@@ -373,11 +373,15 @@ def mark_cheque_bounced(cheque, *, reason: str = '', bank_charge=None,
     # Dr Bank Charges (5450) / Cr Bank — for bank-deducted bounce fees.
     if cheque.bounce_charge and cheque.bounce_charge > 0:
         from core.models import AccountMapping
+        # Use the cheque's original-JE location so bank charges land on the
+        # right store's books; falls back to NULL/global if no location.
+        loc = (cheque.journal_entry.location_id
+               if cheque.journal_entry_id else None)
         try:
-            bank_charges_acct = AccountMapping.get_account('BANK_CHARGES')
+            bank_charges_acct = AccountMapping.get_account('BANK_CHARGES', location_id=loc)
             bank_acct = (cheque.bank_account.chart_account
                          if cheque.bank_account_id and cheque.bank_account.chart_account_id
-                         else AccountMapping.get_account('BANK'))
+                         else AccountMapping.get_account('BANK', location_id=loc))
         except (ValueError, AttributeError):
             bank_charges_acct = None
             bank_acct = None
@@ -445,8 +449,9 @@ def replenish_petty_cash(*, float_obj, date, amount, source: str = 'bank',
     from core.models import AccountMapping
     from .models import PettyCashTransaction
     amount = Decimal(str(amount))
-    src_acct = (AccountMapping.get_account('BANK') if source == 'bank'
-                else AccountMapping.get_account('CASH'))
+    src_acct = (AccountMapping.get_account('BANK', location_id=float_obj.location_id)
+                if source == 'bank'
+                else AccountMapping.get_account('CASH', location_id=float_obj.location_id))
     je = JournalEntry.objects.create(
         date=date, narration=f'Replenish petty cash @ location {float_obj.location_id}',
         voucher_type='CONTRA', reference_type='Manual',

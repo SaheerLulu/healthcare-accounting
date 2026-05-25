@@ -66,7 +66,11 @@ class ChartOfAccount(models.Model):
         ('Other_Expense', 'Other Expense'),
     ]
 
-    account_code = models.CharField(max_length=10, unique=True)
+    # account_code is unique per (code, location_id). NULL location_id =
+    # shared template (used for GST, equity, suspense, round-off). Concrete
+    # per-store clones carry the location_id and a suffixed code like
+    # "1110-MUM". See [[per-location-coa]].
+    account_code = models.CharField(max_length=20)
     account_name = models.CharField(max_length=255)
     account_type = models.CharField(max_length=20, choices=ACCOUNT_TYPE_CHOICES)
     account_subtype = models.CharField(max_length=50, choices=ACCOUNT_SUBTYPE_CHOICES, blank=True)
@@ -77,6 +81,10 @@ class ChartOfAccount(models.Model):
         on_delete=models.CASCADE,
         related_name='children',
     )
+    location_id = models.PositiveIntegerField(
+        null=True, blank=True, db_index=True,
+        help_text='NULL = shared/template account; non-NULL = per-store clone.',
+    )
     is_leaf = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)
     description = models.TextField(blank=True)
@@ -85,6 +93,16 @@ class ChartOfAccount(models.Model):
 
     class Meta:
         ordering = ['account_code']
+        constraints = [
+            # nulls_distinct=False so two template rows (location_id IS NULL)
+            # with the same code are also blocked — there should only ever be
+            # one template per code.
+            models.UniqueConstraint(
+                fields=['account_code', 'location_id'],
+                name='unique_account_code_per_location',
+                nulls_distinct=False,
+            ),
+        ]
 
     def __str__(self):
         return f"{self.account_code} - {self.account_name}"
@@ -253,31 +271,82 @@ class AccountMapping(models.Model):
         'OPENING_BALANCE_EQUITY': '3300',
     }
 
-    key = models.CharField(max_length=30, unique=True, choices=KEY_CHOICES)
+    key = models.CharField(max_length=30, choices=KEY_CHOICES)
     account = models.ForeignKey(
         ChartOfAccount,
         on_delete=models.PROTECT,
         related_name='mappings',
     )
+    # NULL = global default (used when no per-location override exists or for
+    # roles that intentionally stay shared, e.g. OUTPUT_*GST, RETAINED_EARNINGS).
+    location_id = models.PositiveIntegerField(
+        null=True, blank=True, db_index=True,
+        help_text='NULL = shared default; non-NULL = per-store override.',
+    )
+
+    # Account roles that are NEVER per-location — GST/TDS roll up under a
+    # single GSTIN/TAN and equity/control accounts are inherently consolidated.
+    # Anything not in this set is eligible to be cloned per-store.
+    SHARED_KEYS = frozenset({
+        'OUTPUT_CGST', 'OUTPUT_SGST', 'OUTPUT_IGST',
+        'INPUT_CGST', 'INPUT_SGST', 'INPUT_IGST',
+        'TDS_RECEIVABLE', 'TDS_PAYABLE', 'TCS_PAYABLE',
+        'RCM_LIABILITY', 'GST_LATE_FEE',
+        'RETAINED_EARNINGS', 'OPENING_BALANCE_EQUITY',
+        'SUSPENSE', 'ROUND_OFF',
+    })
 
     class Meta:
-        ordering = ['key']
+        ordering = ['key', 'location_id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['key', 'location_id'],
+                name='unique_mapping_per_location',
+                nulls_distinct=False,
+            ),
+        ]
 
     def __str__(self):
-        return f"{self.key} → {self.account}"
+        loc = f' @loc{self.location_id}' if self.location_id else ''
+        return f"{self.key}{loc} → {self.account}"
 
     @classmethod
-    def get_all_mappings(cls):
-        """Return dict of key→ChartOfAccount for all mappings."""
-        return {m.key: m.account for m in cls.objects.select_related('account').all()}
+    def get_all_mappings(cls, location_id=None):
+        """Return dict of key→ChartOfAccount.
+
+        When `location_id` is given, location-specific mappings shadow the
+        NULL-location defaults. When omitted, only NULL-location defaults
+        are returned (legacy behaviour).
+        """
+        from django.db.models import Q
+        qs = cls.objects.select_related('account')
+        if location_id:
+            qs = qs.filter(Q(location_id=location_id) | Q(location_id__isnull=True))
+        else:
+            qs = qs.filter(location_id__isnull=True)
+        out = {}
+        for m in qs:
+            # Per-location row wins over default for the same key.
+            if m.key not in out or m.location_id is not None:
+                out[m.key] = m.account
+        return out
 
     @classmethod
-    def get_account(cls, key):
-        """Get ChartOfAccount for a semantic key; raises ValueError if not configured."""
-        try:
-            return cls.objects.select_related('account').get(key=key).account
-        except cls.DoesNotExist:
+    def get_account(cls, key, location_id=None):
+        """Get ChartOfAccount for a semantic key, preferring the location-specific
+        mapping and falling back to the NULL-location default."""
+        from django.db.models import Q
+        qs = cls.objects.select_related('account').filter(key=key)
+        if location_id:
+            qs = qs.filter(Q(location_id=location_id) | Q(location_id__isnull=True))
+        else:
+            qs = qs.filter(location_id__isnull=True)
+        rows = list(qs)
+        if not rows:
             raise ValueError(f"Account mapping not configured for key: {key}")
+        # Prefer the location-specific row over the NULL default.
+        rows.sort(key=lambda r: (r.location_id is None, r.location_id or 0))
+        return rows[0].account
 
 
 class AccountingRole(models.Model):

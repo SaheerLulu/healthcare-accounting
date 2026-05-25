@@ -9,12 +9,14 @@ from core.models import AccountMapping
 
 class PayrollService:
     def __init__(self):
-        self._mappings = AccountMapping.get_all_mappings()
+        # No eager cache: per-location mappings need lazy resolution so a
+        # mid-period bootstrap of a new store takes effect without a restart.
+        pass
 
-    def _acct(self, key):
-        if key in self._mappings:
-            return self._mappings[key]
-        return AccountMapping.get_account(key)
+    def _acct(self, key, location_id=None):
+        """Per-location-aware resolution with NULL-default fallback.
+        See [[per-location-coa]]."""
+        return AccountMapping.get_account(key, location_id=location_id)
 
     def calculate_salary(self, employee, structure):
         """Calculate salary components from a SalaryStructure."""
@@ -71,26 +73,27 @@ class PayrollService:
             calc = self.calculate_salary(emp, structure)
 
             # Create journal entry
+            loc = location_id or emp.location_id
             entry = JournalEntry.objects.create(
                 date=period + '-28',  # Last working day approximation
                 narration=f'Salary for {period} - {emp.name}',
                 voucher_type='JOURNAL',
                 reference_type='Manual',
-                location_id=location_id or emp.location_id,
+                location_id=loc,
             )
 
             # Debit: Salary Expense (gross + employer contributions)
             salary_expense = calc['gross_salary'] + calc['pf_employer'] + calc['esi_employer']
             JournalEntryLine.objects.create(
                 entry=entry,
-                account=self._acct('SALARY_EXPENSE'),
+                account=self._acct('SALARY_EXPENSE', loc),
                 debit=salary_expense,
             )
 
             # Credit: Net salary payable (to bank/cash)
             JournalEntryLine.objects.create(
                 entry=entry,
-                account=self._acct('NET_SALARY_PAYABLE'),
+                account=self._acct('NET_SALARY_PAYABLE', loc),
                 credit=calc['net_salary'],
             )
 
@@ -99,7 +102,7 @@ class PayrollService:
             if pf_total > 0:
                 JournalEntryLine.objects.create(
                     entry=entry,
-                    account=self._acct('PF_PAYABLE'),
+                    account=self._acct('PF_PAYABLE', loc),
                     credit=pf_total,
                 )
 
@@ -108,7 +111,7 @@ class PayrollService:
             if esi_total > 0:
                 JournalEntryLine.objects.create(
                     entry=entry,
-                    account=self._acct('ESI_PAYABLE'),
+                    account=self._acct('ESI_PAYABLE', loc),
                     credit=esi_total,
                 )
 
@@ -116,7 +119,7 @@ class PayrollService:
             if calc['professional_tax'] > 0:
                 JournalEntryLine.objects.create(
                     entry=entry,
-                    account=self._acct('PT_PAYABLE'),
+                    account=self._acct('PT_PAYABLE', loc),
                     credit=calc['professional_tax'],
                 )
 
@@ -142,22 +145,23 @@ class PayrollService:
             raise ValueError('Already paid')
 
         # Generate payment entry: Debit Net Salary Payable, Credit Bank
+        loc = run.location_id
         entry = JournalEntry.objects.create(
             date=run.period + '-28',
             narration=f'Salary payment for {run.period} - {run.employee.name}',
             voucher_type='PAYMENT',
             reference_type='Manual',
-            location_id=run.location_id,
+            location_id=loc,
         )
 
         JournalEntryLine.objects.create(
             entry=entry,
-            account=self._acct('NET_SALARY_PAYABLE'),
+            account=self._acct('NET_SALARY_PAYABLE', loc),
             debit=run.net_salary,
         )
         JournalEntryLine.objects.create(
             entry=entry,
-            account=self._acct('BANK'),
+            account=self._acct('BANK', loc),
             credit=run.net_salary,
         )
 

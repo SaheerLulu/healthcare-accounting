@@ -67,6 +67,10 @@ export default function AccountsPage() {
   const [search, setSearch] = useState('')
   const [activeType, setActiveType] = useState<'all' | AccountType>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
+  // 'auto' = active-location clones + shared (default);
+  // 'shared' = only NULL-location templates;
+  // 'all' = every account (admin view across stores).
+  const [locationScope, setLocationScope] = useState<'auto' | 'shared' | 'all'>('auto')
 
   const [editing, setEditing] = useState<Account | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -78,7 +82,7 @@ export default function AccountsPage() {
     setLoading(true)
     try {
       const [list, treeRes, c] = await Promise.all([
-        getChartOfAccounts(),
+        getChartOfAccounts({ location_scope: locationScope }),
         getAccountTree(),
         getAccountCounts(),
       ])
@@ -92,7 +96,7 @@ export default function AccountsPage() {
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [locationScope])
 
   function openCreate() {
     setEditing(null)
@@ -261,6 +265,16 @@ export default function AccountsPage() {
           <option value="all">All status</option>
           <option value="active">Active only</option>
           <option value="inactive">Inactive only</option>
+        </select>
+        <select
+          value={locationScope}
+          onChange={(e) => setLocationScope(e.target.value as typeof locationScope)}
+          className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+          title="Which location's accounts to show"
+        >
+          <option value="auto">This store + Shared</option>
+          <option value="shared">Shared only</option>
+          <option value="all">All locations</option>
         </select>
       </div>
 
@@ -496,6 +510,11 @@ function ListView({
               >
                 {a.account_name}
               </button>
+              {a.location_id == null && (
+                <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 uppercase tracking-wide">
+                  Shared
+                </span>
+              )}
             </Td>
             <Td className="font-mono text-xs text-slate-500">{a.account_code}</Td>
             <Td>

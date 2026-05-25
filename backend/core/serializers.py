@@ -55,7 +55,7 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'account_code', 'account_name', 'account_type',
             'account_subtype', 'parent', 'parent_code', 'parent_name',
-            'is_leaf', 'is_active', 'description',
+            'location_id', 'is_leaf', 'is_active', 'description',
             'documents_count',
             'created_at', 'updated_at',
         ]

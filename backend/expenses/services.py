@@ -13,8 +13,10 @@ from journals.models import JournalEntry, JournalEntryLine
 from .models import Expense
 
 
-def _acct(key: str):
-    return AccountMapping.get_account(key)
+def _acct(key: str, location_id=None):
+    """Resolve role key → ChartOfAccount with per-location preference.
+    See [[per-location-coa]]."""
+    return AccountMapping.get_account(key, location_id=location_id)
 
 
 @transaction.atomic
@@ -31,12 +33,13 @@ def record_expense(expense: Expense, *, user=None) -> JournalEntry:
     tax_total = (expense.tax_cgst or Decimal('0.00')) + (expense.tax_sgst or Decimal('0.00')) + (expense.tax_igst or Decimal('0.00'))
 
     label = expense.vendor_name or 'Expense'
+    loc = expense.location_id
     entry = JournalEntry.objects.create(
         date=expense.expense_date,
         narration=f"{label} via {expense.paid_through_account.account_name}",
         voucher_type='PAYMENT',
         reference_type='Manual',
-        location_id=expense.location_id,
+        location_id=loc,
         created_by=user,
     )
 
@@ -51,11 +54,11 @@ def record_expense(expense: Expense, *, user=None) -> JournalEntry:
 
     # Debit GST inputs
     if expense.tax_cgst > 0:
-        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_CGST'), debit=expense.tax_cgst)
+        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_CGST', loc), debit=expense.tax_cgst)
     if expense.tax_sgst > 0:
-        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_SGST'), debit=expense.tax_sgst)
+        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_SGST', loc), debit=expense.tax_sgst)
     if expense.tax_igst > 0:
-        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_IGST'), debit=expense.tax_igst)
+        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_IGST', loc), debit=expense.tax_igst)
 
     # Credit paid-through (single line)
     JournalEntryLine.objects.create(
@@ -67,7 +70,7 @@ def record_expense(expense: Expense, *, user=None) -> JournalEntry:
     diff = expense.total_amount - (line_total + tax_total)
     if diff != 0:
         try:
-            round_acct = _acct('ROUND_OFF')
+            round_acct = _acct('ROUND_OFF', loc)
         except ValueError:
             entry.delete()
             raise ValidationError(

@@ -69,6 +69,8 @@ export interface Account {
   parent: number | null
   parent_code?: string | null
   parent_name?: string | null
+  /** null = shared/template (shown as "Shared" in UI); non-null = per-store clone */
+  location_id: number | null
   is_leaf: boolean
   is_active: boolean
   description: string

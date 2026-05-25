@@ -21,16 +21,37 @@ logger = logging.getLogger('journals')
 class JournalAutoGenerationService:
 
     def __init__(self):
-        """Eagerly load all account mappings into a dict."""
-        self._accounts = AccountMapping.get_all_mappings()
+        """Initialise per-instance caches; mappings are resolved lazily per
+        (key, location_id) so per-store overrides take effect without a
+        service restart. See [[per-location-coa]]."""
         self._settings = AccountingSettings.get_settings()
+        # (key, location_id_or_None) → ChartOfAccount
+        self._acct_cache = {}
+        # Legacy: callers that haven't been threaded through with location
+        # still hit this dict (NULL-location defaults only).
+        self._accounts = AccountMapping.get_all_mappings()
 
-    def _acct(self, key):
-        """Get account by mapping key; raise ValueError if not configured."""
-        acct = self._accounts.get(key)
-        if not acct:
-            raise ValueError(f"Account mapping not configured for key: {key}")
+    def _acct(self, key, location_id=None):
+        """Get the ChartOfAccount mapped to `key`, preferring the row scoped
+        to `location_id` and falling back to the NULL-location default.
+        Raises ValueError when no mapping exists at either scope."""
+        cache_key = (key, location_id)
+        cached = self._acct_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        # AccountMapping.get_account handles the fallback ordering.
+        acct = AccountMapping.get_account(key, location_id=location_id)
+        self._acct_cache[cache_key] = acct
         return acct
+
+    def _acct_or_none(self, key, location_id=None):
+        """Non-raising variant of _acct for optional mappings (ROUND_OFF,
+        COGS, CLOSING_STOCK fallbacks). Returns None if no mapping exists
+        at either the per-location or NULL scope."""
+        try:
+            return self._acct(key, location_id)
+        except ValueError:
+            return None
 
     def _entry_exists(self, reference_type, reference_id):
         return JournalEntry.objects.filter(
@@ -61,10 +82,13 @@ class JournalAutoGenerationService:
         """Post Dr COGS / Cr Closing Stock for every line in a sale at avg cost.
 
         `lines` is an iterable of objects exposing `.product_id` and `.quantity`.
+        Resolves COGS and Closing Stock at the entry's location so a sale at
+        store A relieves store A's stock account, not a shared one.
         Returns the total COGS posted (or zero when no costed lines exist).
         """
-        cogs_acct = self._accounts.get('COGS')
-        stock_acct = self._accounts.get('CLOSING_STOCK')
+        loc = entry.location_id
+        cogs_acct = self._acct_or_none('COGS', loc)
+        stock_acct = self._acct_or_none('CLOSING_STOCK', loc)
         if not cogs_acct or not stock_acct:
             return Decimal('0')
         total = Decimal('0')
@@ -116,21 +140,22 @@ class JournalAutoGenerationService:
             return None
 
         entry_date = os_header.opening_date or os_header.created_at.date()
+        loc = os_header.location_id
         entry = JournalEntry.objects.create(
             date=entry_date,
             narration=f'Opening Stock #{opening_stock_id} ({os_header.location.name})',
             voucher_type='JOURNAL',
             reference_type='OpeningStock',
             reference_id=opening_stock_id,
-            location_id=os_header.location_id,
+            location_id=loc,
         )
         JournalEntryLine.objects.create(
-            entry=entry, account=self._acct('CLOSING_STOCK'),
+            entry=entry, account=self._acct('CLOSING_STOCK', loc),
             debit=total_value,
             narration='Opening stock — bring inventory onto the books',
         )
         JournalEntryLine.objects.create(
-            entry=entry, account=self._acct('OPENING_BALANCE_EQUITY'),
+            entry=entry, account=self._acct('OPENING_BALANCE_EQUITY', loc),
             credit=total_value,
             narration='Opening balance equity',
         )
@@ -197,29 +222,30 @@ class JournalAutoGenerationService:
         total_gst = cgst_amount + sgst_amount + igst_amount
         total_payable = total_purchases + total_gst + (po.round_off or Decimal('0.00'))
 
+        loc = po.location_id
         entry = JournalEntry.objects.create(
             date=po.bill_date or po.created_at.date(),
             narration=f"Purchase Invoice: {po.bill_no} from Supplier ID {po.supplier_id}",
             voucher_type='PURCHASE',
             reference_type='PurchaseOrder',
             reference_id=po_id,
-            location_id=po.location_id,
+            location_id=loc,
         )
 
         if total_purchases > 0:
             JournalEntryLine.objects.create(
-                entry=entry, account=self._acct('CLOSING_STOCK'), debit=total_purchases,
+                entry=entry, account=self._acct('CLOSING_STOCK', loc), debit=total_purchases,
             )
         if cgst_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST'), debit=cgst_amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST', loc), debit=cgst_amount)
         if sgst_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_SGST'), debit=sgst_amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_SGST', loc), debit=sgst_amount)
         if igst_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_IGST'), debit=igst_amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_IGST', loc), debit=igst_amount)
         if total_payable > 0:
             JournalEntryLine.objects.create(
                 entry=entry,
-                account=self._acct('TRADE_PAYABLES'),
+                account=self._acct('TRADE_PAYABLES', loc),
                 credit=total_payable,
                 party_type='Supplier',
                 party_id=po.supplier_id,
@@ -228,7 +254,7 @@ class JournalAutoGenerationService:
         # by debiting Round Off (or crediting if negative).
         round_off = po.round_off or Decimal('0.00')
         if round_off != Decimal('0.00'):
-            round_off_ac = self._accounts.get('ROUND_OFF')
+            round_off_ac = self._acct_or_none('ROUND_OFF', loc)
             if round_off_ac:
                 if round_off > 0:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=round_off)
@@ -293,32 +319,33 @@ class JournalAutoGenerationService:
 
         total = pos.total_amount
 
+        loc = pos.location_id
         entry = JournalEntry.objects.create(
             date=pos.sale_date.date() if hasattr(pos.sale_date, 'date') else pos.sale_date,
             narration=f"POS Sale: {pos.invoice_no}",
             voucher_type='SALE',
             reference_type='POSOrder',
             reference_id=pos_id,
-            location_id=pos.location_id,
+            location_id=loc,
         )
 
-        debit_ac = self._acct('TRADE_RECEIVABLES') if pos.payment_type == 'Credit' else self._acct('CASH')
+        debit_ac = self._acct('TRADE_RECEIVABLES', loc) if pos.payment_type == 'Credit' else self._acct('CASH', loc)
 
         if total > 0:
             JournalEntryLine.objects.create(entry=entry, account=debit_ac, debit=total)
         if sales_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_POS'), credit=sales_amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_POS', loc), credit=sales_amount)
         if cgst > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_CGST'), credit=cgst)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_CGST', loc), credit=cgst)
         if sgst > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_SGST'), credit=sgst)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_SGST', loc), credit=sgst)
         if igst > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST'), credit=igst)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST', loc), credit=igst)
 
         # Round-off absorbs sub-rupee drift between debit (gross) and sum of credits.
         diff = total - (sales_amount + cgst + sgst + igst)
         if diff != Decimal('0.00') and abs(diff) < Decimal('1.00'):
-            round_off_ac = self._accounts.get('ROUND_OFF')
+            round_off_ac = self._acct_or_none('ROUND_OFF', loc)
             if round_off_ac:
                 if diff > 0:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, credit=diff)
@@ -368,36 +395,47 @@ class JournalAutoGenerationService:
 
         sales_amount = taxable
 
+        loc = order.location_id
         entry = JournalEntry.objects.create(
             date=order.sale_date or order.created_at.date(),
             narration=f"B2B Sale: {order.invoice_no} to Customer ID {order.customer_id}",
             voucher_type='SALE',
             reference_type='B2BSalesOrder',
             reference_id=b2b_id,
-            location_id=order.location_id,
+            location_id=loc,
         )
 
         if total > 0:
-            JournalEntryLine.objects.create(
-                entry=entry,
-                account=self._acct('TRADE_RECEIVABLES'),
-                debit=total,
-                party_type='Customer',
-                party_id=order.customer_id,
-            )
+            if order.payment_type == 'Credit':
+                JournalEntryLine.objects.create(
+                    entry=entry,
+                    account=self._acct('TRADE_RECEIVABLES', loc),
+                    debit=total,
+                    party_type='Customer',
+                    party_id=order.customer_id,
+                )
+            else:
+                # Cash/Bank/Card/UPI etc. — paid at invoice time, no receivable.
+                # Don't tag party_type here: PartyOutstandingView aggregates by
+                # party regardless of account, so a tag would inflate AR.
+                JournalEntryLine.objects.create(
+                    entry=entry,
+                    account=self._acct('CASH', loc),
+                    debit=total,
+                )
         if sales_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_B2B'), credit=sales_amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_B2B', loc), credit=sales_amount)
         if cgst > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_CGST'), credit=cgst)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_CGST', loc), credit=cgst)
         if sgst > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_SGST'), credit=sgst)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_SGST', loc), credit=sgst)
         if igst > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST'), credit=igst)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST', loc), credit=igst)
 
         # Round-off for sub-rupee drift between debit (gross) and credits.
         diff = total - (sales_amount + cgst + sgst + igst)
         if diff != Decimal('0.00') and abs(diff) < Decimal('1.00'):
-            round_off_ac = self._accounts.get('ROUND_OFF')
+            round_off_ac = self._acct_or_none('ROUND_OFF', loc)
             if round_off_ac:
                 if diff > 0:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, credit=diff)
@@ -462,34 +500,58 @@ class JournalAutoGenerationService:
 
         total = ret.total_amount
 
+        loc = ret.location_id
         entry = JournalEntry.objects.create(
             date=ret.return_date.date() if hasattr(ret.return_date, 'date') else ret.return_date,
             narration=f"Sales Return: {ret.return_no}",
             voucher_type='CREDIT_NOTE',
             reference_type='SalesReturn',
             reference_id=return_id,
-            location_id=ret.location_id,
+            location_id=loc,
         )
 
         if sales_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_RETURNS'), debit=sales_amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_RETURNS', loc), debit=sales_amount)
         if cgst > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_CGST'), debit=cgst)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_CGST', loc), debit=cgst)
         if sgst > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_SGST'), debit=sgst)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_SGST', loc), debit=sgst)
         if igst > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST'), debit=igst)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST', loc), debit=igst)
 
-        # Credit: receivable (B2B) or cash (POS)
-        credit_ac = self._acct('TRADE_RECEIVABLES') if ret.return_type == 'b2b' else self._acct('CASH')
-        if total > 0:
-            JournalEntryLine.objects.create(entry=entry, account=credit_ac, credit=total)
+        # Credit side mirrors the original sale's settlement account:
+        #   - POS returns always settle in cash (POS is cash-only in this app).
+        #   - B2B returns where the original sale was Credit reverse the receivable.
+        #   - B2B returns where the original sale was Cash/Bank/Card etc. refund cash.
+        # Tagging party_type='Customer' on receivable returns keeps AR aging accurate
+        # (reports/views.py:545 scopes aging to account_subtype='Receivable').
+        if ret.return_type == 'b2b':
+            orig = ret.original_b2b_order
+            if orig and orig.payment_type == 'Credit':
+                if total > 0:
+                    JournalEntryLine.objects.create(
+                        entry=entry,
+                        account=self._acct('TRADE_RECEIVABLES', loc),
+                        credit=total,
+                        party_type='Customer',
+                        party_id=ret.customer_id,
+                    )
+            else:
+                if total > 0:
+                    JournalEntryLine.objects.create(
+                        entry=entry, account=self._acct('CASH', loc), credit=total,
+                    )
+        else:
+            if total > 0:
+                JournalEntryLine.objects.create(
+                    entry=entry, account=self._acct('CASH', loc), credit=total,
+                )
 
         # Round-off absorbs sub-rupee drift so the JE always balances.
         debit_total = sales_amount + cgst + sgst + igst
         diff = debit_total - total
         if diff != Decimal('0.00') and abs(diff) < Decimal('1.00'):
-            round_off_ac = self._accounts.get('ROUND_OFF')
+            round_off_ac = self._acct_or_none('ROUND_OFF', loc)
             if round_off_ac:
                 # Round Off normally absorbs as a debit/credit on the side that's short.
                 if diff > 0:
@@ -499,8 +561,8 @@ class JournalAutoGenerationService:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(diff))
 
         # Stock comes back in, reverse the COGS that was posted at sale time.
-        cogs_acct = self._accounts.get('COGS')
-        stock_acct = self._accounts.get('CLOSING_STOCK')
+        cogs_acct = self._acct_or_none('COGS', loc)
+        stock_acct = self._acct_or_none('CLOSING_STOCK', loc)
         if cogs_acct and stock_acct:
             cogs_total = Decimal('0')
             for line in ret.lines.all():
@@ -571,20 +633,21 @@ class JournalAutoGenerationService:
 
         total_return = taxable_amount + cgst_amount + sgst_amount + igst_amount
 
+        loc = ret.location_id
         entry = JournalEntry.objects.create(
             date=ret.return_date,
             narration=f"Purchase Return: {ret.return_no} to Supplier ID {ret.supplier_id}",
             voucher_type='DEBIT_NOTE',
             reference_type='PurchaseReturn',
             reference_id=return_id,
-            location_id=ret.location_id,
+            location_id=loc,
         )
 
         # Debit: Trade Payables (reduce liability)
         if total_return > 0:
             JournalEntryLine.objects.create(
                 entry=entry,
-                account=self._acct('TRADE_PAYABLES'),
+                account=self._acct('TRADE_PAYABLES', loc),
                 debit=total_return,
                 party_type='Supplier',
                 party_id=ret.supplier_id,
@@ -594,15 +657,15 @@ class JournalAutoGenerationService:
         # Returns now either; the stock just goes back out.
         if taxable_amount > 0:
             JournalEntryLine.objects.create(
-                entry=entry, account=self._acct('CLOSING_STOCK'), credit=taxable_amount,
+                entry=entry, account=self._acct('CLOSING_STOCK', loc), credit=taxable_amount,
             )
         # Credit: Reverse ITC
         if cgst_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST'), credit=cgst_amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST', loc), credit=cgst_amount)
         if sgst_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_SGST'), credit=sgst_amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_SGST', loc), credit=sgst_amount)
         if igst_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_IGST'), credit=igst_amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_IGST', loc), credit=igst_amount)
 
         entry.post()
         return entry
@@ -618,24 +681,25 @@ class JournalAutoGenerationService:
 
         split = compute_tax_split(taxable, gst_rate, supply_type)
 
+        loc = rcm_data.get('location_id')
         entry = JournalEntry.objects.create(
             date=rcm_data['date'],
             narration=f"RCM: {rcm_data['service_type']} from {rcm_data['supplier_name']}",
             voucher_type='JOURNAL',
             reference_type='RCM',
-            location_id=rcm_data.get('location_id'),
+            location_id=loc,
         )
 
         # Debit: Input GST (claimable ITC on RCM)
         if split['cgst'] > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST'), debit=split['cgst'])
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST', loc), debit=split['cgst'])
         if split['sgst'] > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_SGST'), debit=split['sgst'])
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_SGST', loc), debit=split['sgst'])
         if split['igst'] > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_IGST'), debit=split['igst'])
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_IGST', loc), debit=split['igst'])
 
         # Credit: RCM GST Liability
-        rcm_ac = self._accounts.get('RCM_LIABILITY')
+        rcm_ac = self._acct_or_none('RCM_LIABILITY', loc)
         total_gst = split['cgst'] + split['sgst'] + split['igst']
         if rcm_ac and total_gst > 0:
             JournalEntryLine.objects.create(entry=entry, account=rcm_ac, credit=total_gst)
@@ -646,12 +710,13 @@ class JournalAutoGenerationService:
     @transaction.atomic
     def generate_payment(self, data):
         """Generate payment journal entry (Phase 4C). Manual trigger."""
+        loc = data.get('location_id')
         entry = JournalEntry.objects.create(
             date=data['date'],
             narration=data.get('narration', 'Payment'),
             voucher_type='PAYMENT',
             reference_type='Manual',
-            location_id=data.get('location_id'),
+            location_id=loc,
         )
 
         amount = Decimal(str(data['amount']))
@@ -660,7 +725,7 @@ class JournalAutoGenerationService:
         # Debit: Trade Payables
         JournalEntryLine.objects.create(
             entry=entry,
-            account=self._acct('TRADE_PAYABLES'),
+            account=self._acct('TRADE_PAYABLES', loc),
             debit=amount,
             party_type='Supplier',
             party_id=data.get('party_id'),
@@ -674,38 +739,69 @@ class JournalAutoGenerationService:
                 from core.models import ChartOfAccount
                 credit_ac = ChartOfAccount.objects.get(pk=bank_id)
             else:
-                credit_ac = self._acct('BANK')
+                credit_ac = self._acct('BANK', loc)
         else:
-            credit_ac = self._acct('CASH')
+            credit_ac = self._acct('CASH', loc)
         JournalEntryLine.objects.create(entry=entry, account=credit_ac, credit=amount)
 
         entry.post()
         return entry
 
     @transaction.atomic
+    def _customer_open_ar(self, customer_id):
+        """Sum (debit − credit) on receivable accounts for this customer.
+        Positive = customer owes us; zero/negative = nothing outstanding."""
+        if not customer_id:
+            return Decimal('0.00')
+        agg = JournalEntryLine.objects.filter(
+            entry__is_posted=True,
+            party_type='Customer', party_id=customer_id,
+            account__account_subtype='Receivable',
+        ).aggregate(d=Sum('debit'), c=Sum('credit'))
+        return (agg['d'] or Decimal('0')) - (agg['c'] or Decimal('0'))
+
     def generate_receipt(self, data):
-        """Generate receipt journal entry (Phase 4C). Manual trigger."""
+        """Generate receipt journal entry (Phase 4C). Manual trigger.
+
+        Rejects receipts that exceed the customer's open AR balance so
+        cash-paid B2B sales (which don't create AR) don't get a stray
+        receipt voucher that drives the customer into negative AR.
+        Pass `skip_ar_check=True` in `data` for advance receipts where
+        the AR is intentionally created by the receipt itself.
+        """
+        amount = Decimal(str(data['amount']))
+        party_id = data.get('party_id')
+
+        if party_id and not data.get('skip_ar_check'):
+            open_ar = self._customer_open_ar(party_id)
+            if amount > open_ar + Decimal('0.005'):
+                raise ValueError(
+                    f'Receipt ₹{amount} exceeds customer\'s open receivable of '
+                    f'₹{open_ar}. If this is an advance (no invoice yet), retry '
+                    f'with skip_ar_check=true.'
+                )
+
+        loc = data.get('location_id')
         entry = JournalEntry.objects.create(
             date=data['date'],
             narration=data.get('narration', 'Receipt'),
             voucher_type='RECEIPT',
             reference_type='Manual',
-            location_id=data.get('location_id'),
+            location_id=loc,
         )
 
-        amount = Decimal(str(data['amount']))
         receipt_mode = data.get('receipt_mode', 'bank')
 
         # Debit: Bank or Cash
-        debit_ac = self._acct('BANK') if receipt_mode == 'bank' else self._acct('CASH')
+        debit_ac = self._acct('BANK', loc) if receipt_mode == 'bank' else self._acct('CASH', loc)
         JournalEntryLine.objects.create(entry=entry, account=debit_ac, debit=amount)
         # Credit: Trade Receivables
         JournalEntryLine.objects.create(
             entry=entry,
-            account=self._acct('TRADE_RECEIVABLES'),
+            account=self._acct('TRADE_RECEIVABLES', loc),
             credit=amount,
             party_type='Customer',
-            party_id=data.get('party_id'),
+            party_id=party_id,
         )
 
         entry.post()
@@ -740,8 +836,8 @@ class JournalAutoGenerationService:
         if value <= 0:
             raise ValueError('Adjustment value must be positive.')
 
-        loss_acct = self._acct('INVENTORY_LOSS')
-        stock_acct = self._acct('CLOSING_STOCK')
+        loss_acct = self._acct('INVENTORY_LOSS', location_id)
+        stock_acct = self._acct('CLOSING_STOCK', location_id)
 
         je = JournalEntry.objects.create(
             date=date,
@@ -759,10 +855,10 @@ class JournalAutoGenerationService:
             # Simpler default: reverse from CGST + SGST 50:50.
             half = (itc / 2).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             JournalEntryLine.objects.create(entry=je,
-                                            account=self._acct('INPUT_CGST'),
+                                            account=self._acct('INPUT_CGST', location_id),
                                             credit=half)
             JournalEntryLine.objects.create(entry=je,
-                                            account=self._acct('INPUT_SGST'),
+                                            account=self._acct('INPUT_SGST', location_id),
                                             credit=itc - half)
         je.post()
         return je
@@ -790,18 +886,18 @@ class JournalAutoGenerationService:
             location_id=location_id, created_by=user,
         )
         JournalEntryLine.objects.create(entry=je,
-                                        account=self._acct('EXPIRY_LOSS'),
+                                        account=self._acct('EXPIRY_LOSS', location_id),
                                         debit=value + itc)
         JournalEntryLine.objects.create(entry=je,
-                                        account=self._acct('CLOSING_STOCK'),
+                                        account=self._acct('CLOSING_STOCK', location_id),
                                         credit=value)
         if itc > 0:
             half = (itc / 2).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             JournalEntryLine.objects.create(entry=je,
-                                            account=self._acct('INPUT_CGST'),
+                                            account=self._acct('INPUT_CGST', location_id),
                                             credit=half)
             JournalEntryLine.objects.create(entry=je,
-                                            account=self._acct('INPUT_SGST'),
+                                            account=self._acct('INPUT_SGST', location_id),
                                             credit=itc - half)
         je.post()
         return je
@@ -830,8 +926,13 @@ class JournalAutoGenerationService:
         if from_location_id == to_location_id:
             raise ValueError('Source and destination locations must differ.')
 
-        transit = self._acct('STOCK_TRANSFER_TRANSIT')
-        stock = self._acct('CLOSING_STOCK')
+        # Each leg resolves Closing Stock at its OWN location so each store's
+        # books square independently. Stock-in-Transit may be either shared or
+        # per-location; either way each leg picks the right row.
+        out_stock = self._acct('CLOSING_STOCK', from_location_id)
+        out_transit = self._acct('STOCK_TRANSFER_TRANSIT', from_location_id)
+        in_stock = self._acct('CLOSING_STOCK', to_location_id)
+        in_transit = self._acct('STOCK_TRANSFER_TRANSIT', to_location_id)
 
         out_je = JournalEntry.objects.create(
             date=date,
@@ -840,8 +941,8 @@ class JournalAutoGenerationService:
             voucher_type='JOURNAL', reference_type='Manual',
             location_id=from_location_id, created_by=user,
         )
-        JournalEntryLine.objects.create(entry=out_je, account=transit, debit=value)
-        JournalEntryLine.objects.create(entry=out_je, account=stock, credit=value)
+        JournalEntryLine.objects.create(entry=out_je, account=out_transit, debit=value)
+        JournalEntryLine.objects.create(entry=out_je, account=out_stock, credit=value)
         out_je.post()
 
         in_je = JournalEntry.objects.create(
@@ -851,8 +952,8 @@ class JournalAutoGenerationService:
             voucher_type='JOURNAL', reference_type='Manual',
             location_id=to_location_id, created_by=user,
         )
-        JournalEntryLine.objects.create(entry=in_je, account=stock, debit=value)
-        JournalEntryLine.objects.create(entry=in_je, account=transit, credit=value)
+        JournalEntryLine.objects.create(entry=in_je, account=in_stock, debit=value)
+        JournalEntryLine.objects.create(entry=in_je, account=in_transit, credit=value)
         in_je.post()
 
         return {'out_entry': out_je, 'in_entry': in_je}
@@ -860,23 +961,24 @@ class JournalAutoGenerationService:
     @transaction.atomic
     def generate_contra(self, data):
         """Generate contra journal entry (Phase 4C). Manual trigger."""
+        loc = data.get('location_id')
         entry = JournalEntry.objects.create(
             date=data['date'],
             narration=data.get('narration', 'Contra Entry'),
             voucher_type='CONTRA',
             reference_type='Manual',
-            location_id=data.get('location_id'),
+            location_id=loc,
         )
 
         amount = Decimal(str(data['amount']))
         direction = data.get('direction', 'bank_to_cash')  # or 'cash_to_bank'
 
         if direction == 'bank_to_cash':
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('CASH'), debit=amount)
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('BANK'), credit=amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('CASH', loc), debit=amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('BANK', loc), credit=amount)
         else:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('BANK'), debit=amount)
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('CASH'), credit=amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('BANK', loc), debit=amount)
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('CASH', loc), credit=amount)
 
         entry.post()
         return entry
