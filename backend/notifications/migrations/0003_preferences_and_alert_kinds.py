@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('notifications', '0002_backfill_is_read_columns'),
+        ('acct_notifications', '0002_backfill_is_read_columns'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

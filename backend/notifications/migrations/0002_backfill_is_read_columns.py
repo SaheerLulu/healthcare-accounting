@@ -41,7 +41,9 @@ EXPECTED_SQLITE = {
 
 def add_columns_if_missing(apps, schema_editor):
     vendor = schema_editor.connection.vendor
-    table = 'notifications_notification'
+    # Relabeled app -> own table (was 'notifications_notification', which belongs
+    # to the pharmacy app in the shared DB).
+    table = 'acct_notifications_notification'
 
     with schema_editor.connection.cursor() as cur:
         if vendor == 'postgresql':
@@ -78,7 +80,7 @@ def add_columns_if_missing(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('notifications', '0001_initial'),
+        ('acct_notifications', '0001_initial'),
     ]
 
     operations = [
