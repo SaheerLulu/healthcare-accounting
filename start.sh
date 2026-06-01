@@ -6,6 +6,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
 FRONTEND_DIR="$SCRIPT_DIR/frontend"
 
+# The shared healthcare_inv DB uses the 'openpg' role, not the postgres/postgres
+# default in settings. Pull POSTGRES_* from the pharmacy app's .env (if present)
+# so the backend connects without per-shell setup. Skips silently if absent.
+PHARMACY_ENV="$SCRIPT_DIR/../healthcare-pharmacy/backend/.env"
+if [ -f "$PHARMACY_ENV" ]; then
+  echo "Loading DB credentials from pharmacy .env ..."
+  set -a; . "$PHARMACY_ENV"; set +a
+fi
+
 echo "Applying database migrations ..."
 (cd "$BACKEND_DIR" && DJANGO_SETTINGS_MODULE=accounting_project.settings.dev \
   .venv/bin/python manage.py migrate)

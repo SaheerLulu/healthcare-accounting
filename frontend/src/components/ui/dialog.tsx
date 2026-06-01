@@ -25,8 +25,8 @@ DialogOverlay.displayName = 'DialogOverlay'
 
 const DialogContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, style, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { description?: string }
+>(({ className, children, style, description, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -43,6 +43,11 @@ const DialogContent = React.forwardRef<
       }}
       {...props}
     >
+      {/* Radix requires a description for a11y; render a screen-reader-only one
+          so consumers don't have to (pass `description` for a meaningful label). */}
+      <DialogPrimitive.Description className="sr-only">
+        {description ?? 'Dialog'}
+      </DialogPrimitive.Description>
       {children}
     </DialogPrimitive.Content>
   </DialogPortal>
