@@ -1,14 +1,14 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Trash2, X, Loader2, ChevronDown } from 'lucide-react'
 import { AccountPicker } from '../journals/AccountPicker'
-import { PartySearchPicker } from '../parties/PartySearchPicker'
 import { Input } from '../../components/ui/input'
-import { getBills, getOpenCustomerInvoices, type Account, type Party } from '../../lib/api'
+import { getBills, getOpenCustomerInvoices, type Account } from '../../lib/api'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { BillRefPickerSheet, type BillRefValue } from './BillRefPickerSheet'
 
 export interface PaymentRow {
   uid: string
+  /** Derived from the chosen ledger — a per-party ledger carries its party. */
   party_type: 'Supplier' | 'Customer' | null
   party_id: number | null
   account_id: number | null
@@ -27,8 +27,6 @@ interface PendingRef {
 interface Props {
   row: PaymentRow
   accounts: Account[]
-  suppliers: Party[]
-  customers: Party[]
   onChange: (patch: Partial<PaymentRow>) => void
   onRemove: () => void
   onAltC?: (uid: string) => void
@@ -37,25 +35,24 @@ interface Props {
 
 /**
  * Single row in the SimplePaymentVoucher / SimpleReceiptVoucher table:
- * [ Party ] [ Ledger ] [ Reference ] [ Narration ] [ Amount ] [ × ]
+ * [ Ledger ] [ Reference ] [ Narration ] [ Amount ] [ × ]
  *
- * When the row has a party, the Reference cell auto-loads that party's open
- * bills/invoices and surfaces them as an inline dropdown so the user doesn't
- * have to drill into a sheet for the common case. "Other reference…" still
- * opens the full sheet for Advance / On-Account / Freeform options.
+ * Each party IS a ledger now, so the row is driven by the Ledger picker — the
+ * party (party_type/party_id) is derived from the chosen ledger upstream. When
+ * the ledger is a party ledger, the Reference cell auto-loads that party's open
+ * bills/invoices as an inline dropdown; "Other reference…" opens the full sheet
+ * for Advance / On-Account / Freeform options.
  */
 export function PaymentRowEditor({
-  row, accounts, suppliers, customers,
-  onChange, onRemove, onAltC, removeDisabled,
+  row, accounts, onChange, onRemove, onAltC, removeDisabled,
 }: Props) {
   const [refOpen, setRefOpen] = useState(false)
   const [pendingRefs, setPendingRefs] = useState<PendingRef[]>([])
   const [pendingLoading, setPendingLoading] = useState(false)
 
-  const partyList = row.party_type === 'Customer' ? customers : suppliers
-  const selectedParty = useMemo(
-    () => (row.party_id ? partyList.find((p) => p.id === row.party_id) ?? null : null),
-    [row.party_id, partyList]
+  const selectedAccount = useMemo(
+    () => (row.account_id ? accounts.find((a) => a.id === row.account_id) ?? null : null),
+    [row.account_id, accounts]
   )
 
   // Auto-load that party's open bills/invoices the moment a party is set.
@@ -117,14 +114,6 @@ export function PaymentRowEditor({
     return () => { cancelled = true }
   }, [row.party_id, row.party_type])
 
-  function setPartyId(id: number | '') {
-    onChange({
-      party_id: id === '' ? null : id,
-      // Changing party invalidates any existing reference.
-      ref: null,
-    })
-  }
-
   function clearRef() {
     onChange({ ref: null })
   }
@@ -146,20 +135,7 @@ export function PaymentRowEditor({
 
   return (
     <tr className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
-      <td className="px-2 py-2 align-top" style={{ width: '18%' }}>
-        {row.party_type ? (
-          <PartySearchPicker
-            parties={partyList}
-            value={row.party_id ?? ''}
-            onChange={setPartyId}
-            storageKey={row.party_type}
-            placeholder={`Search ${row.party_type.toLowerCase()}…`}
-          />
-        ) : (
-          <span className="text-xs italic" style={{ color: 'var(--ink-3)' }}>—</span>
-        )}
-      </td>
-      <td className="px-2 py-2 align-top" style={{ width: '22%' }}>
+      <td className="px-2 py-2 align-top" style={{ width: '34%' }}>
         <AccountPicker
           accounts={accounts}
           value={row.account_id}
@@ -302,7 +278,7 @@ export function PaymentRowEditor({
           onOpenChange={setRefOpen}
           partyType={row.party_type}
           partyId={row.party_id}
-          partyName={selectedParty?.name ?? ''}
+          partyName={selectedAccount?.account_name ?? ''}
           onPick={applyRef}
         />
       </td>

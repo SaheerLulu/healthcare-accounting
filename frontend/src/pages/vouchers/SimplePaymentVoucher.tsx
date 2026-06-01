@@ -6,10 +6,9 @@ import {
 import { toast } from 'sonner'
 import {
   getChartOfAccounts, getJournalEntry, getJournalEntries,
-  getSuppliers, getCustomers,
   createJournalEntry, updateJournalEntry, postEntry,
   createBillReference,
-  type Account, type JournalEntry, type Party, type JournalLine,
+  type Account, type JournalEntry, type JournalLine,
 } from '../../lib/api'
 import { formatCurrency } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
@@ -84,16 +83,31 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10)
 }
 
-function makeRow(partyKind: PartyKind | null, partyId: number | null = null): PaymentRow {
+function makeRow(
+  accountId: number | null = null,
+  partyType: PartyKind | null = null,
+  partyId: number | null = null,
+): PaymentRow {
   return {
     uid: uid(),
-    party_type: partyKind,
+    party_type: partyType,
     party_id: partyId,
-    account_id: null,
+    account_id: accountId,
     amount: '',
     narration: '',
     ref: null,
   }
+}
+
+/** Party (type + id) carried by a ledger — a per-party ledger names its party. */
+function partyOfAccount(accounts: Account[], accountId: number | null): {
+  party_type: PartyKind | null; party_id: number | null
+} {
+  const a = accountId ? accounts.find((x) => x.id === accountId) : null
+  if (a && (a.party_type === 'Supplier' || a.party_type === 'Customer') && a.party_id) {
+    return { party_type: a.party_type, party_id: a.party_id }
+  }
+  return { party_type: null, party_id: null }
 }
 
 function isPostable(a: Account): boolean {
@@ -120,20 +134,6 @@ function rowAccountFilter(a: Account): boolean {
   )
 }
 
-/**
- * Default Dr ledger for a row given its party type:
- *   Supplier → first Payable account (e.g. 2110 Trade Payables)
- *   Customer → first Receivable account (e.g. 1130 Trade Receivables)
- */
-function suggestLedgerForParty(accounts: Account[], partyKind: PartyKind | null): number | null {
-  if (!partyKind) return null
-  const subtype = partyKind === 'Supplier' ? 'Payable' : 'Receivable'
-  // Suggest the generic control (2110/1130), NOT a specific party leaf — the
-  // backend routes the party-tagged line to that party's own ledger on save.
-  const match = accounts.find((a) => isPostable(a) && a.account_subtype === subtype && !a.party_id)
-  return match?.id ?? null
-}
-
 export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: VoucherMode } = {}) {
   const cfg = MODE_CONFIG[mode]
   const { id } = useParams<{ id?: string }>()
@@ -146,8 +146,6 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
     : null
 
   const [accounts, setAccounts] = useState<Account[]>([])
-  const [suppliers, setSuppliers] = useState<Party[]>([])
-  const [customers, setCustomers] = useState<Party[]>([])
 
   const [date, setDate] = useState(todayStr())
   const [paymentMode, setPaymentMode] = useState<'bank' | 'cash'>('bank')
@@ -157,7 +155,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
   const [costCentreId, setCostCentreId] = useState<number | null>(null)
   const [voucherTypeProfileId, setVoucherTypeProfileId] = useState<number | null>(null)
 
-  const [rows, setRows] = useState<PaymentRow[]>([makeRow(cfg.defaultPartyKind)])
+  const [rows, setRows] = useState<PaymentRow[]>([makeRow()])
 
   const [loading, setLoading] = useState(!!editingId)
   const [saving, setSaving] = useState(false)
@@ -173,19 +171,11 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
     let cancelled = false
     async function load() {
       try {
-        const [accs, sups, custs] = await Promise.all([
-          // Exclude the per-party ledger leaves from the picker for NEW vouchers
-          // — they can number in the hundreds and the backend auto-routes a
-          // party-tagged line on the control account to the right party ledger
-          // on save. When editing a draft, include them so a line already on a
-          // party leaf still resolves to a name in the picker.
-          getChartOfAccounts(editingId ? {} : { party_ledgers: 'exclude' }),
-          getSuppliers(), getCustomers(),
-        ])
+        // Include the per-party ledgers — the user picks a supplier/customer
+        // ledger directly (each party IS a ledger), so they must be in the picker.
+        const accs = await getChartOfAccounts()
         if (cancelled) return
         setAccounts(accs)
-        setSuppliers(sups)
-        setCustomers(custs)
 
         // Default the bank account to the first active Bank ledger; if no bank
         // is set up at all, flip to cash mode so the user isn't stuck.
@@ -199,18 +189,15 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
           setPaymentMode('cash')
         }
 
-        // ?party_id=… from a quick-action link starts a row pre-populated
-        // for the mode's default party kind.
+        // ?party_id=… from a quick-action link starts a row pre-selected to
+        // that party's own ledger.
         if (initialPartyId && !editingId) {
-          const pool = cfg.defaultPartyKind === 'Customer' ? custs : sups
-          const p = pool.find((x) => x.id === initialPartyId)
-          if (p) {
-            setRows([{
-              ...makeRow(cfg.defaultPartyKind, p.id),
-              account_id: suggestLedgerForParty(accs, cfg.defaultPartyKind),
-            }])
+          const ledger = accs.find(
+            (a) => a.party_type === cfg.defaultPartyKind && a.party_id === initialPartyId)
+          if (ledger) {
+            setRows([makeRow(ledger.id, cfg.defaultPartyKind, initialPartyId)])
             if (narration === cfg.defaultNarration) {
-              setNarration(`${cfg.defaultNarration} ${cfg.defaultPartyKind === 'Customer' ? 'from' : 'to'} ${p.name}`)
+              setNarration(`${cfg.defaultNarration} ${cfg.defaultPartyKind === 'Customer' ? 'from' : 'to'} ${ledger.account_name}`)
             }
           }
         }
@@ -279,7 +266,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
               ref: null,
             }
           })
-        : [makeRow(cfg.defaultPartyKind)]
+        : [makeRow()]
     )
   }
 
@@ -313,18 +300,8 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
     const positiveRows = rows.filter(
       (r) => r.account_id && parseFloat(r.amount) > 0
     )
-    if (positiveRows.length === 0) return false
-    // Party-required check (mirrors backend validation for Receivable/Payable).
-    for (const r of positiveRows) {
-      const acc = accounts.find((a) => a.id === r.account_id)
-      if (!acc) continue
-      if ((acc.account_subtype === 'Payable' || acc.account_subtype === 'Receivable')
-          && !r.party_id) {
-        return false
-      }
-    }
-    return true
-  }, [activeLocationId, bankCashId, rows, accounts])
+    return positiveRows.length > 0
+  }, [activeLocationId, bankCashId, rows])
 
   const allStores = activeLocationId === null
 
@@ -333,24 +310,20 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
     setRows((rs) => rs.map((r) => {
       if (r.uid !== uid) return r
       const next = { ...r, ...patch }
-      // When a party is just set and the row has no ledger yet, auto-suggest.
-      if ('party_id' in patch && patch.party_id && !r.account_id) {
-        const suggested = suggestLedgerForParty(accounts, next.party_type)
-        if (suggested) next.account_id = suggested
+      // The ledger drives everything: derive the party tag from the chosen
+      // ledger, and drop any bill reference when the ledger changes.
+      if ('account_id' in patch) {
+        const p = partyOfAccount(accounts, next.account_id)
+        next.party_type = p.party_type
+        next.party_id = p.party_id
+        if (patch.account_id !== r.account_id) next.ref = null
       }
       return next
     }))
   }
 
   function addRow() {
-    // Cascade the previous row's party_type so a multi-row voucher keeps the
-    // same flavour (all suppliers, or all customers) without the user having
-    // to switch the toggle on each row. The mode's default party_kind is the
-    // fallback for the first row.
-    setRows((rs) => {
-      const lastKind = rs.length > 0 ? rs[rs.length - 1].party_type ?? cfg.defaultPartyKind : cfg.defaultPartyKind
-      return [...rs, makeRow(lastKind)]
-    })
+    setRows((rs) => [...rs, makeRow()])
   }
 
   function removeRow(uid: string) {
@@ -366,15 +339,19 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
     const total = positiveRows.reduce((s, r) => s + parseFloat(r.amount), 0)
 
     const lines: JournalLine[] = [
-      ...positiveRows.map((r): JournalLine => ({
-        account: r.account_id!,
-        debit: isPayment ? parseFloat(r.amount).toFixed(2) : '0',
-        credit: isPayment ? '0' : parseFloat(r.amount).toFixed(2),
-        narration: r.narration || '',
-        // Backend uses 'None' (not null) as the no-party sentinel.
-        party_type: r.party_type ?? 'None',
-        party_id: r.party_id ?? null,
-      })),
+      ...positiveRows.map((r): JournalLine => {
+        // Party tag is derived from the chosen ledger (the source of truth).
+        const p = partyOfAccount(accounts, r.account_id)
+        return {
+          account: r.account_id!,
+          debit: isPayment ? parseFloat(r.amount).toFixed(2) : '0',
+          credit: isPayment ? '0' : parseFloat(r.amount).toFixed(2),
+          narration: r.narration || '',
+          // Backend uses 'None' (not null) as the no-party sentinel.
+          party_type: p.party_type ?? 'None',
+          party_id: p.party_id ?? null,
+        }
+      }),
       {
         account: bankCashId!,
         debit: isPayment ? '0' : total.toFixed(2),
@@ -405,15 +382,6 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
       (r) => r.account_id && parseFloat(r.amount) > 0
     )
     if (positiveRows.length === 0) return 'Add at least one debit line with a ledger and amount'
-    for (let i = 0; i < positiveRows.length; i++) {
-      const r = positiveRows[i]
-      const acc = accounts.find((a) => a.id === r.account_id)
-      if (!acc) continue
-      if ((acc.account_subtype === 'Payable' || acc.account_subtype === 'Receivable')
-          && !r.party_id) {
-        return `Row ${i + 1}: ${acc.account_subtype} accounts need a party`
-      }
-    }
     return null
   }
 
@@ -708,7 +676,6 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
           <table className="w-full text-sm">
             <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
               <tr>
-                <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>Party</th>
                 <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>{cfg.rowLedgerLabel}</th>
                 <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>Reference</th>
                 <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>Narration</th>
@@ -722,8 +689,6 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
                   key={row.uid}
                   row={row}
                   accounts={rowAccounts}
-                  suppliers={suppliers}
-                  customers={customers}
                   onChange={(p) => patchRow(row.uid, p)}
                   onRemove={() => removeRow(row.uid)}
                   onAltC={handleAltCFromRow}
@@ -733,7 +698,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
             </tbody>
             <tfoot className="border-t" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
               <tr>
-                <td className="px-2 py-2" colSpan={3}>
+                <td className="px-2 py-2" colSpan={2}>
                   <button
                     type="button"
                     onClick={addRow}
@@ -754,7 +719,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
                 <td />
               </tr>
               <tr>
-                <td colSpan={6} className="px-4 py-1.5 text-right text-xs" style={{ color: 'var(--ink-3)' }}>
+                <td colSpan={5} className="px-4 py-1.5 text-right text-xs" style={{ color: 'var(--ink-3)' }}>
                   = {mode === 'payment' ? 'Cr' : 'Dr'} {bankCashAccount
                     ? `${bankCashAccount.account_code} ${bankCashAccount.account_name}`
                     : 'Bank/Cash (select above)'} · {formatCurrency(total)}
