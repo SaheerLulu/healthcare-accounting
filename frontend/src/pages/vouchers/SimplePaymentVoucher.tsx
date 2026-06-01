@@ -125,6 +125,14 @@ function rowAccountFilter(a: Account): boolean {
   if (!isPostable(a)) return false
   // Bank/Cash are excluded — those belong on the Cr side, which is the header field.
   if (a.account_subtype === 'Bank' || a.account_subtype === 'Cash') return false
+  // The bare Trade Payables/Receivables CONTROL (under Sundry Creditors 2105 /
+  // Sundry Debtors 1125, no party_id) needs a party, but the row has no separate
+  // party picker now — pick the party's own ledger instead. Statutory payables
+  // (PF/ESI/TDS, other parents) stay available.
+  if ((a.account_subtype === 'Payable' || a.account_subtype === 'Receivable')
+      && !a.party_id && (a.parent_code === '2105' || a.parent_code === '1125')) {
+    return false
+  }
   return (
     a.account_subtype === 'Payable' ||
     a.account_subtype === 'Receivable' ||

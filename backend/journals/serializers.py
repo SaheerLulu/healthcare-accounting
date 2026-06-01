@@ -17,23 +17,35 @@ def _trade_control_ids():
 
 
 def _route_party_line(line_data, control_ids):
-    """Redirect a party-tagged line that points at the generic Trade
-    Payables/Receivables control onto that party's own ledger (Tally Sundry
-    Creditor/Debtor leaf). Lines that already name a party leaf, or point at a
-    non-control account, are left exactly as chosen — the model invariant then
-    guarantees the leaf and the tag agree. Mutates a copy and returns it.
+    """Keep each line's account and party tag consistent:
+
+    - If the account IS a per-party ledger, carry that ledger's party onto the
+      line (auto-tag / auto-correct) so the model invariant always holds and the
+      caller needn't send the tag at all.
+    - If a party-tagged line points at the generic Trade Payables/Receivables
+      control, redirect it to that party's own ledger.
+    Other lines are left untouched. Mutates a copy and returns it.
     """
     from core.party_ledgers import resolve_party_account
 
+    acct = line_data.get('account')
+    if acct is None:
+        return line_data
+
+    # The account IS a per-party ledger → carry its party.
+    if getattr(acct, 'party_id', None) is not None:
+        if (line_data.get('party_type'), line_data.get('party_id')) \
+                != (acct.party_type, acct.party_id):
+            line_data = dict(line_data)
+            line_data['party_type'] = acct.party_type
+            line_data['party_id'] = acct.party_id
+        return line_data
+
+    # A party-tagged line on the Trade control → redirect to the party ledger.
     ptype = line_data.get('party_type')
     pid = line_data.get('party_id')
-    acct = line_data.get('account')
-    if ptype not in ('Supplier', 'Customer') or not pid or acct is None:
+    if ptype not in ('Supplier', 'Customer') or not pid or acct.id not in control_ids:
         return line_data
-    if getattr(acct, 'party_id', None) is not None:
-        return line_data  # already a party leaf — invariant will validate it
-    if acct.id not in control_ids:
-        return line_data  # explicit non-control choice (advance, sub-account) — respect it
     routed = dict(line_data)
     routed['account'] = resolve_party_account(ptype, pid, acct)
     return routed
@@ -226,6 +238,7 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
         if total_debit == 0:
             raise serializers.ValidationError('Journal entry total cannot be zero.')
 
+        control_ids = _trade_control_ids()
         line_errors = {}
         for idx, line in enumerate(lines):
             account = line.get('account')
@@ -238,12 +251,17 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
                     f'{account.account_name} (line {idx + 1}). Post to a leaf account.'
                 )
                 continue
-            subtype = getattr(account, 'account_subtype', None)
-            if subtype in self.PARTY_REQUIRED_SUBTYPES:
+            # A party is required only for TRADE payable/receivable. Per-party
+            # ledgers carry their own party (auto-tagged in create), and
+            # statutory payables (PF/ESI/TDS…) are subtype Payable but need none.
+            # Only the bare Trade Payables/Receivables CONTROL must name a party.
+            if account is not None and getattr(account, 'party_id', None) is None \
+                    and account.id in control_ids:
                 if not line.get('party_type') or not line.get('party_id'):
                     line_errors[idx] = (
-                        f'party_type and party_id are required for '
-                        f'{subtype} accounts (line {idx + 1}).'
+                        f'Select a supplier/customer for {account.account_code} '
+                        f'{account.account_name} (line {idx + 1}), or post to the '
+                        f"party's own ledger."
                     )
         if line_errors:
             raise serializers.ValidationError({'lines': line_errors})
