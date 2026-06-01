@@ -44,6 +44,11 @@ def lines_for_party(party_type: str, party_id: int, *, location_id=None,
     qs = (
         JournalEntryLine.objects
         .filter(entry__is_posted=True, party_type=party_type, party_id=party_id)
+        # The opening-balance JE is reflected separately via the stored
+        # PartyOpeningBalance amount (added arithmetically below); excluding it
+        # here keeps the GL ledger card and the tag-based outstanding in sync
+        # without double-counting. See parties.opening_balance.
+        .exclude(entry__reference_type='PartyOpeningBalance')
         .select_related('entry', 'account')
         .order_by('entry__date', 'entry__id', 'id')
     )
@@ -201,10 +206,12 @@ def list_parties(party_type: str, *, location_id=None, search: str = '') -> list
             qs = qs.filter(customer_name__icontains=search)
         qs = qs.order_by('customer_name')
 
-    # One pass over journal lines, then map back to parties.
+    # One pass over journal lines, then map back to parties. Exclude the
+    # opening-balance JE — it's already counted via the stored OB amount below.
     journal_qs = (
         JournalEntryLine.objects
         .filter(entry__is_posted=True, party_type=party_type)
+        .exclude(entry__reference_type='PartyOpeningBalance')
         .select_related('entry')
     )
     if location_id:

@@ -11,6 +11,7 @@ from inventory_reader.models import (
     OpeningStockRO,
 )
 from core.models import AccountMapping, AccountingSettings
+from core.party_ledgers import resolve_party_account
 from decimal import ROUND_HALF_UP
 from core.gst_utils import compute_tax_split, detect_supply_type, back_calculate_taxable
 from .models import JournalEntry, JournalEntryLine, RecurringJournal, RecurringJournalLine
@@ -52,6 +53,21 @@ class JournalAutoGenerationService:
             return self._acct(key, location_id)
         except ValueError:
             return None
+
+    def _sale_settlement(self, payment_type, customer_id, loc):
+        """Debit account + party tag for the customer side of a sale (shared by
+        POS and B2B). A CREDIT sale to a named customer hits that customer's own
+        ledger and is party-tagged so AR aging is accurate; cash / walk-in (or a
+        credit sale with no customer) hits Cash / the generic control, untagged
+        (a tag on a settled line would inflate AR aging)."""
+        if payment_type == 'Credit':
+            account = resolve_party_account(
+                'Customer', customer_id, self._acct('TRADE_RECEIVABLES', loc))
+            tag = dict(party_type='Customer', party_id=customer_id) if customer_id else {}
+        else:
+            account = self._acct('CASH', loc)
+            tag = {}
+        return account, tag
 
     def _entry_exists(self, reference_type, reference_id):
         return JournalEntry.objects.filter(
@@ -245,7 +261,8 @@ class JournalAutoGenerationService:
         if total_payable > 0:
             JournalEntryLine.objects.create(
                 entry=entry,
-                account=self._acct('TRADE_PAYABLES', loc),
+                account=resolve_party_account(
+                    'Supplier', po.supplier_id, self._acct('TRADE_PAYABLES', loc)),
                 credit=total_payable,
                 party_type='Supplier',
                 party_id=po.supplier_id,
@@ -329,10 +346,10 @@ class JournalAutoGenerationService:
             location_id=loc,
         )
 
-        debit_ac = self._acct('TRADE_RECEIVABLES', loc) if pos.payment_type == 'Credit' else self._acct('CASH', loc)
-
+        debit_ac, ar_party = self._sale_settlement(pos.payment_type, pos.customer_id, loc)
         if total > 0:
-            JournalEntryLine.objects.create(entry=entry, account=debit_ac, debit=total)
+            JournalEntryLine.objects.create(
+                entry=entry, account=debit_ac, debit=total, **ar_party)
         if sales_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_POS', loc), credit=sales_amount)
         if cgst > 0:
@@ -406,23 +423,9 @@ class JournalAutoGenerationService:
         )
 
         if total > 0:
-            if order.payment_type == 'Credit':
-                JournalEntryLine.objects.create(
-                    entry=entry,
-                    account=self._acct('TRADE_RECEIVABLES', loc),
-                    debit=total,
-                    party_type='Customer',
-                    party_id=order.customer_id,
-                )
-            else:
-                # Cash/Bank/Card/UPI etc. — paid at invoice time, no receivable.
-                # Don't tag party_type here: PartyOutstandingView aggregates by
-                # party regardless of account, so a tag would inflate AR.
-                JournalEntryLine.objects.create(
-                    entry=entry,
-                    account=self._acct('CASH', loc),
-                    debit=total,
-                )
+            debit_ac, ar_party = self._sale_settlement(order.payment_type, order.customer_id, loc)
+            JournalEntryLine.objects.create(
+                entry=entry, account=debit_ac, debit=total, **ar_party)
         if sales_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_B2B', loc), credit=sales_amount)
         if cgst > 0:
@@ -531,7 +534,9 @@ class JournalAutoGenerationService:
                 if total > 0:
                     JournalEntryLine.objects.create(
                         entry=entry,
-                        account=self._acct('TRADE_RECEIVABLES', loc),
+                        account=resolve_party_account(
+                            'Customer', ret.customer_id,
+                            self._acct('TRADE_RECEIVABLES', loc)),
                         credit=total,
                         party_type='Customer',
                         party_id=ret.customer_id,
@@ -647,7 +652,8 @@ class JournalAutoGenerationService:
         if total_return > 0:
             JournalEntryLine.objects.create(
                 entry=entry,
-                account=self._acct('TRADE_PAYABLES', loc),
+                account=resolve_party_account(
+                    'Supplier', ret.supplier_id, self._acct('TRADE_PAYABLES', loc)),
                 debit=total_return,
                 party_type='Supplier',
                 party_id=ret.supplier_id,
@@ -722,13 +728,15 @@ class JournalAutoGenerationService:
         amount = Decimal(str(data['amount']))
         payment_mode = data.get('payment_mode', 'bank')
 
-        # Debit: Trade Payables
+        # Debit: Trade Payables (the supplier's own ledger when linked)
+        supplier_id = data.get('party_id')
         JournalEntryLine.objects.create(
             entry=entry,
-            account=self._acct('TRADE_PAYABLES', loc),
+            account=resolve_party_account(
+                'Supplier', supplier_id, self._acct('TRADE_PAYABLES', loc)),
             debit=amount,
             party_type='Supplier',
-            party_id=data.get('party_id'),
+            party_id=supplier_id,
         )
         # Credit: Bank or Cash. When payment_mode='bank' the caller can
         # name a specific Bank-subtype ChartOfAccount via bank_account_id;
@@ -795,10 +803,11 @@ class JournalAutoGenerationService:
         # Debit: Bank or Cash
         debit_ac = self._acct('BANK', loc) if receipt_mode == 'bank' else self._acct('CASH', loc)
         JournalEntryLine.objects.create(entry=entry, account=debit_ac, debit=amount)
-        # Credit: Trade Receivables
+        # Credit: Trade Receivables (the customer's own ledger when linked)
         JournalEntryLine.objects.create(
             entry=entry,
-            account=self._acct('TRADE_RECEIVABLES', loc),
+            account=resolve_party_account(
+                'Customer', party_id, self._acct('TRADE_RECEIVABLES', loc)),
             credit=amount,
             party_type='Customer',
             party_id=party_id,
@@ -1050,8 +1059,13 @@ def generate_one_recurring_journal(rj: RecurringJournal, *, user=None) -> Journa
         created_by=user,
     )
     for tl in lines:
+        # Re-resolve the party leaf at generation time (don't copy a possibly
+        # stale template FK): a template line tagged to a party posts to that
+        # party's current ledger, falling back to the template's own account.
+        party_type = tl.party_type if tl.party_type in ('Supplier', 'Customer') else None
+        account = resolve_party_account(party_type, tl.party_id, tl.account)
         JournalEntryLine.objects.create(
-            entry=entry, account=tl.account,
+            entry=entry, account=account,
             debit=tl.debit, credit=tl.credit,
             narration=tl.narration,
             party_type=tl.party_type, party_id=tl.party_id,

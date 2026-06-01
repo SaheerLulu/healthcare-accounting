@@ -22,6 +22,7 @@ class JournalEntry(models.Model):
         ('SalesReturn', 'Sales Return'),
         ('PurchaseReturn', 'Purchase Return'),
         ('RCM', 'RCM Entry'),
+        ('PartyOpeningBalance', 'Party Opening Balance'),
         ('Manual', 'Manual Entry'),
     ]
 
@@ -264,6 +265,21 @@ class JournalEntryLine(models.Model):
                 f'Cannot post to non-leaf account {self.account.account_code} '
                 f'{self.account.account_name}. Post to a leaf account.'
             )
+        # Tag↔ledger agreement: if the account IS a per-party ledger, the line's
+        # party tag MUST name the same party. Stops "pay supplier B out of
+        # supplier A's ledger" (the leaf and the tag would otherwise disagree,
+        # corrupting both the ledger card and the tag-based statement). Ordinary
+        # control accounts (party_id NULL) are unconstrained — a party-tagged
+        # line on the generic 2110/1130 fallback is fine.
+        if self.account_id and self.account.party_id is not None:
+            if (self.party_type, self.party_id) != (
+                self.account.party_type, self.account.party_id
+            ):
+                raise ValidationError(
+                    f'Line tagged {self.party_type or "None"}#{self.party_id} cannot '
+                    f'post to party ledger {self.account.account_code} '
+                    f'({self.account.party_type}#{self.account.party_id}).'
+                )
         super().save(*args, **kwargs)
 
     def __str__(self):

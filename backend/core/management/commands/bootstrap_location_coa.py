@@ -121,6 +121,9 @@ class Command(BaseCommand):
         templates = list(
             ChartOfAccount.objects.filter(
                 location_id__isnull=True, is_active=True,
+                # Per-party ledgers (Sundry Creditor/Debtor leaves) are shared
+                # across stores by design — never clone them per location.
+                party_id__isnull=True,
             ).exclude(account_code__in=shared_codes)
             .order_by('account_code')
         )

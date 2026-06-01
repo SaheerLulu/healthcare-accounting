@@ -75,6 +75,16 @@ class PartyOpeningBalance(models.Model):
     amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     as_of_date = models.DateField()
     narration = models.CharField(max_length=255, blank=True)
+    # GL counterpart: a balanced JE (Dr party-ledger / Cr 3300 Opening Balance
+    # Equity, or the reverse for suppliers) posted at as_of_date so the opening
+    # figure shows in the trial balance and on the party's ledger card. The
+    # parties services keep adding `amount` arithmetically and EXCLUDE this JE
+    # from their tag aggregation, so the two never double-count. See
+    # parties.opening_balance and [[party-ledger-per-party]].
+    journal_entry = models.ForeignKey(
+        'journals.JournalEntry', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='+',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(

@@ -13,6 +13,7 @@ from django.db import transaction
 from django.core.exceptions import ValidationError
 
 from core.models import AccountMapping
+from core.party_ledgers import resolve_party_account
 from journals.models import JournalEntry, JournalEntryLine
 from .models import Bill, BillLine, BillPayment, RecurringBill
 
@@ -79,8 +80,11 @@ def post_bill(bill: Bill, user=None) -> JournalEntry:
     if bill.tax_igst > 0:
         JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_IGST', loc), debit=bill.tax_igst)
 
-    # Credit Trade Payables
-    payable_args = dict(entry=entry, account=_acct('TRADE_PAYABLES', loc), credit=bill.total_amount)
+    # Credit Trade Payables — the vendor's own ledger when the bill is linked
+    # to a supplier, else the generic control (e.g. utility bills with no vendor).
+    payable_acct = resolve_party_account(
+        'Supplier', bill.vendor_id, _acct('TRADE_PAYABLES', loc))
+    payable_args = dict(entry=entry, account=payable_acct, credit=bill.total_amount)
     if bill.vendor_id:
         payable_args.update(party_type='Supplier', party_id=bill.vendor_id)
     JournalEntryLine.objects.create(**payable_args)
@@ -138,8 +142,10 @@ def record_payment(bill: Bill, *, date, amount, mode='bank',
         created_by=user,
     )
 
-    # Debit Trade Payables (matched to the same vendor for outstanding tracking)
-    payable_args = dict(entry=pay_entry, account=_acct('TRADE_PAYABLES', loc), debit=amount)
+    # Debit Trade Payables (the vendor's own ledger when linked, for outstanding tracking)
+    payable_acct = resolve_party_account(
+        'Supplier', bill.vendor_id, _acct('TRADE_PAYABLES', loc))
+    payable_args = dict(entry=pay_entry, account=payable_acct, debit=amount)
     if bill.vendor_id:
         payable_args.update(party_type='Supplier', party_id=bill.vendor_id)
     JournalEntryLine.objects.create(**payable_args)

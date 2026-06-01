@@ -12,6 +12,26 @@ from core.models import ChartOfAccount
 from core.mixins import get_active_location
 
 
+def resolve_ledger_account(request):
+    """Resolve the ChartOfAccount a ledger view is asking for by ?account_code=.
+
+    Prefers the row scoped to the active location, falling back to the shared
+    (NULL-location) template — so it stays unambiguous under per-location clones
+    and per-party leaves (whose codes like "2105-S5" are globally unique anyway).
+    Returns (account, error_response): exactly one is non-None.
+    """
+    account_code = request.query_params.get('account_code')
+    if not account_code:
+        return None, Response({'error': 'account_code is required'}, status=400)
+
+    location = get_active_location(request)
+    qs = ChartOfAccount.objects.filter(account_code=account_code)
+    acc = (qs.filter(location_id=location.id).first() if location else None) \
+        or qs.filter(location_id__isnull=True).first() \
+        or qs.order_by('location_id').first()
+    return (acc, None) if acc else (None, Response({'error': 'Account not found'}, status=404))
+
+
 def get_fy_dates(year=None):
     """Get Indian FY start/end dates. FY starts April 1."""
     today = date.today()
@@ -288,19 +308,14 @@ class LedgerPagination(PageNumberPagination):
 
 class LedgerView(APIView):
     def get(self, request):
-        account_code = request.query_params.get('account_code')
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
         location = get_active_location(request)
         page = request.query_params.get('page')
 
-        if not account_code:
-            return Response({'error': 'account_code is required'}, status=400)
-
-        try:
-            account = ChartOfAccount.objects.get(account_code=account_code)
-        except ChartOfAccount.DoesNotExist:
-            return Response({'error': 'Account not found'}, status=404)
+        account, error = resolve_ledger_account(request)
+        if error is not None:
+            return error
 
         base_qs = JournalEntryLine.objects.filter(
             account=account,
@@ -403,18 +418,14 @@ class LedgerExportView(APIView):
         import csv
         import io
 
-        account_code = request.query_params.get('account_code')
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
         fmt = request.query_params.get('format', 'csv').lower()
         location = get_active_location(request)
 
-        if not account_code:
-            return Response({'error': 'account_code is required'}, status=400)
-        try:
-            account = ChartOfAccount.objects.get(account_code=account_code)
-        except ChartOfAccount.DoesNotExist:
-            return Response({'error': 'Account not found'}, status=404)
+        account, error = resolve_ledger_account(request)
+        if error is not None:
+            return error
 
         base_qs = JournalEntryLine.objects.filter(
             account=account, entry__is_posted=True,

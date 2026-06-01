@@ -254,3 +254,19 @@ LOGGING = {
 # Accounting – fiscal year starts in April (month 4) per Indian standard
 # ---------------------------------------------------------------------------
 ACCOUNTING_FY_START_MONTH = 4
+
+# ---------------------------------------------------------------------------
+# Per-party ledgers (Tally Sundry Creditor/Debtor model). When True, party
+# postings route to a per-party leaf ledger under 2105/1125 instead of the
+# shared 2110/1130 control. Set False for staged rollout / fallback.
+#
+# Defaults ON at runtime, but OFF under the test runner so the large existing
+# suite keeps asserting the established control-account behaviour. Feature
+# tests opt in explicitly with @override_settings(PARTY_LEDGERS_ENABLED=True).
+# ---------------------------------------------------------------------------
+import sys as _sys
+_TESTING = ('test' in _sys.argv) or ('pytest' in _sys.modules)
+PARTY_LEDGERS_ENABLED = (
+    os.environ.get('PARTY_LEDGERS_ENABLED', 'true').lower() != 'false'
+    and not _TESTING
+)

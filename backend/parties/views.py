@@ -1,5 +1,6 @@
 import csv
 from datetime import date
+from django.db import transaction
 from django.http import HttpResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -9,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from core.mixins import get_active_location
 from inventory_reader.models import SupplierRO, CustomerRO
 from .models import PartyCommunication, PartyOpeningBalance
+from .opening_balance import post_opening_balance_je, void_opening_balance_je
 from .serializers import PartyCommunicationSerializer, PartyOpeningBalanceSerializer
 from . import services
 
@@ -267,24 +269,40 @@ class _PartyOpeningBalanceView(APIView):
 
     def put(self, request, pk: int):
         self._ensure_party_exists(pk)
-        ob = PartyOpeningBalance.objects.filter(
-            party_type=self.party_type, party_id=pk
-        ).first()
-        ser = PartyOpeningBalanceSerializer(ob, data=request.data, partial=bool(ob))
-        ser.is_valid(raise_exception=True)
-        ser.save(
-            party_type=self.party_type,
-            party_id=pk,
-            created_by=request.user if request.user.is_authenticated and not ob else (ob.created_by if ob else None),
-        )
+        user = request.user if request.user.is_authenticated else None
+        with transaction.atomic():
+            ob = PartyOpeningBalance.objects.filter(
+                party_type=self.party_type, party_id=pk
+            ).first()
+            ser = PartyOpeningBalanceSerializer(ob, data=request.data, partial=bool(ob))
+            ser.is_valid(raise_exception=True)
+            ser.save(
+                party_type=self.party_type,
+                party_id=pk,
+                created_by=user if not ob else (ob.created_by if ob else None),
+            )
+            # (Re)post the GL counterpart so the opening figure shows in the
+            # trial balance and on the party ledger card. Atomic with the save:
+            # if posting fails (e.g. locked period) the OB edit rolls back too.
+            # Gated on the per-party-ledger flag (the OB JE posts to a party
+            # ledger, so it only applies when that model is active).
+            from core.party_ledgers import party_ledgers_enabled
+            if party_ledgers_enabled():
+                post_opening_balance_je(ser.instance, user=user)
         return Response(ser.data)
 
     def delete(self, request, pk: int):
         self._ensure_party_exists(pk)
-        deleted, _ = PartyOpeningBalance.objects.filter(
-            party_type=self.party_type, party_id=pk
-        ).delete()
-        return Response(status=status.HTTP_204_NO_CONTENT if deleted else status.HTTP_404_NOT_FOUND)
+        user = request.user if request.user.is_authenticated else None
+        with transaction.atomic():
+            ob = PartyOpeningBalance.objects.filter(
+                party_type=self.party_type, party_id=pk
+            ).first()
+            if ob is None:
+                return Response(status=status.HTTP_404_NOT_FOUND)
+            void_opening_balance_je(ob, user=user)
+            ob.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class SupplierOpeningBalanceView(_PartyOpeningBalanceView):
