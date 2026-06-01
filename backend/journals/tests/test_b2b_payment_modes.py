@@ -126,9 +126,12 @@ class B2BSalePaymentTypeRoutingTests(TestCase):
         """Anything that isn't exactly 'Credit' is treated as paid-at-invoice
         and lands in CASH — mirrors POS behaviour. If you want UPI/Card/Bank
         to land in their own accounts, that's a separate routing change."""
-        for mode in ('UPI', 'Card', 'Bank', 'Cheque'):
+        # Deterministic, distinct oids — hash(mode) is randomized per process
+        # (PYTHONHASHSEED) and two modes could collide, making the second
+        # generate_b2b_sale a no-op (idempotency guard) and return None.
+        for i, mode in enumerate(('UPI', 'Card', 'Bank', 'Cheque')):
             with self.subTest(mode=mode):
-                entry = self._generate(_b2b_order(payment_type=mode, oid=700 + hash(mode) % 50))
+                entry = self._generate(_b2b_order(payment_type=mode, oid=720 + i))
                 cash = [l for l in entry.lines.all() if l.account.account_code == '1110']
                 self.assertEqual(len(cash), 1, f'{mode!r} should debit CASH')
 
