@@ -253,7 +253,7 @@ function LocationSelector() {
   if (isLoading) {
     return (
       <div
-        className="h-8 w-32 rounded-md animate-pulse"
+        className="h-6 w-28 rounded-md animate-pulse"
         style={{ backgroundColor: 'var(--color-hover-bg)' }}
       />
     )
@@ -265,15 +265,15 @@ function LocationSelector() {
     <div className="relative flex-shrink-0" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 px-3 h-8 rounded-md text-sm font-medium hover:bg-[var(--color-hover-bg)]"
+        className="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium hover:bg-[var(--color-hover-bg)]"
         style={{
           color: 'var(--ink)',
           border: '1px solid var(--line)',
           background: 'var(--surface-0)',
         }}
       >
-        <MapPin className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--brand)' }} />
-        <span className="max-w-[120px] truncate">{label}</span>
+        <MapPin className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--brand)' }} />
+        <span className="max-w-[110px] truncate">{label}</span>
         <ChevronDown className={cn('w-3 h-3 flex-shrink-0 transition-transform', open && 'rotate-180')} />
       </button>
 
