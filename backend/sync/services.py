@@ -275,6 +275,17 @@ class InventorySyncService:
         return results
 
     def sync_all(self) -> dict:
+        # Auto-provision a ledger for every supplier and every non-retail (B2B /
+        # Hospital / Clinic) customer before posting, so the per-party ledgers
+        # exist even for parties that haven't transacted yet. Idempotent and
+        # best-effort — a provisioning hiccup must not abort the sync.
+        from core.party_ledgers import provision_all_party_ledgers
+        try:
+            provisioned = provision_all_party_ledgers()
+        except Exception:
+            logger.exception('Party-ledger provisioning failed during sync_all')
+            provisioned = {'suppliers_created': 0, 'customers_created': 0}
+
         opening_stock_count = self.sync_opening_stocks(SyncLog.get_last_id('opening_stock'))
         purchase_count = self.sync_purchases(SyncLog.get_last_id('purchase'))
         pos_count = self.sync_pos(SyncLog.get_last_id('pos'))
@@ -297,6 +308,7 @@ class InventorySyncService:
             'b2b': b2b_count,
             'returns': return_count,
             'purchase_returns': purchase_return_count,
+            'party_ledgers': provisioned,
             'total': total,
         }
 

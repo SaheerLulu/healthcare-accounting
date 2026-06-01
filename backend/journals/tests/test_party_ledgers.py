@@ -298,6 +298,73 @@ class OpeningBalanceGLTests(TestCase):
 
 
 @ENABLED
+class AutoProvisionTests(TestCase):
+    """provision_all_party_ledgers + the sync_all hook that calls it."""
+    def setUp(self):
+        seed_chart_and_mappings()
+        make_settings()
+        ensure_party_groups()
+
+    def test_provisions_suppliers_and_non_retail_customers_only(self):
+        from core.party_ledgers import provision_all_party_ledgers, get_party_ledger
+        with patch('inventory_reader.models.SupplierRO') as MS, \
+             patch('inventory_reader.models.CustomerRO') as MC:
+            MS.objects.values_list.return_value = [1, 2, 3]
+            MS.objects.filter.return_value.only.return_value.first.return_value = None
+            MC.objects.values_list.return_value = [
+                (10, 'B2B'), (11, 'Retail'), (12, 'Hospital'), (13, ''), (14, 'Clinic'),
+            ]
+            MC.objects.filter.return_value.only.return_value.first.return_value = None
+            res = provision_all_party_ledgers()
+        self.assertEqual(res['suppliers_created'], 3)
+        self.assertEqual(res['customers_created'], 3)  # B2B, Hospital, Clinic — not Retail/blank
+        for pid in (1, 2, 3):
+            self.assertIsNotNone(get_party_ledger('Supplier', pid))
+        for pid in (10, 12, 14):
+            self.assertIsNotNone(get_party_ledger('Customer', pid))
+        for pid in (11, 13):  # Retail / blank → no ledger
+            self.assertIsNone(get_party_ledger('Customer', pid))
+
+    def test_idempotent(self):
+        from core.party_ledgers import provision_all_party_ledgers
+        with patch('inventory_reader.models.SupplierRO') as MS, \
+             patch('inventory_reader.models.CustomerRO') as MC:
+            MS.objects.values_list.return_value = [1, 2]
+            MS.objects.filter.return_value.only.return_value.first.return_value = None
+            MC.objects.values_list.return_value = [(10, 'B2B')]
+            MC.objects.filter.return_value.only.return_value.first.return_value = None
+            first = provision_all_party_ledgers()
+            second = provision_all_party_ledgers()
+        self.assertEqual((first['suppliers_created'], first['customers_created']), (2, 1))
+        self.assertEqual((second['suppliers_created'], second['customers_created']), (0, 0))
+
+    def test_disabled_flag_provisions_nothing(self):
+        from core.party_ledgers import provision_all_party_ledgers
+        with override_settings(PARTY_LEDGERS_ENABLED=False):
+            with patch('inventory_reader.models.SupplierRO') as MS, \
+                 patch('inventory_reader.models.CustomerRO') as MC:
+                MS.objects.values_list.return_value = [1, 2]
+                MC.objects.values_list.return_value = [(10, 'B2B')]
+                res = provision_all_party_ledgers()
+        self.assertEqual(res, {'suppliers_created': 0, 'customers_created': 0})
+
+    def test_sync_all_invokes_provisioning(self):
+        from sync.services import InventorySyncService
+        svc = InventorySyncService()
+        sentinel = {'suppliers_created': 5, 'customers_created': 2}
+        with patch('core.party_ledgers.provision_all_party_ledgers', return_value=sentinel) as mock_prov, \
+             patch.object(svc, 'sync_opening_stocks', return_value=0), \
+             patch.object(svc, 'sync_purchases', return_value=0), \
+             patch.object(svc, 'sync_pos', return_value=0), \
+             patch.object(svc, 'sync_b2b', return_value=0), \
+             patch.object(svc, 'sync_returns', return_value=0), \
+             patch.object(svc, 'sync_purchase_returns', return_value=0):
+            result = svc.sync_all()
+        mock_prov.assert_called_once()
+        self.assertEqual(result['party_ledgers'], sentinel)
+
+
+@ENABLED
 class RollupTests(TestCase):
     """Per-party leaves roll up under the group: the group's children sum to the
     same total the single control used to carry."""

@@ -270,3 +270,10 @@ PARTY_LEDGERS_ENABLED = (
     os.environ.get('PARTY_LEDGERS_ENABLED', 'true').lower() != 'false'
     and not _TESTING
 )
+
+# Customer types that are walk-in/retail (B2C) and do NOT get a proactively
+# created ledger — every other (B2B / Hospital / Clinic / Corporate / …)
+# customer does. Inventory customer_type values are Retail / B2B / Hospital /
+# Clinic. (Retail credit sales still create a ledger lazily if a receivable
+# actually arises.)
+PARTY_LEDGER_RETAIL_CUSTOMER_TYPES = ('Retail', '')

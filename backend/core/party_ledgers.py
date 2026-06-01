@@ -139,6 +139,54 @@ def get_or_create_party_ledger(party_type: str, party_id, *, location_id=None):
         return get_party_ledger(party_type, party_id)
 
 
+def retail_customer_types():
+    """customer_type values that do NOT get a proactively-created ledger (B2C /
+    walk-in retail). Everything else (B2B, Hospital, Clinic, Corporate, …) is a
+    business customer and gets its own ledger. Configurable via
+    settings.PARTY_LEDGER_RETAIL_CUSTOMER_TYPES."""
+    raw = getattr(settings, 'PARTY_LEDGER_RETAIL_CUSTOMER_TYPES', ('Retail', ''))
+    return {str(t).strip().lower() for t in raw}
+
+
+def provision_all_party_ledgers(*, suppliers=True, customers=True):
+    """Idempotently create a ledger for EVERY supplier and every non-retail
+    (B2B / institutional) customer in the inventory master.
+
+    Returns {'suppliers_created': n, 'customers_created': n}. Safe to call
+    repeatedly — existing ledgers are skipped via a single prefetch, so steady
+    state is a couple of queries and no writes. Called automatically from
+    sync_all and by the provision_party_ledgers command. Respects the
+    PARTY_LEDGERS_ENABLED flag.
+    """
+    from core.models import ChartOfAccount
+    result = {'suppliers_created': 0, 'customers_created': 0}
+    if not party_ledgers_enabled():
+        return result
+    from inventory_reader.models import SupplierRO, CustomerRO
+
+    if suppliers:
+        have = set(ChartOfAccount.objects
+                   .filter(party_type='Supplier', party_id__isnull=False)
+                   .values_list('party_id', flat=True))
+        for pid in SupplierRO.objects.values_list('id', flat=True):
+            if pid not in have:
+                get_or_create_party_ledger('Supplier', pid)
+                result['suppliers_created'] += 1
+
+    if customers:
+        retail = retail_customer_types()
+        have = set(ChartOfAccount.objects
+                   .filter(party_type='Customer', party_id__isnull=False)
+                   .values_list('party_id', flat=True))
+        for cid, ctype in CustomerRO.objects.values_list('id', 'customer_type'):
+            if cid in have or (ctype or '').strip().lower() in retail:
+                continue
+            get_or_create_party_ledger('Customer', cid)
+            result['customers_created'] += 1
+
+    return result
+
+
 def resolve_party_account(party_type, party_id, fallback):
     """The chokepoint posting sites use. Returns the per-party ledger when the
     feature is enabled and the party is concrete; otherwise the fallback control
