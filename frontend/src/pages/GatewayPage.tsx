@@ -98,13 +98,7 @@ export default function GatewayPage() {
     <div className="max-w-7xl mx-auto pb-20">
       {/* Header */}
       <div className="mb-6">
-        <h1
-          className="text-2xl font-semibold"
-          style={{ color: 'var(--ink)', letterSpacing: '-0.02em' }}
-        >
-          Gateway of Tally
-        </h1>
-        <p className="text-sm mt-1" style={{ color: 'var(--ink-2)' }}>
+        <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
           Press an F-key to start a voucher · Tab to navigate · Ctrl+A to save · Esc to back out
         </p>
       </div>
