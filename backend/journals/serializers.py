@@ -48,6 +48,53 @@ class BillReferenceSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at']
 
+    def validate(self, data):
+        """Server-side over-allocation guard: a bill-wise AGAINST allocation may
+        not push the cumulative amount settled against an invoice past that
+        invoice's original balance. Scoped by party + subtype + location so it
+        can't be defeated by a direct API POST or a stale tab."""
+        from django.db.models import Sum
+        kind = data.get('kind') or getattr(self.instance, 'kind', None)
+        line = data.get('line') or getattr(self.instance, 'line', None)
+        ref_no = data.get('ref_no') or getattr(self.instance, 'ref_no', '')
+        amount = data.get('amount') if 'amount' in data else getattr(self.instance, 'amount', Decimal('0'))
+        if kind != 'AGAINST' or line is None or not ref_no or not amount:
+            return data
+
+        party_type = line.party_type
+        subtype = line.account.account_subtype if line.account_id else ''
+        loc = line.entry.location_id if line.entry_id else None
+        if party_type not in ('Supplier', 'Customer'):
+            return data
+
+        inv_qs = JournalEntryLine.objects.filter(
+            entry__entry_no=ref_no, party_type=party_type,
+            party_id=line.party_id, account__account_subtype=subtype,
+        )
+        if loc is not None:
+            inv_qs = inv_qs.filter(entry__location_id=loc)
+        invoice = inv_qs.select_related('entry').first()
+        if invoice is None:
+            return data  # freeform / non-JE reference — nothing to cap against
+
+        original = invoice.credit if party_type == 'Supplier' else invoice.debit
+        prior = BillReference.objects.filter(
+            kind='AGAINST', ref_no=ref_no,
+            line__party_type=party_type, line__party_id=line.party_id,
+            line__account__account_subtype=subtype,
+        )
+        if loc is not None:
+            prior = prior.filter(line__entry__location_id=loc)
+        if self.instance:
+            prior = prior.exclude(pk=self.instance.pk)
+        prior_sum = prior.aggregate(s=Sum('amount'))['s'] or Decimal('0')
+        if prior_sum + amount > original + Decimal('0.005'):
+            raise serializers.ValidationError(
+                f'Allocation {amount} exceeds invoice {ref_no} remaining '
+                f'balance {original - prior_sum}.'
+            )
+        return data
+
 
 class JournalEntryLineSerializer(serializers.ModelSerializer):
     account_name = serializers.CharField(source='account.account_name', read_only=True)

@@ -1,10 +1,10 @@
-import { useEffect, useState, useMemo } from 'react'
-import { Trash2, X, Loader2, ChevronDown } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Trash2, X, FileStack } from 'lucide-react'
 import { AccountPicker } from '../journals/AccountPicker'
 import { Input } from '../../components/ui/input'
-import { getBills, getOpenCustomerInvoices, type Account } from '../../lib/api'
-import { formatCurrency, formatDate } from '../../lib/utils'
+import { type Account } from '../../lib/api'
 import { BillRefPickerSheet, type BillRefValue } from './BillRefPickerSheet'
+import { InvoiceAllocationGrid, type InvoiceAllocation } from './InvoiceAllocationGrid'
 
 export interface PaymentRow {
   uid: string
@@ -17,19 +17,15 @@ export interface PaymentRow {
   ref: BillRefValue | null
 }
 
-interface PendingRef {
-  /** Display label (e.g. "BILL-001 · 12-Apr-26 · ₹1,180") */
-  label: string
-  /** Underlying BillRefValue applied when the user picks it. */
-  value: BillRefValue
-}
-
 interface Props {
   row: PaymentRow
   accounts: Account[]
   onChange: (patch: Partial<PaymentRow>) => void
   onRemove: () => void
   onAltC?: (uid: string) => void
+  /** Bubbles a multi-invoice bill-wise allocation up — the parent expands it
+   *  into one settlement row per invoice. */
+  onAllocate?: (items: InvoiceAllocation[]) => void
   removeDisabled?: boolean
 }
 
@@ -38,99 +34,27 @@ interface Props {
  * [ Ledger ] [ Reference ] [ Narration ] [ Amount ] [ × ]
  *
  * Each party IS a ledger now, so the row is driven by the Ledger picker — the
- * party (party_type/party_id) is derived from the chosen ledger upstream. When
- * the ledger is a party ledger, the Reference cell auto-loads that party's open
- * bills/invoices as an inline dropdown; "Other reference…" opens the full sheet
- * for Advance / On-Account / Freeform options.
+ * party is derived from it. When the ledger is a party ledger, "Settle invoices"
+ * opens a bill-wise grid (one editable amount per outstanding invoice); the full
+ * sheet stays available for Advance / On-Account / Freeform references.
  */
 export function PaymentRowEditor({
-  row, accounts, onChange, onRemove, onAltC, removeDisabled,
+  row, accounts, onChange, onRemove, onAltC, onAllocate, removeDisabled,
 }: Props) {
   const [refOpen, setRefOpen] = useState(false)
-  const [pendingRefs, setPendingRefs] = useState<PendingRef[]>([])
-  const [pendingLoading, setPendingLoading] = useState(false)
+  const [gridOpen, setGridOpen] = useState(false)
 
   const selectedAccount = useMemo(
     () => (row.account_id ? accounts.find((a) => a.id === row.account_id) ?? null : null),
     [row.account_id, accounts]
   )
 
-  // Auto-load that party's open bills/invoices the moment a party is set.
-  // Re-runs when party changes; clears when party is cleared.
-  useEffect(() => {
-    if (!row.party_id || !row.party_type) {
-      setPendingRefs([])
-      return
-    }
-    let cancelled = false
-    setPendingLoading(true)
-    async function load() {
-      try {
-        if (row.party_type === 'Supplier') {
-          const res = await getBills({
-            vendor_id: String(row.party_id), status: 'open,partially_paid',
-          })
-          if (cancelled) return
-          const list: PendingRef[] = (res.results || [])
-            .filter((b) => b.status === 'open' || b.status === 'partially_paid')
-            .map((b) => ({
-              label: `${b.bill_no || `BILL-${b.id}`} · ${formatDate(b.bill_date)} · ${formatCurrency(b.balance_due)}`,
-              value: {
-                kind: 'AGAINST',
-                bill_id: b.id,
-                ref_no: b.bill_no || `BILL-${b.id}`,
-                ref_date: b.bill_date || null,
-                amount: b.balance_due,
-                label: `${b.bill_no || `BILL-${b.id}`} · ${formatDate(b.bill_date)}`,
-              },
-            }))
-          setPendingRefs(list)
-        } else {
-          const res = await getOpenCustomerInvoices()
-          if (cancelled) return
-          const list: PendingRef[] = (res.rows || [])
-            .filter((r) => r.party_id === row.party_id)
-            .map((inv) => ({
-              label: `${inv.invoice_no} · ${formatDate(inv.date)} · ${formatCurrency(inv.amount)}`,
-              value: {
-                kind: 'AGAINST',
-                bill_id: null,
-                ref_no: inv.invoice_no,
-                ref_date: inv.date,
-                amount: inv.amount,
-                label: `${inv.invoice_no} · ${formatDate(inv.date)}`,
-              },
-            }))
-          setPendingRefs(list)
-        }
-      } catch {
-        // Silent — the row still works, user can use the sheet.
-        if (!cancelled) setPendingRefs([])
-      } finally {
-        if (!cancelled) setPendingLoading(false)
-      }
-    }
-    load()
-    return () => { cancelled = true }
-  }, [row.party_id, row.party_type])
-
-  function clearRef() {
-    onChange({ ref: null })
-  }
+  function clearRef() { onChange({ ref: null }) }
 
   function applyRef(v: BillRefValue) {
     const patch: Partial<PaymentRow> = { ref: v }
-    // Auto-prime amount from the bill/invoice when the row is still empty —
-    // one-click settle for the common "pay one bill in full" case.
-    if (v.amount && (!row.amount || parseFloat(row.amount) === 0)) {
-      patch.amount = v.amount
-    }
+    if (v.amount && (!row.amount || parseFloat(row.amount) === 0)) patch.amount = v.amount
     onChange(patch)
-  }
-
-  function handlePendingPick(idx: number) {
-    if (idx < 0 || idx >= pendingRefs.length) return
-    applyRef(pendingRefs[idx].value)
   }
 
   return (
@@ -172,65 +96,36 @@ export function PaymentRowEditor({
               <X size={12} />
             </button>
           </div>
-        ) : !row.party_id ? (
-          // No party — only Advance / On-Account / Freeform make sense.
+        ) : row.party_id ? (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setGridOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2 py-1.5 text-xs rounded-md border transition-colors hover:opacity-90"
+              style={{ background: 'rgba(15,157,154,0.08)', borderColor: 'rgba(15,157,154,0.30)', color: 'var(--brand)' }}
+              title="See each outstanding invoice and enter how much to pay"
+            >
+              <FileStack size={12} /> Settle invoices…
+            </button>
+            <button
+              type="button"
+              onClick={() => setRefOpen(true)}
+              className="text-xs hover:underline"
+              style={{ color: 'var(--ink-3)' }}
+              title="Advance / On-Account / Freeform reference"
+            >
+              Other…
+            </button>
+          </div>
+        ) : (
           <button
             type="button"
             onClick={() => setRefOpen(true)}
             className="inline-flex items-center gap-1.5 px-2 py-1.5 text-xs rounded-md border transition-colors hover:opacity-90"
-            style={{
-              background: 'var(--surface-0)',
-              borderColor: 'var(--line)',
-              color: 'var(--ink-3)',
-            }}
-            title="Pick a party first to see outstanding bills/invoices"
+            style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink-3)' }}
           >
             Other reference…
           </button>
-        ) : (
-          // Party set — auto-loaded outstanding bills as inline dropdown,
-          // plus an escape hatch to the full sheet for Advance / On Account /
-          // Freeform references.  Styled to match the input/picker primitives
-          // used elsewhere on the row instead of a raw native <select>.
-          <div className="relative">
-            <select
-              value=""
-              onChange={(e) => {
-                const v = e.target.value
-                if (v === '__other__') setRefOpen(true)
-                else if (v !== '') handlePendingPick(Number(v))
-              }}
-              disabled={pendingLoading}
-              className="w-full h-9 pl-3 pr-9 text-xs border rounded-md outline-none transition-shadow focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)] appearance-none cursor-pointer disabled:cursor-wait"
-              style={{
-                background: 'var(--surface-0)',
-                borderColor: 'var(--line)',
-                color: pendingRefs.length === 0 ? 'var(--ink-3)' : 'var(--ink)',
-              }}
-              title={pendingRefs.length === 0
-                ? 'No outstanding bills/invoices for this party'
-                : `${pendingRefs.length} outstanding reference(s) — pick to allocate`}
-            >
-              <option value="" disabled>
-                {pendingLoading
-                  ? 'Loading references…'
-                  : pendingRefs.length === 0
-                    ? 'No outstanding refs'
-                    : `${pendingRefs.length} outstanding ref${pendingRefs.length === 1 ? '' : 's'} — pick…`}
-              </option>
-              {pendingRefs.map((p, i) => (
-                <option key={i} value={i}>{p.label}</option>
-              ))}
-              <option value="__other__">＋ Other reference (Advance / On Account / Freeform)…</option>
-            </select>
-            {/* Custom chevron — native arrows differ across browsers and clash
-                with the AccountPicker on the same row. */}
-            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2">
-              {pendingLoading
-                ? <Loader2 size={12} className="animate-spin" style={{ color: 'var(--ink-3)' }} />
-                : <ChevronDown size={14} style={{ color: 'var(--ink-3)' }} />}
-            </span>
-          </div>
         )}
       </td>
       <td className="px-2 py-2 align-top">
@@ -281,6 +176,16 @@ export function PaymentRowEditor({
           partyName={selectedAccount?.account_name ?? ''}
           onPick={applyRef}
         />
+        {row.party_type && row.party_id && (
+          <InvoiceAllocationGrid
+            open={gridOpen}
+            onOpenChange={setGridOpen}
+            partyType={row.party_type}
+            partyId={row.party_id}
+            partyName={selectedAccount?.account_name ?? ''}
+            onAllocate={(items) => onAllocate?.(items)}
+          />
+        )}
       </td>
     </tr>
   )

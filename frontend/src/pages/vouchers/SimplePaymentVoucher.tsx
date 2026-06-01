@@ -326,6 +326,30 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
     setRows((rs) => [...rs, makeRow()])
   }
 
+  // Bill-wise allocation: expand one row into one settlement row per invoice
+  // (each carries its AGAINST reference + the amount paid against that invoice).
+  function handleAllocate(uid: string, items: { invoice_no: string; ref_date: string | null; amount: string }[]) {
+    setRows((rs) => {
+      const idx = rs.findIndex((r) => r.uid === uid)
+      if (idx < 0 || items.length === 0) return rs
+      const base = rs[idx]
+      const newRows: PaymentRow[] = items.map((it) => ({
+        ...makeRow(base.account_id, base.party_type, base.party_id),
+        amount: it.amount,
+        narration: base.narration,
+        ref: {
+          kind: 'AGAINST',
+          bill_id: null,
+          ref_no: it.invoice_no,
+          ref_date: it.ref_date,
+          amount: it.amount,
+          label: it.invoice_no,
+        },
+      }))
+      return [...rs.slice(0, idx), ...newRows, ...rs.slice(idx + 1)]
+    })
+  }
+
   function removeRow(uid: string) {
     setRows((rs) => rs.length <= 1 ? rs : rs.filter((r) => r.uid !== uid))
   }
@@ -692,6 +716,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
                   onChange={(p) => patchRow(row.uid, p)}
                   onRemove={() => removeRow(row.uid)}
                   onAltC={handleAltCFromRow}
+                  onAllocate={(items) => handleAllocate(row.uid, items)}
                   removeDisabled={rows.length <= 1}
                 />
               ))}

@@ -617,85 +617,121 @@ class ReceivablesAgingView(APIView):
         })
 
 
-class OpenCustomerInvoicesView(APIView):
-    """One row per customer SALE journal entry whose customer still has a
-    net outstanding balance. Unlike Payables (which uses the Bill model
-    with proper per-bill allocation), customer invoices live as JEs and
-    receipts are not allocated to specific invoices — so the balance is
-    tracked at the customer level. We expose the invoice rows here so the
-    user can pick one and record a receipt against that customer.
+def _open_party_invoices(request, *, party_type):
+    """Per-invoice open-balance rows for a party type, with bill-wise netting.
 
-    Each row: invoice_no (entry_no), date, party, party_id, amount (Dr on
-    the Receivable line within this JE), customer_outstanding (net balance
-    across all the customer's JEs up to `as_of`).
+    An "invoice" is one posted JE line that CREATES the obligation — for a
+    customer the Debit on Receivable, for a supplier the Credit on Payable.
+    Each invoice's remaining balance = its original amount minus prior bill-wise
+    AGAINST allocations (journals.BillReference) keyed by the invoice's entry_no
+    and scoped to the SAME party-type + subtype + location (so a receipt against
+    a customer invoice never nets a supplier invoice, and a Store-A allocation
+    never touches a Store-B invoice — see [[party-ledger-per-party]]).
+
+    These live as JEs (synced PurchaseOrder / SALE), not the bills app — that's
+    why getBills shows nothing for synced suppliers. Tag-based, NOT code-based.
     """
-    def get(self, request):
-        as_of_date = request.query_params.get('date', date.today().isoformat())
-        search = request.query_params.get('search', '').strip().lower()
-        location = get_active_location(request)
+    from journals.models import BillReference
+    as_of_date = request.query_params.get('date', date.today().isoformat())
+    search = request.query_params.get('search', '').strip().lower()
+    location = get_active_location(request)
+    is_supplier = party_type == 'Supplier'
+    subtype = 'Payable' if is_supplier else 'Receivable'
+    net_key = 'supplier_outstanding' if is_supplier else 'customer_outstanding'
 
-        lines_qs = JournalEntryLine.objects.filter(
-            entry__is_posted=True,
-            entry__date__lte=as_of_date,
-            party_type='Customer',
-            account__account_subtype='Receivable',
-            debit__gt=0,
-        ).select_related('entry')
-        if location:
-            lines_qs = lines_qs.filter(entry__location_id=location.id)
+    base = JournalEntryLine.objects.filter(
+        entry__is_posted=True, entry__date__lte=as_of_date,
+        party_type=party_type, account__account_subtype=subtype,
+    )
+    if location:
+        base = base.filter(entry__location_id=location.id)
 
-        # Per-customer net outstanding (debit minus credit on Receivable across
-        # ALL their JEs up to as_of). We only emit invoice rows for customers
-        # whose net is positive — fully-settled customers fall out.
-        all_lines = JournalEntryLine.objects.filter(
-            entry__is_posted=True,
-            entry__date__lte=as_of_date,
-            party_type='Customer',
-            account__account_subtype='Receivable',
+    invoice_lines = base.filter(credit__gt=0) if is_supplier else base.filter(debit__gt=0)
+    invoice_lines = list(invoice_lines.select_related('entry').order_by('entry__date', 'entry__id'))
+
+    # Per-party net outstanding across ALL their lines — gate so fully-settled
+    # parties (incl. those paid via plain unallocated debits) fall out.
+    per_party = defaultdict(lambda: Decimal('0'))
+    for l in base:
+        per_party[l.party_id] += (l.credit - l.debit) if is_supplier else (l.debit - l.credit)
+
+    # Prior AGAINST allocations per invoice (one query), scoped to party+subtype+location.
+    entry_nos = [l.entry.entry_no for l in invoice_lines]
+    allocated = defaultdict(lambda: Decimal('0'))
+    if entry_nos:
+        ref_qs = BillReference.objects.filter(
+            kind='AGAINST', ref_no__in=entry_nos,
+            line__party_type=party_type,
+            line__account__account_subtype=subtype,
         )
         if location:
-            all_lines = all_lines.filter(entry__location_id=location.id)
+            ref_qs = ref_qs.filter(line__entry__location_id=location.id)
+        for r in ref_qs.values('ref_no').annotate(s=Sum('amount')):
+            allocated[r['ref_no']] = r['s'] or Decimal('0')
 
-        per_customer = defaultdict(lambda: Decimal('0'))
-        for line in all_lines:
-            per_customer[line.party_id] += line.debit - line.credit
+    if is_supplier:
+        from inventory_reader.models import SupplierRO as RO
+        name_field = 'company_name'
+    else:
+        from inventory_reader.models import CustomerRO as RO
+        name_field = 'customer_name'
+    names = {}
+    try:
+        for obj in RO.objects.filter(id__in={l.party_id for l in invoice_lines}):
+            names[obj.id] = getattr(obj, name_field)
+    except Exception:
+        pass
 
-        from inventory_reader.models import CustomerRO
-
-        # Resolve invoice rows.
-        rows = []
-        for line in lines_qs.order_by('entry__date', 'entry__id'):
-            pid = line.party_id
-            outstanding = per_customer.get(pid, Decimal('0'))
-            if outstanding <= 0:
-                continue
-            try:
-                customer = CustomerRO.objects.get(id=pid)
-                name = customer.customer_name
-            except CustomerRO.DoesNotExist:
-                name = f'Customer #{pid}'
-            if search and search not in name.lower() \
-                    and search not in (line.entry.entry_no or '').lower():
-                continue
-            rows.append({
-                'invoice_no': line.entry.entry_no,
-                'voucher_type': line.entry.voucher_type,
-                'date': line.entry.date.isoformat(),
-                'party_id': pid,
-                'party_name': name,
-                'amount': str(line.debit),
-                'narration': line.entry.narration or '',
-                'customer_outstanding': str(outstanding),
-            })
-
-        return Response({
-            'as_of_date': as_of_date,
-            'rows': rows,
-            'total_invoices': len(rows),
-            'total_outstanding': str(sum(
-                {r['party_id']: Decimal(r['customer_outstanding']) for r in rows}.values()
-            )),
+    rows = []
+    for l in invoice_lines:
+        pid = l.party_id
+        net = per_party.get(pid, Decimal('0'))
+        if net <= 0:
+            continue
+        cents = Decimal('0.01')
+        original = (l.credit if is_supplier else l.debit).quantize(cents)
+        paid = allocated.get(l.entry.entry_no, Decimal('0')).quantize(cents)
+        outstanding = (original - paid).quantize(cents)
+        if outstanding <= 0:
+            continue
+        name = names.get(pid, f'{party_type} #{pid}')
+        if search and search not in name.lower() \
+                and search not in (l.entry.entry_no or '').lower():
+            continue
+        rows.append({
+            'invoice_no': l.entry.entry_no,
+            'voucher_type': l.entry.voucher_type,
+            'date': l.entry.date.isoformat(),
+            'party_id': pid,
+            'party_name': name,
+            'amount': str(original),
+            'paid_amount': str(paid),
+            'outstanding_amount': str(outstanding),
+            'narration': l.entry.narration or '',
+            net_key: str(net.quantize(cents)),
         })
+
+    return Response({
+        'as_of_date': as_of_date,
+        'rows': rows,
+        'total_invoices': len(rows),
+        'total_outstanding': str(sum((Decimal(r['outstanding_amount']) for r in rows), Decimal('0'))),
+    })
+
+
+class OpenCustomerInvoicesView(APIView):
+    """Per-invoice open receivables for customers (one row per SALE JE line),
+    with bill-wise remaining balance. See _open_party_invoices."""
+    def get(self, request):
+        return _open_party_invoices(request, party_type='Customer')
+
+
+class OpenSupplierInvoicesView(APIView):
+    """Per-invoice open payables for suppliers — synced PurchaseOrder JEs (the
+    bills app is empty for synced purchases). One row per purchase invoice with
+    its remaining balance after bill-wise allocations. See _open_party_invoices."""
+    def get(self, request):
+        return _open_party_invoices(request, party_type='Supplier')
 
 
 class PayablesAgingView(APIView):

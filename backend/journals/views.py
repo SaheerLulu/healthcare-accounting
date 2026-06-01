@@ -203,10 +203,20 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
             reversal.delete()
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Voiding a payment must release its bill-wise allocations so the
+        # settled invoices re-open (the reversal posts a NEW entry rather than
+        # deleting lines, so CASCADE never fires — do it explicitly here).
+        from .models import BillReference
+        freed = list(BillReference.objects.filter(line__entry=original))
+        for ref in freed:
+            log_action('DELETE', 'BillReference', ref.pk, str(ref), request=request)
+        BillReference.objects.filter(line__entry=original).delete()
+
         log_action(
             'REVERSE', 'JournalEntry', original.pk, original.entry_no,
             request=request,
-            extra={'reversal_entry_no': reversal.entry_no},
+            extra={'reversal_entry_no': reversal.entry_no,
+                   'released_allocations': len(freed)},
         )
         serializer = JournalEntrySerializer(reversal, context={'request': request})
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -479,6 +489,12 @@ class BillReferenceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = super().get_queryset()
         params = self.request.query_params
+        # Multi-location invariant: only see allocations for the active store
+        # (admin/all-stores sees everything). Prevents cross-store settlement leak.
+        from core.mixins import get_active_location
+        loc = get_active_location(self.request)
+        if loc:
+            qs = qs.filter(line__entry__location_id=loc.id)
         if params.get('line'):
             qs = qs.filter(line_id=params.get('line'))
         if params.get('entry'):

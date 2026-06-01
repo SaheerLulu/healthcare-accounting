@@ -1644,21 +1644,38 @@ export async function getReceivablesAging(params?: Record<string, string>) {
   return res.data as { rows: ReceivablesAgingRow[]; total_outstanding: string }
 }
 
-export interface OpenCustomerInvoice {
+export interface OpenPartyInvoice {
   invoice_no: string
   voucher_type: string
   date: string
   party_id: number
   party_name: string
+  /** Original invoice amount. */
   amount: string
+  /** Already settled via bill-wise AGAINST allocations. */
+  paid_amount?: string
+  /** Remaining balance = amount − paid_amount. */
+  outstanding_amount?: string
   narration: string
-  customer_outstanding: string
+  customer_outstanding?: string
+  supplier_outstanding?: string
 }
+export type OpenCustomerInvoice = OpenPartyInvoice
 
 export async function getOpenCustomerInvoices(params?: Record<string, string>) {
   const res = await api.get('/reports/open-customer-invoices/', { params })
   return res.data as {
-    rows: OpenCustomerInvoice[]
+    rows: OpenPartyInvoice[]
+    total_invoices: number
+    total_outstanding: string
+    as_of_date: string
+  }
+}
+
+export async function getOpenSupplierInvoices(params?: Record<string, string>) {
+  const res = await api.get('/reports/open-supplier-invoices/', { params })
+  return res.data as {
+    rows: OpenPartyInvoice[]
     total_invoices: number
     total_outstanding: string
     as_of_date: string

@@ -58,7 +58,7 @@ export default function ReceivablesPage() {
   // invoices contributes once to the header total.
   const totals = useMemo(() => {
     const perCustomer = new Map<number, number>()
-    for (const r of rows) perCustomer.set(r.party_id, parseFloat(r.customer_outstanding) || 0)
+    for (const r of rows) perCustomer.set(r.party_id, parseFloat((r.customer_outstanding ?? '0')) || 0)
     let sum = 0
     perCustomer.forEach((v) => { sum += v })
     return { invoiceCount: rows.length, customerCount: perCustomer.size, totalOutstanding: sum }
@@ -143,7 +143,7 @@ export default function ReceivablesPage() {
                   </Td>
                   <Td className="text-right mono font-semibold px-3"
                     style={{ color: 'var(--warning)' }}>
-                    {formatCurrency(r.customer_outstanding)}
+                    {formatCurrency((r.customer_outstanding ?? '0'))}
                   </Td>
                   <Td className="text-right pr-3">
                     <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -225,7 +225,7 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
             <p className="text-xs mt-0.5" style={{ color: 'var(--ink-3)' }}>
               From <span className="font-medium">{row.party_name}</span> · Invoice{' '}
               <span className="font-mono">{formatCurrency(row.amount)}</span> · Customer outstanding{' '}
-              <span className="font-mono font-medium">{formatCurrency(row.customer_outstanding)}</span>
+              <span className="font-mono font-medium">{formatCurrency((row.customer_outstanding ?? '0'))}</span>
             </p>
           </SheetHeader>
           <SheetBody>
