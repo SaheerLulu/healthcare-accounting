@@ -131,7 +131,7 @@ const menuGroups: MenuGroup[] = [
     ],
   },
   {
-    label: 'Banking & Assets',
+    label: 'Banking',
     icon: Landmark,
     sections: [
       {
@@ -152,7 +152,7 @@ const menuGroups: MenuGroup[] = [
     ],
   },
   {
-    label: 'Tax & Compliance',
+    label: 'Tax',
     icon: Receipt,
     sections: [
       {
@@ -176,7 +176,7 @@ const menuGroups: MenuGroup[] = [
     ],
   },
   {
-    label: 'Reports & Admin',
+    label: 'Reports',
     icon: FileBarChart,
     sections: [
       {
@@ -288,9 +288,9 @@ function LocationSelector() {
           background: 'var(--surface-0)',
         }}
       >
-        <MapPin className="w-3.5 h-3.5" style={{ color: 'var(--brand)' }} />
-        <span className="max-w-[140px] truncate">{label}</span>
-        <ChevronDown className={cn('w-3 h-3 transition-transform', open && 'rotate-180')} />
+        <MapPin className="w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--brand)' }} />
+        <span className="max-w-[120px] truncate">{label}</span>
+        <ChevronDown className={cn('w-3 h-3 flex-shrink-0 transition-transform', open && 'rotate-180')} />
       </button>
 
       {open && (
@@ -422,17 +422,18 @@ function TopNav() {
   return (
     <nav
       ref={navRef}
-      className="h-16 backdrop-blur-lg border-b fixed top-0 left-0 right-0 z-40 flex items-center px-4"
+      className="h-16 backdrop-blur-lg border-b fixed top-0 left-0 right-0 z-40 flex items-center px-3 gap-1"
       style={{ backgroundColor: 'var(--color-nav-bg)', borderColor: 'var(--color-nav-border)' }}
     >
       <Wordmark />
 
-      <div className="mr-3">
+      <div className="mr-1 flex-shrink-0">
         <LocationSelector />
       </div>
 
-      {/* Menu Groups */}
-      <div className="flex items-center flex-1 mx-2">
+      {/* Menu Groups — flex-1 children with min-w-0 so they shrink and labels
+          truncate instead of overflowing the bar on narrow / 100%-zoom screens. */}
+      <div className="flex items-center flex-1 min-w-0 gap-0.5">
         {menuGroups.map((group) => {
           const active = isGroupActive(group)
           const isOpen = openMenu === group.label
@@ -440,11 +441,11 @@ function TopNav() {
           const Icon = group.icon
 
           return (
-            <div key={group.label} className="relative flex-1 flex justify-center">
+            <div key={group.label} className="relative flex-1 min-w-0 flex justify-center">
               <button
                 onClick={() => handleGroupClick(group)}
                 className={cn(
-                  'relative flex items-center justify-center gap-1 px-3 py-2 rounded-md text-sm font-medium w-full max-w-[170px]',
+                  'relative flex items-center justify-center gap-1 px-2 py-2 rounded-md text-sm font-medium w-full max-w-[150px] min-w-0',
                   !active && 'hover:bg-[var(--color-hover-bg)]'
                 )}
                 style={
@@ -453,11 +454,11 @@ function TopNav() {
                     : { color: 'var(--ink-2)' }
                 }
               >
-                <Icon className="w-4 h-4" />
+                <Icon className="w-4 h-4 flex-shrink-0" />
                 <span className="hidden md:inline truncate">{group.label}</span>
                 {hasSubs && (
                   <ChevronDown
-                    className={cn('w-3 h-3 transition-transform', isOpen && 'rotate-180')}
+                    className={cn('w-3 h-3 flex-shrink-0 transition-transform', isOpen && 'rotate-180')}
                   />
                 )}
                 {active && (
