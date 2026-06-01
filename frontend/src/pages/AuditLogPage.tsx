@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, Fragment } from 'react'
-import { getAuditLogs, type AuditLog, type AuditLogParams } from '../lib/api'
+import { getAuditLogs, exportAuditLogsCsv, type AuditLog, type AuditLogParams } from '../lib/api'
 import { toast } from 'sonner'
-import { Search, ScrollText } from 'lucide-react'
+import { Search, ScrollText, Download } from 'lucide-react'
 import { Card } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Button } from '../components/ui/button'
@@ -35,6 +35,29 @@ function ActionBadge({ action }: { action: string }) {
 function formatTimestamp(ts: string) {
   const d = new Date(ts)
   return d.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+function Detail({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <span className="block mono uppercase tracking-wider" style={{ color: 'var(--ink-3)', fontSize: 10 }}>{label}</span>
+      <span style={{ color: 'var(--ink)' }}>{children}</span>
+    </div>
+  )
+}
+
+function DetailJson({ title, value }: { title: string; value: Record<string, unknown> }) {
+  return (
+    <div className="mb-2">
+      <div className="mono uppercase tracking-wider mb-1" style={{ color: 'var(--ink-3)', fontSize: 10 }}>{title}</div>
+      <pre
+        className="text-xs whitespace-pre-wrap mono rounded p-3"
+        style={{ background: 'var(--surface-0)', border: '1px solid var(--line)', color: 'var(--ink-2)' }}
+      >
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    </div>
+  )
 }
 
 const MODEL_OPTIONS = [
@@ -82,6 +105,24 @@ export default function AuditLogPage() {
     e.preventDefault()
     setPage(1)
     load()
+  }
+
+  const [exporting, setExporting] = useState(false)
+  async function handleExport() {
+    setExporting(true)
+    try {
+      const params: AuditLogParams = {}
+      if (search) params.search = search
+      if (filterAction) params.action = filterAction
+      if (filterModel) params.model_name = filterModel
+      if (dateFrom) params.date_from = dateFrom
+      if (dateTo) params.date_to = dateTo
+      await exportAuditLogsCsv(params)
+    } catch {
+      toast.error('Failed to export audit log')
+    } finally {
+      setExporting(false)
+    }
   }
 
   const totalPages = Math.ceil(count / PAGE_SIZE)
@@ -138,6 +179,9 @@ export default function AuditLogPage() {
         </div>
 
         <Button type="submit" size="sm">Search</Button>
+        <Button type="button" size="sm" variant="secondary" onClick={handleExport} disabled={exporting}>
+          <Download size={14} /> {exporting ? 'Exporting…' : 'Export CSV'}
+        </Button>
       </form>
 
       {loading ? (
@@ -175,30 +219,38 @@ export default function AuditLogPage() {
                     <Td className="max-w-xs truncate" title={log.object_repr} style={{ color: 'var(--ink)' }}>{log.object_repr}</Td>
                     <Td className="text-xs mono" style={{ color: 'var(--ink-3)' }}>{log.ip_address ?? '—'}</Td>
                     <Td>
-                      {(log.changes || log.extra) && (
-                        <button
-                          onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
-                          className="text-xs hover:underline"
-                          style={{ color: 'var(--brand)' }}
-                        >
-                          {expandedId === log.id ? 'Hide' : 'Show'}
-                        </button>
-                      )}
+                      <button
+                        onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
+                        className="text-xs hover:underline"
+                        style={{ color: 'var(--brand)' }}
+                      >
+                        {expandedId === log.id ? 'Hide' : 'Details'}
+                      </button>
                     </Td>
                   </Tr>
-                  {expandedId === log.id && (log.changes || log.extra) && (
+                  {expandedId === log.id && (
                     <tr style={{ background: 'var(--color-grey-light)' }}>
                       <td colSpan={7} className="px-4 py-3">
-                        <pre
-                          className="text-xs whitespace-pre-wrap mono rounded p-3"
-                          style={{
-                            background: 'var(--surface-0)',
-                            border: '1px solid var(--line)',
-                            color: 'var(--ink-2)',
-                          }}
-                        >
-                          {JSON.stringify(log.changes ?? log.extra, null, 2)}
-                        </pre>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1.5 text-xs mb-3">
+                          <Detail label="Object">{log.object_repr || '—'}</Detail>
+                          <Detail label="Object ID">{log.object_id || '—'}</Detail>
+                          <Detail label="Model">{log.model_name}</Detail>
+                          <Detail label="Action">{log.action}</Detail>
+                          <Detail label="User">{log.username ?? 'System'}</Detail>
+                          <Detail label="IP Address">{log.ip_address ?? '—'}</Detail>
+                          <Detail label="Timestamp">{formatTimestamp(log.timestamp)}</Detail>
+                        </div>
+                        {log.changes && (
+                          <DetailJson title="Changes (before → after)" value={log.changes} />
+                        )}
+                        {log.extra && (
+                          <DetailJson title="Additional context" value={log.extra} />
+                        )}
+                        {!log.changes && !log.extra && (
+                          <p className="text-xs italic" style={{ color: 'var(--ink-3)' }}>
+                            No field-level change data was captured for this event.
+                          </p>
+                        )}
                       </td>
                     </tr>
                   )}

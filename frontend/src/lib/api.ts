@@ -1976,6 +1976,18 @@ export async function getAuditLogs(params: AuditLogParams = {}) {
   return res.data as { count: number; next: string | null; previous: string | null; results: AuditLog[] }
 }
 
+/** Download the (filtered) audit log as CSV. Uses the authed api client so the
+ *  JWT header is sent, then triggers a browser download. */
+export async function exportAuditLogsCsv(params: AuditLogParams = {}) {
+  const res = await api.get('/audit/export-csv/', { params, responseType: 'blob' })
+  const url = URL.createObjectURL(res.data as Blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `audit_log_${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 // ─── Stock / Inventory ──────────────────────────────────────────────────────
 
 export interface StockMovementRow {
