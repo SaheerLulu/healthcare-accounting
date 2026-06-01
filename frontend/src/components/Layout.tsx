@@ -218,37 +218,21 @@ function allItems(g: MenuGroup): MenuItem[] {
 
 function Wordmark() {
   return (
-    <div className="flex items-center gap-2 mr-5 flex-shrink-0">
-      <span
-        style={{
-          fontFamily: 'Inter, system-ui, sans-serif',
-          fontWeight: 700,
-          fontSize: 18,
-          letterSpacing: '-0.04em',
-          lineHeight: 1,
-          display: 'inline-flex',
-          alignItems: 'baseline',
-        }}
-      >
-        <span style={{ color: 'var(--ink)' }}>seef</span>
-        <span style={{ color: 'var(--brand)' }}>med</span>
-        <span style={{ color: 'var(--brand)' }}>.</span>
-      </span>
-      <span
-        className="mono uppercase hidden lg:inline"
-        style={{
-          fontSize: 10,
-          color: 'var(--ink-3)',
-          letterSpacing: '0.12em',
-          fontWeight: 600,
-          marginLeft: 4,
-          paddingLeft: 8,
-          borderLeft: '1px solid var(--line)',
-        }}
-      >
-        Accounting
-      </span>
-    </div>
+    <span
+      style={{
+        fontFamily: 'Inter, system-ui, sans-serif',
+        fontWeight: 700,
+        fontSize: 18,
+        letterSpacing: '-0.04em',
+        lineHeight: 1,
+        display: 'inline-flex',
+        alignItems: 'baseline',
+      }}
+    >
+      <span style={{ color: 'var(--ink)' }}>seef</span>
+      <span style={{ color: 'var(--brand)' }}>med</span>
+      <span style={{ color: 'var(--brand)' }}>.</span>
+    </span>
   )
 }
 
@@ -425,9 +409,9 @@ function TopNav() {
       className="h-16 backdrop-blur-lg border-b fixed top-0 left-0 right-0 z-40 flex items-center px-3 gap-1"
       style={{ backgroundColor: 'var(--color-nav-bg)', borderColor: 'var(--color-nav-border)' }}
     >
-      <Wordmark />
-
-      <div className="mr-1 flex-shrink-0">
+      {/* Brand + store selector stacked: logo on top, store selector beneath it. */}
+      <div className="flex flex-col justify-center items-start gap-1 mr-3 flex-shrink-0">
+        <Wordmark />
         <LocationSelector />
       </div>
 
