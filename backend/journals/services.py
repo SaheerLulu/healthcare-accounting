@@ -11,6 +11,7 @@ from inventory_reader.models import (
     OpeningStockRO,
 )
 from core.models import AccountMapping, AccountingSettings
+from core.party_ledgers import resolve_party_account
 from decimal import ROUND_HALF_UP
 from core.gst_utils import compute_tax_split, detect_supply_type, back_calculate_taxable
 from .models import JournalEntry, JournalEntryLine, RecurringJournal, RecurringJournalLine
@@ -245,7 +246,8 @@ class JournalAutoGenerationService:
         if total_payable > 0:
             JournalEntryLine.objects.create(
                 entry=entry,
-                account=self._acct('TRADE_PAYABLES', loc),
+                account=resolve_party_account(
+                    'Supplier', po.supplier_id, self._acct('TRADE_PAYABLES', loc)),
                 credit=total_payable,
                 party_type='Supplier',
                 party_id=po.supplier_id,
@@ -329,10 +331,23 @@ class JournalAutoGenerationService:
             location_id=loc,
         )
 
-        debit_ac = self._acct('TRADE_RECEIVABLES', loc) if pos.payment_type == 'Credit' else self._acct('CASH', loc)
+        # Walk-in / cash POS posts to Cash with no party. A CREDIT POS sale to a
+        # named customer posts to that customer's ledger and carries the party
+        # tag (so AR aging is accurate); a credit sale with no customer (rare)
+        # falls back to the generic 1130 control, untagged.
+        is_credit = pos.payment_type == 'Credit'
+        pos_customer_id = pos.customer_id if is_credit else None
+        if is_credit:
+            debit_ac = resolve_party_account(
+                'Customer', pos_customer_id, self._acct('TRADE_RECEIVABLES', loc))
+        else:
+            debit_ac = self._acct('CASH', loc)
 
         if total > 0:
-            JournalEntryLine.objects.create(entry=entry, account=debit_ac, debit=total)
+            ar_party = (dict(party_type='Customer', party_id=pos_customer_id)
+                        if pos_customer_id else {})
+            JournalEntryLine.objects.create(
+                entry=entry, account=debit_ac, debit=total, **ar_party)
         if sales_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_POS', loc), credit=sales_amount)
         if cgst > 0:
@@ -409,7 +424,9 @@ class JournalAutoGenerationService:
             if order.payment_type == 'Credit':
                 JournalEntryLine.objects.create(
                     entry=entry,
-                    account=self._acct('TRADE_RECEIVABLES', loc),
+                    account=resolve_party_account(
+                        'Customer', order.customer_id,
+                        self._acct('TRADE_RECEIVABLES', loc)),
                     debit=total,
                     party_type='Customer',
                     party_id=order.customer_id,
@@ -531,7 +548,9 @@ class JournalAutoGenerationService:
                 if total > 0:
                     JournalEntryLine.objects.create(
                         entry=entry,
-                        account=self._acct('TRADE_RECEIVABLES', loc),
+                        account=resolve_party_account(
+                            'Customer', ret.customer_id,
+                            self._acct('TRADE_RECEIVABLES', loc)),
                         credit=total,
                         party_type='Customer',
                         party_id=ret.customer_id,
@@ -647,7 +666,8 @@ class JournalAutoGenerationService:
         if total_return > 0:
             JournalEntryLine.objects.create(
                 entry=entry,
-                account=self._acct('TRADE_PAYABLES', loc),
+                account=resolve_party_account(
+                    'Supplier', ret.supplier_id, self._acct('TRADE_PAYABLES', loc)),
                 debit=total_return,
                 party_type='Supplier',
                 party_id=ret.supplier_id,
@@ -722,13 +742,15 @@ class JournalAutoGenerationService:
         amount = Decimal(str(data['amount']))
         payment_mode = data.get('payment_mode', 'bank')
 
-        # Debit: Trade Payables
+        # Debit: Trade Payables (the supplier's own ledger when linked)
+        supplier_id = data.get('party_id')
         JournalEntryLine.objects.create(
             entry=entry,
-            account=self._acct('TRADE_PAYABLES', loc),
+            account=resolve_party_account(
+                'Supplier', supplier_id, self._acct('TRADE_PAYABLES', loc)),
             debit=amount,
             party_type='Supplier',
-            party_id=data.get('party_id'),
+            party_id=supplier_id,
         )
         # Credit: Bank or Cash. When payment_mode='bank' the caller can
         # name a specific Bank-subtype ChartOfAccount via bank_account_id;
@@ -795,10 +817,11 @@ class JournalAutoGenerationService:
         # Debit: Bank or Cash
         debit_ac = self._acct('BANK', loc) if receipt_mode == 'bank' else self._acct('CASH', loc)
         JournalEntryLine.objects.create(entry=entry, account=debit_ac, debit=amount)
-        # Credit: Trade Receivables
+        # Credit: Trade Receivables (the customer's own ledger when linked)
         JournalEntryLine.objects.create(
             entry=entry,
-            account=self._acct('TRADE_RECEIVABLES', loc),
+            account=resolve_party_account(
+                'Customer', party_id, self._acct('TRADE_RECEIVABLES', loc)),
             credit=amount,
             party_type='Customer',
             party_id=party_id,
@@ -1050,8 +1073,13 @@ def generate_one_recurring_journal(rj: RecurringJournal, *, user=None) -> Journa
         created_by=user,
     )
     for tl in lines:
+        # Re-resolve the party leaf at generation time (don't copy a possibly
+        # stale template FK): a template line tagged to a party posts to that
+        # party's current ledger, falling back to the template's own account.
+        party_type = tl.party_type if tl.party_type in ('Supplier', 'Customer') else None
+        account = resolve_party_account(party_type, tl.party_id, tl.account)
         JournalEntryLine.objects.create(
-            entry=entry, account=tl.account,
+            entry=entry, account=account,
             debit=tl.debit, credit=tl.credit,
             narration=tl.narration,
             party_type=tl.party_type, party_id=tl.party_id,

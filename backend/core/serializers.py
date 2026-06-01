@@ -56,10 +56,12 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
             'id', 'account_code', 'account_name', 'account_type',
             'account_subtype', 'parent', 'parent_code', 'parent_name',
             'location_id', 'is_leaf', 'is_active', 'description',
+            'party_type', 'party_id',
             'documents_count',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'is_leaf', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'is_leaf', 'party_type', 'party_id',
+                            'created_at', 'updated_at']
 
     def get_documents_count(self, obj):
         # If the queryset annotated this, prefer it; otherwise fall back to a query.

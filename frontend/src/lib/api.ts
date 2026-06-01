@@ -76,6 +76,9 @@ export interface Account {
   description: string
   documents_count?: number
   children?: Account[]
+  /** Set on per-party (Sundry Creditor/Debtor) ledger leaves; '' / null otherwise. */
+  party_type?: string
+  party_id?: number | null
 }
 
 export interface AccountCounts {

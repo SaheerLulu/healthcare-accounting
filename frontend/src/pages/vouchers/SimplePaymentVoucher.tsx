@@ -128,7 +128,9 @@ function rowAccountFilter(a: Account): boolean {
 function suggestLedgerForParty(accounts: Account[], partyKind: PartyKind | null): number | null {
   if (!partyKind) return null
   const subtype = partyKind === 'Supplier' ? 'Payable' : 'Receivable'
-  const match = accounts.find((a) => isPostable(a) && a.account_subtype === subtype)
+  // Suggest the generic control (2110/1130), NOT a specific party leaf — the
+  // backend routes the party-tagged line to that party's own ledger on save.
+  const match = accounts.find((a) => isPostable(a) && a.account_subtype === subtype && !a.party_id)
   return match?.id ?? null
 }
 
@@ -172,7 +174,13 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
     async function load() {
       try {
         const [accs, sups, custs] = await Promise.all([
-          getChartOfAccounts(), getSuppliers(), getCustomers(),
+          // Exclude the per-party ledger leaves from the picker for NEW vouchers
+          // — they can number in the hundreds and the backend auto-routes a
+          // party-tagged line on the control account to the right party ledger
+          // on save. When editing a draft, include them so a line already on a
+          // party leaf still resolves to a name in the picker.
+          getChartOfAccounts(editingId ? {} : { party_ledgers: 'exclude' }),
+          getSuppliers(), getCustomers(),
         ])
         if (cancelled) return
         setAccounts(accs)

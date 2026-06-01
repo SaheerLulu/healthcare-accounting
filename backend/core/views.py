@@ -68,6 +68,19 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
                 models.Q(account_code__icontains=search) |
                 models.Q(account_name__icontains=search)
             )
+        # Per-party ledgers (Sundry Creditor/Debtor leaves) can number in the
+        # hundreds. `party_ledgers=exclude` keeps them out of the generic
+        # account picker; `only` returns just them; default `all`. A specific
+        # party's ledger is fetched with party_type + party_id.
+        party_scope = params.get('party_ledgers')
+        if party_scope == 'exclude':
+            qs = qs.filter(party_id__isnull=True)
+        elif party_scope == 'only':
+            qs = qs.filter(party_id__isnull=False)
+        p_type = params.get('party_type')
+        p_id = params.get('party_id')
+        if p_type and p_id:
+            qs = qs.filter(party_type=p_type, party_id=p_id)
         # Per-store scoping: by default a request with X-Location-Id sees this
         # store's clones + the NULL-location shared accounts (GST, equity etc.).
         # `location_scope=all` opts the user out (e.g., for the COA admin view).

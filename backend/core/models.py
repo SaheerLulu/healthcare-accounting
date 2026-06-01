@@ -85,6 +85,21 @@ class ChartOfAccount(models.Model):
         null=True, blank=True, db_index=True,
         help_text='NULL = shared/template account; non-NULL = per-store clone.',
     )
+    # Tally-style per-party ledger link. When set, this leaf IS the ledger
+    # account for one inventory supplier/customer (a "Sundry Creditor/Debtor"
+    # ledger) — see [[party-ledger-per-party]] and core.party_ledgers. Party
+    # ledgers are ALWAYS shared (location_id NULL) so a party has ONE
+    # consolidated statement across stores; the CheckConstraint below enforces
+    # that. Blank/NULL for every ordinary account.
+    party_type = models.CharField(
+        max_length=10, blank=True, default='',
+        choices=[('', '—'), ('Supplier', 'Supplier'), ('Customer', 'Customer')],
+        help_text='Set on per-party ledger leaves; blank for ordinary accounts.',
+    )
+    party_id = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text='Inventory supplier/customer PK this ledger represents.',
+    )
     is_leaf = models.BooleanField(default=True)
     is_active = models.BooleanField(default=True)
     description = models.TextField(blank=True)
@@ -93,6 +108,10 @@ class ChartOfAccount(models.Model):
 
     class Meta:
         ordering = ['account_code']
+        indexes = [
+            models.Index(fields=['party_type', 'party_id']),
+            models.Index(fields=['account_subtype', 'location_id']),
+        ]
         constraints = [
             # nulls_distinct=False so two template rows (location_id IS NULL)
             # with the same code are also blocked — there should only ever be
@@ -101,6 +120,18 @@ class ChartOfAccount(models.Model):
                 fields=['account_code', 'location_id'],
                 name='unique_account_code_per_location',
                 nulls_distinct=False,
+            ),
+            # One ledger per party. Partial: only constrains party leaves.
+            models.UniqueConstraint(
+                fields=['party_type', 'party_id'],
+                condition=models.Q(party_id__isnull=False),
+                name='uniq_party_ledger',
+            ),
+            # Party ledgers are shared-only: a row may carry party_id OR
+            # location_id, never both. Guarantees the consolidated statement.
+            models.CheckConstraint(
+                condition=models.Q(party_id__isnull=True) | models.Q(location_id__isnull=True),
+                name='party_ledger_shared_only',
             ),
         ]
 

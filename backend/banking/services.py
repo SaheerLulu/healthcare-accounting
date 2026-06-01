@@ -295,6 +295,11 @@ def categorize_transaction(txn: BankTransaction, *, account_id: int,
         JournalEntryLine.objects.create(entry=entry, account=bank_gl, credit=abs_amt)
 
     if party_type in ('Customer', 'Supplier') and party_id:
+        # If categorised against a generic receivable/payable control, redirect
+        # to the party's own ledger so the GL line matches the party tag.
+        if other.account_subtype in ('Receivable', 'Payable'):
+            from core.party_ledgers import resolve_party_account
+            line2['account'] = resolve_party_account(party_type, party_id, other)
         line2['party_type'] = party_type
         line2['party_id'] = party_id
     JournalEntryLine.objects.create(**line2)

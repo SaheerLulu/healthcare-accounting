@@ -6,6 +6,33 @@ from .models import (
 )
 
 
+def _route_party_line(line_data):
+    """Redirect a party-tagged line that points at the generic Trade
+    Payables/Receivables control onto that party's own ledger (Tally Sundry
+    Creditor/Debtor leaf). Lines that already name a party leaf, or point at a
+    non-control account, are left exactly as chosen — the model invariant then
+    guarantees the leaf and the tag agree. Mutates a copy and returns it.
+    """
+    from core.models import AccountMapping
+    from core.party_ledgers import resolve_party_account
+
+    ptype = line_data.get('party_type')
+    pid = line_data.get('party_id')
+    acct = line_data.get('account')
+    if ptype not in ('Supplier', 'Customer') or not pid or acct is None:
+        return line_data
+    if getattr(acct, 'party_id', None) is not None:
+        return line_data  # already a party leaf — invariant will validate it
+    is_control = AccountMapping.objects.filter(
+        account=acct, key__in=('TRADE_PAYABLES', 'TRADE_RECEIVABLES'),
+    ).exists()
+    if not is_control:
+        return line_data
+    routed = dict(line_data)
+    routed['account'] = resolve_party_account(ptype, pid, acct)
+    return routed
+
+
 class BillReferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = BillReference
@@ -185,7 +212,7 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
 
         entry = JournalEntry.objects.create(**validated_data)
         for line_data in lines_data:
-            JournalEntryLine.objects.create(entry=entry, **line_data)
+            JournalEntryLine.objects.create(entry=entry, **_route_party_line(line_data))
         return entry
 
     def update(self, instance, validated_data):
@@ -198,7 +225,7 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
         if lines_data is not None:
             instance.lines.all().delete()
             for line_data in lines_data:
-                JournalEntryLine.objects.create(entry=instance, **line_data)
+                JournalEntryLine.objects.create(entry=instance, **_route_party_line(line_data))
         return instance
 
 

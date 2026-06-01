@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Loader2, Mail, Phone, MapPin, Plus, Trash2, Download, Pencil, Wallet, Banknote, Receipt as ReceiptIcon, FileStack } from 'lucide-react'
+import { ArrowLeft, Loader2, Mail, Phone, MapPin, Plus, Trash2, Download, Pencil, Wallet, Banknote, Receipt as ReceiptIcon, FileStack, BookOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getSupplierDetail, getCustomerDetail,
@@ -80,6 +80,16 @@ export default function PartyDetailPage({ partyType }: { partyType: PartyType })
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Open this party's general-ledger account (Sundry Creditor/Debtor)"
+            onClick={() => navigate(
+              `/reports/ledger/${partyType === 'Supplier' ? `2105-S${partyId}` : `1125-C${partyId}`}`
+            )}
+          >
+            <BookOpen size={14} /> GL Ledger
+          </Button>
           {partyType === 'Supplier' ? (
             <>
               <Button
