@@ -93,17 +93,17 @@ def post_opening_balance_je(ob, *, user=None):
     )
 
     party_tag = dict(party_type=ob.party_type, party_id=ob.party_id)
-    if ob.party_type == 'Customer':
-        # Debtor: customer owes us → Dr receivable ledger, Cr OBE.
-        ledger_line = dict(debit=amount) if amount > 0 else dict(credit=-amount)
-        obe_line = dict(credit=amount) if amount > 0 else dict(debit=-amount)
-    else:
-        # Creditor: we owe supplier → Cr payable ledger, Dr OBE.
-        ledger_line = dict(credit=amount) if amount > 0 else dict(debit=-amount)
-        obe_line = dict(debit=amount) if amount > 0 else dict(credit=-amount)
-
-    JournalEntryLine.objects.create(entry=entry, account=ledger, **ledger_line, **party_tag)
-    JournalEntryLine.objects.create(entry=entry, account=obe, **obe_line)
+    # A positive customer (debtor) balance debits the ledger / credits OBE; a
+    # positive supplier (creditor) balance is the reverse. A negative amount
+    # flips the side — hence the XNOR of "is debtor" and "is positive".
+    abs_amt = abs(amount)
+    ledger_debits = (ob.party_type == 'Customer') == (amount > 0)
+    JournalEntryLine.objects.create(
+        entry=entry, account=ledger, **party_tag,
+        **({'debit': abs_amt} if ledger_debits else {'credit': abs_amt}))
+    JournalEntryLine.objects.create(
+        entry=entry, account=obe,
+        **({'credit': abs_amt} if ledger_debits else {'debit': abs_amt}))
 
     entry.post()
     ob.journal_entry = entry

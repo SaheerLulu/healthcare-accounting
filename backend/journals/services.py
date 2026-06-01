@@ -54,6 +54,21 @@ class JournalAutoGenerationService:
         except ValueError:
             return None
 
+    def _sale_settlement(self, payment_type, customer_id, loc):
+        """Debit account + party tag for the customer side of a sale (shared by
+        POS and B2B). A CREDIT sale to a named customer hits that customer's own
+        ledger and is party-tagged so AR aging is accurate; cash / walk-in (or a
+        credit sale with no customer) hits Cash / the generic control, untagged
+        (a tag on a settled line would inflate AR aging)."""
+        if payment_type == 'Credit':
+            account = resolve_party_account(
+                'Customer', customer_id, self._acct('TRADE_RECEIVABLES', loc))
+            tag = dict(party_type='Customer', party_id=customer_id) if customer_id else {}
+        else:
+            account = self._acct('CASH', loc)
+            tag = {}
+        return account, tag
+
     def _entry_exists(self, reference_type, reference_id):
         return JournalEntry.objects.filter(
             reference_type=reference_type,
@@ -331,21 +346,8 @@ class JournalAutoGenerationService:
             location_id=loc,
         )
 
-        # Walk-in / cash POS posts to Cash with no party. A CREDIT POS sale to a
-        # named customer posts to that customer's ledger and carries the party
-        # tag (so AR aging is accurate); a credit sale with no customer (rare)
-        # falls back to the generic 1130 control, untagged.
-        is_credit = pos.payment_type == 'Credit'
-        pos_customer_id = pos.customer_id if is_credit else None
-        if is_credit:
-            debit_ac = resolve_party_account(
-                'Customer', pos_customer_id, self._acct('TRADE_RECEIVABLES', loc))
-        else:
-            debit_ac = self._acct('CASH', loc)
-
+        debit_ac, ar_party = self._sale_settlement(pos.payment_type, pos.customer_id, loc)
         if total > 0:
-            ar_party = (dict(party_type='Customer', party_id=pos_customer_id)
-                        if pos_customer_id else {})
             JournalEntryLine.objects.create(
                 entry=entry, account=debit_ac, debit=total, **ar_party)
         if sales_amount > 0:
@@ -421,25 +423,9 @@ class JournalAutoGenerationService:
         )
 
         if total > 0:
-            if order.payment_type == 'Credit':
-                JournalEntryLine.objects.create(
-                    entry=entry,
-                    account=resolve_party_account(
-                        'Customer', order.customer_id,
-                        self._acct('TRADE_RECEIVABLES', loc)),
-                    debit=total,
-                    party_type='Customer',
-                    party_id=order.customer_id,
-                )
-            else:
-                # Cash/Bank/Card/UPI etc. — paid at invoice time, no receivable.
-                # Don't tag party_type here: PartyOutstandingView aggregates by
-                # party regardless of account, so a tag would inflate AR.
-                JournalEntryLine.objects.create(
-                    entry=entry,
-                    account=self._acct('CASH', loc),
-                    debit=total,
-                )
+            debit_ac, ar_party = self._sale_settlement(order.payment_type, order.customer_id, loc)
+            JournalEntryLine.objects.create(
+                entry=entry, account=debit_ac, debit=total, **ar_party)
         if sales_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_B2B', loc), credit=sales_amount)
         if cgst > 0:

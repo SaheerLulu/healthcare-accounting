@@ -6,14 +6,23 @@ from .models import (
 )
 
 
-def _route_party_line(line_data):
+def _trade_control_ids():
+    """Account ids mapped to the Trade Payables/Receivables control, any
+    location. Fetched once per save so line routing is a set membership test
+    rather than a query per line."""
+    from core.models import AccountMapping
+    return set(AccountMapping.objects.filter(
+        key__in=('TRADE_PAYABLES', 'TRADE_RECEIVABLES'),
+    ).values_list('account_id', flat=True))
+
+
+def _route_party_line(line_data, control_ids):
     """Redirect a party-tagged line that points at the generic Trade
     Payables/Receivables control onto that party's own ledger (Tally Sundry
     Creditor/Debtor leaf). Lines that already name a party leaf, or point at a
     non-control account, are left exactly as chosen — the model invariant then
     guarantees the leaf and the tag agree. Mutates a copy and returns it.
     """
-    from core.models import AccountMapping
     from core.party_ledgers import resolve_party_account
 
     ptype = line_data.get('party_type')
@@ -23,11 +32,8 @@ def _route_party_line(line_data):
         return line_data
     if getattr(acct, 'party_id', None) is not None:
         return line_data  # already a party leaf — invariant will validate it
-    is_control = AccountMapping.objects.filter(
-        account=acct, key__in=('TRADE_PAYABLES', 'TRADE_RECEIVABLES'),
-    ).exists()
-    if not is_control:
-        return line_data
+    if acct.id not in control_ids:
+        return line_data  # explicit non-control choice (advance, sub-account) — respect it
     routed = dict(line_data)
     routed['account'] = resolve_party_account(ptype, pid, acct)
     return routed
@@ -211,8 +217,9 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
             validated_data['created_by'] = request.user
 
         entry = JournalEntry.objects.create(**validated_data)
+        control_ids = _trade_control_ids()
         for line_data in lines_data:
-            JournalEntryLine.objects.create(entry=entry, **_route_party_line(line_data))
+            JournalEntryLine.objects.create(entry=entry, **_route_party_line(line_data, control_ids))
         return entry
 
     def update(self, instance, validated_data):
@@ -224,8 +231,9 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
         instance.save()
         if lines_data is not None:
             instance.lines.all().delete()
+            control_ids = _trade_control_ids()
             for line_data in lines_data:
-                JournalEntryLine.objects.create(entry=instance, **_route_party_line(line_data))
+                JournalEntryLine.objects.create(entry=instance, **_route_party_line(line_data, control_ids))
         return instance
 
 

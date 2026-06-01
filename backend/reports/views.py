@@ -13,34 +13,19 @@ from core.mixins import get_active_location
 
 
 def resolve_ledger_account(request):
-    """Resolve the ChartOfAccount a ledger view is asking for.
+    """Resolve the ChartOfAccount a ledger view is asking for by ?account_code=.
 
-    Accepts (in priority order): ?account_id=, ?party_type=&party_id=, or
-    ?account_code=. Code lookup prefers the row scoped to the active location,
-    falling back to the shared (NULL-location) template — so it stays
-    unambiguous under per-location clones and per-party leaves. Returns
-    (account, error_response): exactly one is non-None.
+    Prefers the row scoped to the active location, falling back to the shared
+    (NULL-location) template — so it stays unambiguous under per-location clones
+    and per-party leaves (whose codes like "2105-S5" are globally unique anyway).
+    Returns (account, error_response): exactly one is non-None.
     """
-    account_id = request.query_params.get('account_id')
-    party_type = request.query_params.get('party_type')
-    party_id = request.query_params.get('party_id')
     account_code = request.query_params.get('account_code')
-
-    if account_id:
-        acc = ChartOfAccount.objects.filter(pk=account_id).first()
-        return (acc, None) if acc else (None, Response({'error': 'Account not found'}, status=404))
-
-    if party_type and party_id:
-        from core.party_ledgers import get_party_ledger
-        acc = get_party_ledger(party_type, party_id)
-        return (acc, None) if acc else (None, Response({'error': 'Party ledger not found'}, status=404))
-
     if not account_code:
-        return None, Response({'error': 'account_code (or account_id / party_type+party_id) is required'}, status=400)
+        return None, Response({'error': 'account_code is required'}, status=400)
 
     location = get_active_location(request)
     qs = ChartOfAccount.objects.filter(account_code=account_code)
-    # Prefer the active-location row, else the shared template; deterministic.
     acc = (qs.filter(location_id=location.id).first() if location else None) \
         or qs.filter(location_id__isnull=True).first() \
         or qs.order_by('location_id').first()
