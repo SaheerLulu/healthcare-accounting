@@ -76,6 +76,26 @@ class BankTransactionViewSet(viewsets.ModelViewSet):
         )
         log_action('CREATE', 'BankTransaction', instance.pk, str(instance), request=self.request)
 
+    def perform_update(self, serializer):
+        # A matched (reconciled) line's reconciliation-critical fields are frozen
+        # — editing amount/date/account silently breaks the match invariant
+        # (the report would still claim the account is reconciled). Unmatch first.
+        instance = self.get_object()
+        if instance.status == 'matched':
+            from rest_framework.exceptions import ValidationError
+            data = serializer.validated_data
+            for field, current in (
+                ('amount', instance.amount),
+                ('date', instance.date),
+                ('bank_account', instance.bank_account),
+            ):
+                if field in data and data[field] != current:
+                    raise ValidationError(
+                        'Unmatch this transaction before changing its amount, date or account.'
+                    )
+        instance = serializer.save()
+        log_action('UPDATE', 'BankTransaction', instance.pk, str(instance), request=self.request)
+
     def perform_destroy(self, instance):
         if instance.status == 'matched':
             from rest_framework.exceptions import ValidationError

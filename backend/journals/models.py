@@ -23,6 +23,7 @@ class JournalEntry(models.Model):
         ('PurchaseReturn', 'Purchase Return'),
         ('RCM', 'RCM Entry'),
         ('PartyOpeningBalance', 'Party Opening Balance'),
+        ('OpeningCarryForward', 'Opening Carry-Forward'),
         ('Manual', 'Manual Entry'),
     ]
 
@@ -256,6 +257,16 @@ class JournalEntryLine(models.Model):
             raise ValidationError('A line cannot have both debit and credit.')
 
     def save(self, *args, **kwargs):
+        # Sign invariant — enforced HERE (not just in clean()) because nothing
+        # on the service-layer create path calls full_clean(), so clean() alone
+        # was dead code. A balanced-but-malformed line (negative amounts, or
+        # both sides set) otherwise posts silently: e.g. negative payroll net
+        # pay, negative petty-cash replenishment, negative-cost assets — the
+        # entry still satisfies _assert_balanced, so the corruption is invisible.
+        if self.debit < 0 or self.credit < 0:
+            raise ValidationError('Debit and Credit must be non-negative.')
+        if self.debit > 0 and self.credit > 0:
+            raise ValidationError('A line cannot have both a debit and a credit.')
         # Postings must hit a leaf account, otherwise the row drops out of the
         # P&L (which sums leaves only) while still affecting the Balance Sheet's
         # net-income calc — the two reports would silently disagree. Enforce

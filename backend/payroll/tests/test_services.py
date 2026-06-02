@@ -42,11 +42,20 @@ class SalaryComputationTests(TestCase):
         calc = svc.calculate_salary(emp, struct)
 
         self.assertEqual(calc['gross_salary'], Decimal('52850'))
-        self.assertEqual(calc['pf_employee'], Decimal('3600.00'))
+        # PF on basic capped at the ₹15,000 EPF ceiling: 12% × 15,000 = 1,800
+        # (basic is 30,000, but the statutory ceiling applies).
+        self.assertEqual(calc['pf_employee'], Decimal('1800.00'))
         # net = gross - PF emp - ESI emp - PT
         self.assertEqual(calc['net_salary'],
-                         Decimal('52850') - Decimal('3600') -
+                         Decimal('52850') - Decimal('1800') -
                          Decimal('396.38') - Decimal('200'))
+
+    def test_pf_below_ceiling_is_not_capped(self):
+        # basic 10,000 < the 15,000 ceiling → PF = 12% × 10,000 = 1,200 (no cap).
+        emp = self._employee_with_structure(basic_salary=Decimal('10000'))
+        svc = PayrollService()
+        calc = svc.calculate_salary(emp, emp.salary_structures.first())
+        self.assertEqual(calc['pf_employee'], Decimal('1200.00'))
 
     def test_process_payroll_creates_run_and_je(self):
         self._employee_with_structure()

@@ -26,25 +26,31 @@ class LoanViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        from datetime import timedelta
-        instance = serializer.save(
-            created_by=self.request.user if self.request.user.is_authenticated else None,
-        )
-        # Compute EMI + end_date now that we have the values
-        instance.emi_amount = compute_emi(
-            instance.principal_amount, instance.interest_rate_pct,
-            instance.tenure_months,
-        )
-        # end_date = start + tenure months (last installment due date)
         from calendar import monthrange
-        y, m = instance.start_date.year, instance.start_date.month
-        m += instance.tenure_months
+
+        # emi_amount and end_date are NOT NULL, no DB default, and read-only on
+        # the serializer — so they are absent from validated_data. Saving first
+        # (the old order) inserted NULL into them and raised IntegrityError →
+        # HTTP 500 on EVERY loan create. Compute them from the validated input
+        # and pass them into save() so the first INSERT already carries values.
+        data = serializer.validated_data
+        emi_amount = compute_emi(
+            data['principal_amount'], data['interest_rate_pct'],
+            data['tenure_months'],
+        )
+        emi_day = data.get('emi_day', 5)
+        y, m = data['start_date'].year, data['start_date'].month
+        m += data['tenure_months']
         y += (m - 1) // 12
         m = ((m - 1) % 12) + 1
         last_day = monthrange(y, m)[1]
-        from datetime import date as date_cls
-        instance.end_date = date_cls(y, m, min(instance.emi_day, last_day))
-        instance.save(update_fields=['emi_amount', 'end_date'])
+        end_date = date_cls(y, m, min(emi_day, last_day))
+
+        instance = serializer.save(
+            created_by=self.request.user if self.request.user.is_authenticated else None,
+            emi_amount=emi_amount,
+            end_date=end_date,
+        )
 
         # Generate the amortization schedule immediately
         generate_schedule(instance)

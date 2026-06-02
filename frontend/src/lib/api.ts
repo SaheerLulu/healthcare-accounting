@@ -220,6 +220,8 @@ export interface JournalLine {
   narration?: string
   party_type?: 'Supplier' | 'Customer' | 'None' | null
   party_id?: number | null
+  /** Tally bill-wise allocations attached to this line (read-only from the API). */
+  bill_references?: BillReference[]
 }
 
 export interface JournalEntry {

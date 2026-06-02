@@ -247,6 +247,35 @@ class ManualJEAutoRouteTests(TestCase):
         cust_line = entry.lines.get(party_id=33)
         self.assertEqual(cust_line.account.account_code, '1125-C33')
 
+    def _wrong_party_payload(self, ledger_id, tagged_party_id):
+        cash = AccountMapping.get_account('CASH')
+        return {
+            'date': '2026-04-15', 'voucher_type': 'RECEIPT',
+            'reference_type': 'Manual', 'location_id': 1,
+            'lines': [
+                {'account': ledger_id, 'debit': '0', 'credit': '250',
+                 'party_type': 'Customer', 'party_id': tagged_party_id},
+                {'account': cash.id, 'debit': '250', 'credit': '0', 'party_type': 'None'},
+            ],
+        }
+
+    def test_serializer_rejects_ledger_for_a_different_party(self):
+        # M2: header party 44 but the line posts to Customer 55's own ledger —
+        # must be rejected (not silently rerouted to 55).
+        from journals.serializers import JournalEntryCreateSerializer
+        ledger_b = get_or_create_party_ledger('Customer', 55)
+        ser = JournalEntryCreateSerializer(data=self._wrong_party_payload(ledger_b.id, 44))
+        self.assertFalse(ser.is_valid())
+        self.assertIn('lines', ser.errors)
+        # Nothing posted to ledger 55.
+        self.assertFalse(JournalEntryLine.objects.filter(account=ledger_b).exists())
+
+    def test_serializer_accepts_ledger_for_matching_party(self):
+        from journals.serializers import JournalEntryCreateSerializer
+        ledger = get_or_create_party_ledger('Customer', 55)
+        ser = JournalEntryCreateSerializer(data=self._wrong_party_payload(ledger.id, 55))
+        self.assertTrue(ser.is_valid(), ser.errors)
+
 
 @ENABLED
 class OpeningBalanceGLTests(TestCase):

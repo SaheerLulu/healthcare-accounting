@@ -48,5 +48,26 @@ class LoanSerializer(serializers.ModelSerializer):
                             'disbursement_journal_entry',
                             'created_at', 'updated_at']
 
+    def validate_liability_account(self, account):
+        # The disbursement credits this account and every EMI's principal debits
+        # it. The UI used free-text GL-ID inputs, so a transposed/wrong id booked
+        # loan principal into a revenue/expense account for the life of the loan.
+        if account.account_type != 'LIABILITY':
+            raise serializers.ValidationError(
+                f'Loan liability account must be a LIABILITY account, not {account.account_type}.'
+            )
+        if not account.is_leaf:
+            raise serializers.ValidationError('Loan liability account must be a leaf account.')
+        return account
+
+    def validate_interest_expense_account(self, account):
+        if account.account_type != 'EXPENSE':
+            raise serializers.ValidationError(
+                f'Interest expense account must be an EXPENSE account, not {account.account_type}.'
+            )
+        if not account.is_leaf:
+            raise serializers.ValidationError('Interest expense account must be a leaf account.')
+        return account
+
     def get_outstanding_principal(self, obj):
         return str(obj.outstanding_principal)

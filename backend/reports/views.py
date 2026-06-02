@@ -53,7 +53,7 @@ class TrialBalanceView(APIView):
             end_date = fy_end.isoformat()
 
         lines_qs = JournalEntryLine.objects.filter(
-            entry__is_posted=True,
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
             entry__date__range=[start_date, end_date]
         )
         if location:
@@ -130,7 +130,7 @@ class ProfitLossView(APIView):
             end_date = fy_end.isoformat()
 
         lines_qs = JournalEntryLine.objects.filter(
-            entry__is_posted=True,
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
             entry__date__range=[start_date, end_date]
         )
         if location:
@@ -229,12 +229,17 @@ class BalanceSheetView(APIView):
         location = get_active_location(request)
 
         lines_qs = JournalEntryLine.objects.filter(
-            entry__is_posted=True,
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
             entry__date__lte=as_of_date
-        )
+        ).exclude(entry__reference_type='OpeningCarryForward')
         if location:
             lines_qs = lines_qs.filter(entry__location_id=location.id)
 
+        # The year-end opening carry-forward JV restates Asset/Liability/Equity
+        # balances the continuous ledger already carries to this date; counting
+        # both would double every balance. It is excluded above. (Windowed
+        # reports like the Trial Balance keep it as their brought-forward
+        # opening, so it is filtered here, not at the source.)
         def get_section_balances(account_type):
             accounts = ChartOfAccount.objects.filter(
                 account_type=account_type, is_leaf=True
@@ -319,15 +324,18 @@ class LedgerView(APIView):
 
         base_qs = JournalEntryLine.objects.filter(
             account=account,
-            entry__is_posted=True
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False
         ).select_related('entry')
 
         if location:
             base_qs = base_qs.filter(entry__location_id=location.id)
 
-        # Phase 5B: Cursor-based pagination with opening balance
-        if page and start_date:
-            # Compute opening balance from entries before start_date
+        # Opening balance = net of all entries BEFORE start_date, whenever a
+        # start_date is given — not only on the paginated path. The drill-down
+        # calls this without a page param, so the brought-forward balance used to
+        # be forced to 0, understating every running balance and the closing
+        # balance, and disagreeing with the CSV/XLSX/PDF export.
+        if start_date:
             opening_agg = base_qs.filter(entry__date__lt=start_date).aggregate(
                 dr=Sum('debit'), cr=Sum('credit')
             )
@@ -428,7 +436,7 @@ class LedgerExportView(APIView):
             return error
 
         base_qs = JournalEntryLine.objects.filter(
-            account=account, entry__is_posted=True,
+            account=account, entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
         ).select_related('entry')
         if location:
             base_qs = base_qs.filter(entry__location_id=location.id)
@@ -546,6 +554,30 @@ class LedgerExportView(APIView):
         return response
 
 
+def _age_open_invoices(invoices, payments, as_of):
+    """FIFO-apply `payments` to the oldest invoices and bucket only the REMAINING
+    open amount of each invoice by its age. `invoices` = iterable of (date, amount).
+
+    Aging buckets must net partial payments, otherwise they sum to the gross
+    invoiced amount while total-outstanding is net — overstating what's overdue
+    by the amount already settled.
+    """
+    buckets = {'0_30': Decimal('0'), '31_60': Decimal('0'),
+               '61_90': Decimal('0'), '90_plus': Decimal('0')}
+    remaining = payments
+    for inv_date, amount in sorted(invoices, key=lambda x: x[0]):
+        if remaining >= amount:
+            remaining -= amount
+            continue
+        open_amount = amount - remaining
+        remaining = Decimal('0')
+        days = (as_of - inv_date).days
+        key = ('0_30' if days <= 30 else '31_60' if days <= 60
+               else '61_90' if days <= 90 else '90_plus')
+        buckets[key] += open_amount
+    return buckets
+
+
 class ReceivablesAgingView(APIView):
     def get(self, request):
         as_of_date = request.query_params.get('date', date.today().isoformat())
@@ -554,7 +586,7 @@ class ReceivablesAgingView(APIView):
         as_of = date.fromisoformat(as_of_date)
 
         lines_qs = JournalEntryLine.objects.filter(
-            entry__is_posted=True,
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
             entry__date__lte=as_of_date,
             party_type='Customer',
             account__account_subtype='Receivable'
@@ -585,17 +617,9 @@ class ReceivablesAgingView(APIView):
             except CustomerRO.DoesNotExist:
                 name = f'Customer #{customer_id}'
 
-            aging = {'0_30': Decimal('0'), '31_60': Decimal('0'), '61_90': Decimal('0'), '90_plus': Decimal('0')}
-            for inv_date, amount in customer_dates.get(customer_id, []):
-                days = (as_of - inv_date).days
-                if days <= 30:
-                    aging['0_30'] += amount
-                elif days <= 60:
-                    aging['31_60'] += amount
-                elif days <= 90:
-                    aging['61_90'] += amount
-                else:
-                    aging['90_plus'] += amount
+            invoices = customer_dates.get(customer_id, [])
+            payments = sum((amt for _, amt in invoices), Decimal('0')) - balance
+            aging = _age_open_invoices(invoices, payments, as_of)
 
             rows.append({
                 'customer_id': customer_id,
@@ -640,7 +664,7 @@ def _open_party_invoices(request, *, party_type):
     net_key = 'supplier_outstanding' if is_supplier else 'customer_outstanding'
 
     base = JournalEntryLine.objects.filter(
-        entry__is_posted=True, entry__date__lte=as_of_date,
+        entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of_date,
         party_type=party_type, account__account_subtype=subtype,
     )
     if location:
@@ -742,7 +766,7 @@ class PayablesAgingView(APIView):
         as_of = date.fromisoformat(as_of_date)
 
         lines_qs = JournalEntryLine.objects.filter(
-            entry__is_posted=True,
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
             entry__date__lte=as_of_date,
             party_type='Supplier',
             account__account_subtype='Payable'
@@ -773,17 +797,9 @@ class PayablesAgingView(APIView):
             except SupplierRO.DoesNotExist:
                 name = f'Supplier #{supplier_id}'
 
-            aging = {'0_30': Decimal('0'), '31_60': Decimal('0'), '61_90': Decimal('0'), '90_plus': Decimal('0')}
-            for inv_date, amount in supplier_dates.get(supplier_id, []):
-                days = (as_of - inv_date).days
-                if days <= 30:
-                    aging['0_30'] += amount
-                elif days <= 60:
-                    aging['31_60'] += amount
-                elif days <= 90:
-                    aging['61_90'] += amount
-                else:
-                    aging['90_plus'] += amount
+            invoices = supplier_dates.get(supplier_id, [])
+            payments = sum((amt for _, amt in invoices), Decimal('0')) - balance
+            aging = _age_open_invoices(invoices, payments, as_of)
 
             rows.append({
                 'supplier_id': supplier_id,
@@ -825,7 +841,7 @@ def _build_book_response(account_subtype, request):
 
     for account in accounts:
         base_qs = JournalEntryLine.objects.filter(
-            account=account, entry__is_posted=True
+            account=account, entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False
         ).select_related('entry')
         if location:
             base_qs = base_qs.filter(entry__location_id=location.id)
@@ -1082,12 +1098,12 @@ class PartyOutstandingView(APIView):
 
         if party_type == 'Customer':
             lines_qs = JournalEntryLine.objects.filter(
-                entry__is_posted=True, entry__date__lte=as_of_date,
+                entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of_date,
                 party_type='Customer',
             ).select_related('entry')
         else:
             lines_qs = JournalEntryLine.objects.filter(
-                entry__is_posted=True, entry__date__lte=as_of_date,
+                entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of_date,
                 party_type='Supplier',
             ).select_related('entry')
 
@@ -1095,36 +1111,25 @@ class PartyOutstandingView(APIView):
             lines_qs = lines_qs.filter(entry__location_id=location.id)
 
         party_data = defaultdict(lambda: {
-            'opening': Decimal('0'), 'invoices': Decimal('0'),
-            'payments': Decimal('0'), 'closing': Decimal('0'),
-            'aging': {'0_30': Decimal('0'), '31_60': Decimal('0'), '61_90': Decimal('0'), '90_plus': Decimal('0')},
+            'invoices': [],                  # (date, amount) gross invoices
+            'invoices_total': Decimal('0'),
+            'payments': Decimal('0'),
         })
 
         for line in lines_qs:
             pid = line.party_id
             if not pid:
                 continue
-
-            if party_type == 'Customer':
-                net = line.debit - line.credit
-                if line.debit > 0:
-                    party_data[pid]['invoices'] += line.debit
-                    days = (as_of - line.entry.date).days
-                    bucket = '0_30' if days <= 30 else '31_60' if days <= 60 else '61_90' if days <= 90 else '90_plus'
-                    party_data[pid]['aging'][bucket] += line.debit
-                if line.credit > 0:
-                    party_data[pid]['payments'] += line.credit
-            else:
-                net = line.credit - line.debit
-                if line.credit > 0:
-                    party_data[pid]['invoices'] += line.credit
-                    days = (as_of - line.entry.date).days
-                    bucket = '0_30' if days <= 30 else '31_60' if days <= 60 else '61_90' if days <= 90 else '90_plus'
-                    party_data[pid]['aging'][bucket] += line.credit
-                if line.debit > 0:
-                    party_data[pid]['payments'] += line.debit
-
-            party_data[pid]['closing'] += net if party_type == 'Customer' else (line.credit - line.debit)
+            # Customer: invoice = Dr, payment = Cr. Supplier: the reverse.
+            inv_amt, pay_amt = (
+                (line.debit, line.credit) if party_type == 'Customer'
+                else (line.credit, line.debit)
+            )
+            if inv_amt > 0:
+                party_data[pid]['invoices'].append((line.entry.date, inv_amt))
+                party_data[pid]['invoices_total'] += inv_amt
+            if pay_amt > 0:
+                party_data[pid]['payments'] += pay_amt
 
         # Resolve party names
         if party_type == 'Customer':
@@ -1138,7 +1143,8 @@ class PartyOutstandingView(APIView):
 
         rows = []
         for pid, data in party_data.items():
-            if data['closing'] <= 0:
+            closing = data['invoices_total'] - data['payments']
+            if closing <= 0:
                 continue
             try:
                 party = model.objects.get(id=pid)
@@ -1146,17 +1152,18 @@ class PartyOutstandingView(APIView):
             except model.DoesNotExist:
                 name = f'{party_type} #{pid}'
 
+            aging = _age_open_invoices(data['invoices'], data['payments'], as_of)
             rows.append({
                 'party_id': pid,
                 'party_name': name,
-                'opening_balance': str(data['opening']),
-                'invoices': str(data['invoices']),
+                'opening_balance': '0',
+                'invoices': str(data['invoices_total']),
                 'payments': str(data['payments']),
-                'closing_balance': str(data['closing']),
-                'aging_0_30': str(data['aging']['0_30']),
-                'aging_31_60': str(data['aging']['31_60']),
-                'aging_61_90': str(data['aging']['61_90']),
-                'aging_90_plus': str(data['aging']['90_plus']),
+                'closing_balance': str(closing),
+                'aging_0_30': str(aging['0_30']),
+                'aging_31_60': str(aging['31_60']),
+                'aging_61_90': str(aging['61_90']),
+                'aging_90_plus': str(aging['90_plus']),
             })
 
         rows.sort(key=lambda x: Decimal(x['closing_balance']), reverse=True)
@@ -1359,7 +1366,7 @@ class MSMEComplianceReportView(APIView):
         # Aged payables: outstanding per supplier with the bill's accounting date
         lines = (JournalEntryLine.objects
                  .filter(party_type='Supplier', party_id__in=msme_index.keys(),
-                         entry__is_posted=True, entry__date__lte=as_of)
+                         entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of)
                  .select_related('entry', 'account'))
 
         # Build per-supplier outstanding bills (by entry, not invoice — JE is the
@@ -1454,10 +1461,10 @@ class FinancialRatiosView(APIView):
         location = get_active_location(request)
 
         period_lines = JournalEntryLine.objects.filter(
-            entry__is_posted=True, entry__date__gte=start, entry__date__lte=end,
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__gte=start, entry__date__lte=end,
         )
         as_of_lines = JournalEntryLine.objects.filter(
-            entry__is_posted=True, entry__date__lte=end,
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=end,
         )
         if location:
             period_lines = period_lines.filter(entry__location_id=location.id)
@@ -1650,7 +1657,7 @@ class ClosingStockReconciliationView(APIView):
                 status=400,
             )
         bq = JournalEntryLine.objects.filter(
-            account=cs_acct, entry__is_posted=True, entry__date__lte=as_of,
+            account=cs_acct, entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of,
         )
         if location:
             bq = bq.filter(entry__location_id=location.id)
@@ -1784,7 +1791,7 @@ class DepartmentalPLView(APIView):
         location = get_active_location(request)
 
         lines = (JournalEntryLine.objects
-                 .filter(entry__is_posted=True,
+                 .filter(entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
                          entry__date__gte=start, entry__date__lte=end,
                          account__account_type__in=('REVENUE', 'EXPENSE'))
                  .select_related('entry', 'account'))
@@ -1861,7 +1868,7 @@ class CashFlowStatementView(APIView):
         location = get_active_location(request)
 
         all_lines = JournalEntryLine.objects.filter(
-            entry__is_posted=True, entry__date__gte=start, entry__date__lte=end,
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__gte=start, entry__date__lte=end,
         ).select_related('entry', 'account')
         if location:
             all_lines = all_lines.filter(entry__location_id=location.id)
@@ -1925,7 +1932,7 @@ class CashFlowStatementView(APIView):
                 Decimal(str((line.debit - line.credit)))
                 for line in JournalEntryLine.objects.filter(
                     account__account_subtype__in=cash_subtypes,
-                    entry__is_posted=True, entry__date__lt=start,
+                    entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lt=start,
                 )
             ), Decimal('0'),
         )

@@ -61,6 +61,18 @@ def post_acquisition(asset: FixedAsset, *, payment_mode: str = 'bank',
     return je
 
 
+def _disposal_pl_account(asset: FixedAsset, *, is_gain: bool):
+    """The P&L account for a disposal gain/loss — a dedicated 'Profit/Loss on
+    Sale of Asset' GL (4950 / 5482) so disposal results don't pollute the
+    depreciation-expense total. Falls back to the class's depreciation-expense
+    account only when the dedicated GL is absent (preserves prior behaviour)."""
+    from core.models import ChartOfAccount
+    code = '4950' if is_gain else '5482'   # Profit / Loss on Sale of Asset
+    acct = ChartOfAccount.objects.filter(
+        account_code=code, is_leaf=True, is_active=True).first()
+    return acct or asset.asset_class.dep_expense_account
+
+
 def _slm_monthly(asset: FixedAsset) -> Decimal:
     base = asset.depreciable_base
     months = asset.effective_life_months or 1
@@ -68,12 +80,12 @@ def _slm_monthly(asset: FixedAsset) -> Decimal:
 
 
 def _wdv_monthly(asset: FixedAsset, *, as_of: date_cls) -> Decimal:
-    """WDV: depreciate (current NBV - salvage) by (annual rate / 12)."""
+    """WDV: depreciate (current NBV - residual) by (annual rate / 12)."""
     rate = asset.asset_class.wdv_rate_pct or Decimal('0')
     if rate <= 0:
         return Decimal('0.00')
     nbv = asset.net_book_value(as_of=as_of)
-    base = max(nbv - asset.salvage_value, Decimal('0.00'))
+    base = max(nbv - asset.effective_salvage_value, Decimal('0.00'))
     monthly = base * rate / Decimal('100') / Decimal('12')
     return monthly.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
@@ -93,9 +105,9 @@ def compute_monthly_depreciation(asset: FixedAsset, *, period: str) -> Decimal:
         amt = _wdv_monthly(asset, as_of=period_end)
     else:
         return Decimal('0.00')
-    # Don't depreciate below salvage value
+    # Don't depreciate below the residual (Schedule II — typically 5% of cost).
     nbv = asset.net_book_value(as_of=period_end)
-    headroom = max(nbv - asset.salvage_value, Decimal('0.00'))
+    headroom = max(nbv - asset.effective_salvage_value, Decimal('0.00'))
     return min(amt, headroom)
 
 
@@ -169,6 +181,13 @@ def dispose_asset(asset: FixedAsset, *, disposal_date: date_cls,
     """
     if asset.status != 'active':
         raise ValidationError(f'Asset is {asset.status}, cannot dispose.')
+    # Disposal credits the asset GL for its full cost — that credit must offset a
+    # real prior debit. Without a posted acquisition JE there was never one, so
+    # disposal would push the asset account negative and mis-state gain/loss.
+    if asset.acquisition_journal_entry_id is None:
+        raise ValidationError(
+            'Asset has no posted acquisition entry — post the acquisition before disposal.'
+        )
 
     proceeds = Decimal(str(proceeds))
     accum = asset.accumulated_depreciation(as_of=disposal_date)
@@ -196,17 +215,16 @@ def dispose_asset(asset: FixedAsset, *, disposal_date: date_cls,
         credit=asset.acquisition_cost,
     )
     if gain_loss != 0:
-        # P&L impact lands in the dep_expense_account by convention; in a more
-        # mature setup we'd add separate "Gain on Disposal" / "Loss on Disposal"
-        # accounts. Pragmatic for now.
+        # Gain/loss on disposal hits a dedicated Profit/Loss-on-Sale GL so it
+        # doesn't distort the period's depreciation expense.
         if gain_loss > 0:
             JournalEntryLine.objects.create(
-                entry=je, account=asset.asset_class.dep_expense_account,
-                credit=gain_loss,  # gain reduces depreciation expense
+                entry=je, account=_disposal_pl_account(asset, is_gain=True),
+                credit=gain_loss,
             )
         else:
             JournalEntryLine.objects.create(
-                entry=je, account=asset.asset_class.dep_expense_account,
+                entry=je, account=_disposal_pl_account(asset, is_gain=False),
                 debit=-gain_loss,
             )
     je.post()

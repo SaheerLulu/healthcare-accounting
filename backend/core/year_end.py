@@ -10,9 +10,33 @@ from .models import AccountingSettings, AccountMapping, ChartOfAccount
 from journals.models import JournalEntry, JournalEntryLine
 
 
+# Marker for the day-1 opening-balance JV so cumulative reports (Balance Sheet)
+# can exclude it — it restates balances the continuous ledger already carries,
+# and counting both doubles every Asset/Liability/Equity. Windowed reports
+# (Trial Balance) keep including it as their brought-forward opening.
+OPENING_CARRY_FORWARD = 'OpeningCarryForward'
+
+
 def fy_label(start_year: int) -> str:
     """2025 → '2025-26'."""
     return f"{start_year}-{str(start_year + 1)[-2:]}"
+
+
+def _carryforward_basis(acct, end_date):
+    """Closing balance of a Balance-Sheet account from the *real* continuous
+    ledger — i.e. excluding any prior opening carry-forward JV. Using
+    acct.get_balance() here would fold in last year's carry-forward (which sits
+    in the same account), so each successive close would compound the
+    restatement. Debit-positive, like get_balance()."""
+    from journals.models import JournalEntryLine
+    from django.db.models import Sum
+    agg = (JournalEntryLine.objects
+           .filter(account=acct, entry__is_posted=True,
+                   entry__is_optional=False, entry__is_memorandum=False,
+                   entry__date__lte=end_date)
+           .exclude(entry__reference_type=OPENING_CARRY_FORWARD)
+           .aggregate(dr=Sum('debit'), cr=Sum('credit')))
+    return (agg['dr'] or Decimal('0.00')) - (agg['cr'] or Decimal('0.00'))
 
 
 def fy_window(fy_start_year: int, fy_start_month: int = 4):
@@ -113,7 +137,7 @@ def close_fiscal_year(fy_start_year: int, *, location_id: int = None,
         total_dr = Decimal('0.00')
         total_cr = Decimal('0.00')
         for acct in bs_accounts:
-            bal = acct.get_balance(end_date=fy_end)
+            bal = _carryforward_basis(acct, fy_end)
             if bal == 0:
                 continue
             if bal > 0:  # debit balance (typical for Asset)
@@ -129,7 +153,7 @@ def close_fiscal_year(fy_start_year: int, *, location_id: int = None,
                 narration=f'Opening balances for FY {fy_label(fy_start_year + 1)} '
                           f'(carried forward from FY {label})',
                 voucher_type='JOURNAL',
-                reference_type='Manual',
+                reference_type=OPENING_CARRY_FORWARD,
                 location_id=location_id,
                 created_by=user,
             )
@@ -151,6 +175,20 @@ def close_fiscal_year(fy_start_year: int, *, location_id: int = None,
     settings.is_fy_closed = True
     settings.last_closed_fy = label
     settings.save()
+
+    # Lock every month of the closed FY. `last_closed_fy` only ever names the
+    # MOST-RECENT close, so closing a later FY used to silently re-open this one
+    # (assert_unlocked's FY check stopped matching it). These cumulative month
+    # locks keep every previously-closed year shut. get_or_create is idempotent
+    # and won't clobber an existing month lock (e.g. a filed-return lock).
+    from .period_lock import LockedPeriod
+    y, m = fy_start.year, fy_start.month
+    while date(y, m, 1) <= fy_end:
+        LockedPeriod.objects.get_or_create(
+            period=f'{y:04d}-{m:02d}',
+            defaults={'locked_by': user, 'reason': f'FY {label} year-end close'},
+        )
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
 
     return {
         'fy': label,

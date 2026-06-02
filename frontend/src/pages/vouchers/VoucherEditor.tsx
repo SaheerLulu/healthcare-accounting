@@ -178,14 +178,28 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
 
   // ─── Save / post ───────────────────────────────────────────────────────────
   function payload() {
+    const acctById = new Map(accounts.map((a) => [a.id, a]))
     const cleanLines = lines
       .filter((l) => l.account && parseFloat(l.amount) > 0)
-      .map((l) => ({
-        account: l.account!,
-        debit: l.side === 'Dr' ? l.amount : '0',
-        credit: l.side === 'Cr' ? l.amount : '0',
-        narration: l.narration || '',
-      }))
+      .map((l) => {
+        const sub = acctById.get(l.account!)?.account_subtype
+        // Attach the header party to receivable/payable lines so the backend
+        // routes the generic Trade control to that party's own ledger (and the
+        // line clears the party-required guard). Without this, a Credit/Debit
+        // Note or Sale/Purchase posting to the bare 1130/2110 control 400'd
+        // with no way for the user to fix it.
+        const partyTag =
+          config.partyType && partyId && (sub === 'Receivable' || sub === 'Payable')
+            ? { party_type: config.partyType, party_id: Number(partyId) }
+            : {}
+        return {
+          account: l.account!,
+          debit: l.side === 'Dr' ? l.amount : '0',
+          credit: l.side === 'Cr' ? l.amount : '0',
+          narration: l.narration || '',
+          ...partyTag,
+        }
+      })
     return {
       date,
       narration,
@@ -205,6 +219,32 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
     const data = payload()
     if (data.lines.length < 2) return 'At least two lines are required'
     if (!isBalanced) return `Debit ${formatCurrency(totals.dr)} ≠ Credit ${formatCurrency(totals.cr)}`
+    // A receivable/payable line needs a party so the backend can route it to
+    // that party's ledger; otherwise it 400s on the generic Trade control.
+    if (config.partyType && !partyId) {
+      const acctById = new Map(accounts.map((a) => [a.id, a]))
+      const hasPartyLine = lines.some((l) => {
+        if (!l.account || !(parseFloat(l.amount) > 0)) return false
+        const sub = acctById.get(l.account)?.account_subtype
+        return sub === 'Receivable' || sub === 'Payable'
+      })
+      if (hasPartyLine) {
+        return `Select a ${config.partyType.toLowerCase()} — the receivable/payable line must be tied to a party`
+      }
+    }
+    // Header party vs per-party-ledger line: a line whose chosen account is
+    // ANOTHER party's own ledger contradicts the header party. The backend would
+    // reject it; catch it here with a clear message instead of a silent reroute.
+    if (config.partyType && partyId) {
+      const acctById = new Map(accounts.map((a) => [a.id, a]))
+      for (const l of lines) {
+        if (!l.account || !(parseFloat(l.amount) > 0)) continue
+        const acc = acctById.get(l.account)
+        if (acc?.party_id && Number(acc.party_id) !== Number(partyId)) {
+          return `Line ledger "${acc.account_name}" belongs to a different ${config.partyType.toLowerCase()} than the one selected in the header — pick the matching ledger or change the party.`
+        }
+      }
+    }
     return null
   }
 

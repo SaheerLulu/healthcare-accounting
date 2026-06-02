@@ -188,6 +188,9 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ],
+    # Map Django ValidationError / PeriodLockedError raised below the serializer
+    # (in services & model saves) to clean 400s instead of leaking HTTP 500s.
+    'EXCEPTION_HANDLER': 'core.exception_handler.custom_exception_handler',
 }
 
 # ---------------------------------------------------------------------------

@@ -4,16 +4,21 @@ from django.db import transaction
 from django.db.models import Sum
 from inventory_reader.models import (
     PurchaseOrderRO,
+    PurchaseOrderLineRO,
     POSOrderRO,
     B2BSalesOrderRO,
     SalesReturnRO,
     PurchaseReturnRO,
     OpeningStockRO,
+    OpeningStockLineRO,
 )
 from core.models import AccountMapping, AccountingSettings
 from core.party_ledgers import resolve_party_account
 from decimal import ROUND_HALF_UP
-from core.gst_utils import compute_tax_split, detect_supply_type, back_calculate_taxable
+from core.gst_utils import (
+    compute_tax_split, detect_supply_type, back_calculate_taxable,
+    state_name_to_code,
+)
 from .models import JournalEntry, JournalEntryLine, RecurringJournal, RecurringJournalLine
 
 logger = logging.getLogger('journals')
@@ -75,24 +80,79 @@ class JournalAutoGenerationService:
             reference_id=reference_id,
         ).exists()
 
-    def _get_supply_type(self, counterparty_gstin):
-        """Detect supply type using company state (from GSTIN or state_code anchor)."""
+    def _get_supply_type(self, counterparty_gstin, counterparty_state_code=''):
+        """Detect supply type from the company state anchor and the counterparty.
+
+        Falls back to the counterparty's 2-digit state code when their GSTIN is
+        blank, so a no-GSTIN customer in another state is still classified
+        inter-state — EXACTLY as GSTR1Generator does. Without this fallback the
+        journal posted CGST+SGST (default intra) while the filed GSTR-1/3B showed
+        IGST, so the GL tax head silently diverged from the return.
+        """
         return detect_supply_type(
             self._settings.gstin,
             counterparty_gstin,
             self._settings.state_code,
+            counterparty_state_code,
         )
 
-    def _product_avg_cost(self, product_id):
-        """Weighted-average purchase rate per unit, in ₹. Returns 0 if the
-        product has never been purchased through the system.
+    @staticmethod
+    def _counterparty_state_code(party):
+        """2-digit GST place-of-supply code from a customer/supplier RO's
+        free-text state, or '' when the party or state is unknown."""
+        if party is None:
+            return ''
+        return state_name_to_code(getattr(party, 'state', '') or '')
+
+    def _product_avg_cost(self, product_id, location_id=None):
+        """Quantity-weighted average cost per unit, in ₹.
+
+        Weighs each receipt by the units it brought in and mirrors the exact
+        value `generate_purchase` capitalises into 1190 Closing Stock — i.e.
+        ``(quantity + free_qty) × purchase_rate × (1 − discount%)`` over
+        ``(quantity + free_qty)`` units — so relieving COGS at this cost drains
+        1190 back to zero once every received unit (free goods included) is sold.
+
+        Opening-stock seeding is folded in at its own rate, so a product that
+        was only ever seeded via Opening Stock (never purchased through a PO)
+        still costs out correctly instead of relieving zero. Scoped to
+        `location_id` when given so store A's sale uses store A's cost basis.
+
+        Returns 0 only when the product has neither purchase nor opening-stock
+        history at that scope. (A plain ``Avg('purchase_rate')`` — the prior
+        implementation — ignored quantity, free goods, discount and location,
+        overstating COGS up to tens of × on uneven lot sizes.)
         """
-        from django.db.models import Avg
-        from inventory_reader.models import PurchaseOrderLineRO
-        agg = PurchaseOrderLineRO.objects.filter(product_id=product_id).aggregate(
-            avg=Avg('purchase_rate'),
+        from django.db.models import Sum, F, DecimalField, ExpressionWrapper
+
+        money = DecimalField(max_digits=20, decimal_places=6)
+
+        # Purchase receipts: value net of trade discount, weighted by units in.
+        po_qs = PurchaseOrderLineRO.objects.filter(product_id=product_id)
+        if location_id is not None:
+            po_qs = po_qs.filter(purchase_order__location_id=location_id)
+        po_value = ExpressionWrapper(
+            (F('quantity') + F('free_qty')) * F('purchase_rate')
+            * (Decimal('100') - F('discount_percent')) / Decimal('100'),
+            output_field=money,
         )
-        return Decimal(str(agg['avg'] or 0))
+        po_units = ExpressionWrapper(
+            F('quantity') + F('free_qty'), output_field=money,
+        )
+        po = po_qs.aggregate(cost=Sum(po_value), qty=Sum(po_units))
+
+        # Opening stock: rate × quantity (no free goods / discount on this path).
+        os_qs = OpeningStockLineRO.objects.filter(product_id=product_id)
+        if location_id is not None:
+            os_qs = os_qs.filter(opening_stock__location_id=location_id)
+        os_value = ExpressionWrapper(F('quantity') * F('purchase_rate'), output_field=money)
+        os = os_qs.aggregate(cost=Sum(os_value), qty=Sum('quantity'))
+
+        total_cost = Decimal(str(po['cost'] or 0)) + Decimal(str(os['cost'] or 0))
+        total_qty = Decimal(str(po['qty'] or 0)) + Decimal(str(os['qty'] or 0))
+        if total_qty <= 0:
+            return Decimal('0')
+        return (total_cost / total_qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
 
     def _post_cogs(self, *, entry, lines):
         """Post Dr COGS / Cr Closing Stock for every line in a sale at avg cost.
@@ -112,7 +172,7 @@ class JournalAutoGenerationService:
             qty = Decimal(str(getattr(line, 'quantity', 0) or 0))
             if qty <= 0:
                 continue
-            cost = self._product_avg_cost(line.product_id)
+            cost = self._product_avg_cost(line.product_id, loc)
             value = (qty * cost).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             if value <= 0:
                 continue
@@ -297,14 +357,16 @@ class JournalAutoGenerationService:
         if pos.status not in ('confirmed', 'completed'):
             return None
 
-        # Customer state may be set if the customer is registered/B2C-Large.
+        # Resolve supply type from the customer's GSTIN, falling back to their
+        # state — so an inter-state walk-in with no GSTIN still posts IGST and
+        # the GL agrees with GSTR-1. No customer at all → intra (true OTC).
         supply_type = 'intra_state'
         if pos.customer_id:
             try:
                 from inventory_reader.models import CustomerRO
                 customer = CustomerRO.objects.get(id=pos.customer_id)
-                if customer.gst_no:
-                    supply_type = self._get_supply_type(customer.gst_no)
+                supply_type = self._get_supply_type(
+                    customer.gst_no, self._counterparty_state_code(customer))
             except Exception:
                 pass
 
@@ -335,6 +397,7 @@ class JournalAutoGenerationService:
         igst = igst.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
         total = pos.total_amount
+        order_discount = Decimal(str(pos.discount_amount or 0))
 
         loc = pos.location_id
         entry = JournalEntry.objects.create(
@@ -359,8 +422,26 @@ class JournalAutoGenerationService:
         if igst > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST', loc), credit=igst)
 
-        # Round-off absorbs sub-rupee drift between debit (gross) and sum of credits.
-        diff = total - (sales_amount + cgst + sgst + igst)
+        # Order-level discount. Sales + Output GST are booked at the full
+        # pre-discount line value, but the customer settles `total` (net of the
+        # bill-level discount). Book the gap to Discount Allowed so the entry
+        # balances while reported sales/output-tax stay gross. Without this leg
+        # a discount > ₹1 left the JE unbalanced beyond the round-off band, so
+        # entry.post() raised and the sync loop silently swallowed the whole
+        # sale — revenue, output GST and COGS all vanished from the books.
+        discount_posted = Decimal('0.00')
+        if order_discount > 0:
+            disc_ac = (self._acct_or_none('DISCOUNT_ALLOWED', loc)
+                       or self._acct_or_none('ROUND_OFF', loc))
+            if disc_ac:
+                JournalEntryLine.objects.create(
+                    entry=entry, account=disc_ac, debit=order_discount,
+                    narration='Order-level discount',
+                )
+                discount_posted = order_discount
+
+        # Round-off absorbs the remaining sub-rupee drift.
+        diff = (total + discount_posted) - (sales_amount + cgst + sgst + igst)
         if diff != Decimal('0.00') and abs(diff) < Decimal('1.00'):
             round_off_ac = self._acct_or_none('ROUND_OFF', loc)
             if round_off_ac:
@@ -390,9 +471,11 @@ class JournalAutoGenerationService:
         # B2B is tax-exclusive: subtotal is the taxable base
         taxable = order.subtotal - order.discount_amount
 
-        # Always re-derive supply_type from the customer GSTIN against the company state.
+        # Always re-derive supply_type from the customer GSTIN (state fallback)
+        # against the company state, matching GSTR-1.
         supply_type = self._get_supply_type(
-            order.customer.gst_no if order.customer else ''
+            order.customer.gst_no if order.customer else '',
+            self._counterparty_state_code(order.customer if order.customer else None),
         )
 
         # Source line tax fields (cgst_amount/sgst_amount/igst_amount) carry the inventory's
@@ -466,10 +549,12 @@ class JournalAutoGenerationService:
         if ret.status not in ('confirmed', 'completed'):
             return None
 
-        if ret.return_type == 'b2b':
-            supply_type = self._get_supply_type(ret.customer.gst_no if ret.customer else '')
-        else:
-            supply_type = 'intra_state'
+        # Mirror the original sale's classification (GSTIN, then state fallback)
+        # so the credit-note reversal hits the same tax head GSTR-1 reports.
+        supply_type = self._get_supply_type(
+            ret.customer.gst_no if ret.customer else '',
+            self._counterparty_state_code(ret.customer),
+        )
 
         # Per-line aggregation. POS returns: line_total is tax-inclusive.
         # B2B returns: line_total is tax-exclusive (taxable amount itself).
@@ -574,7 +659,7 @@ class JournalAutoGenerationService:
                 qty = Decimal(str(getattr(line, 'quantity', 0) or 0))
                 if qty <= 0:
                     continue
-                cost = self._product_avg_cost(line.product_id)
+                cost = self._product_avg_cost(line.product_id, loc)
                 value = (qty * cost).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
                 if value > 0:
                     cogs_total += value

@@ -98,7 +98,13 @@ class ChequeSerializer(serializers.ModelSerializer):
             'bill_payment', 'notes', 'location_id',
             'created_at', 'updated_at',
         ]
+        # journal_entry / bill_payment are read-only: the cheque register tracks
+        # paper instruments and these links are set only by the trusted service
+        # that posts the original entry. Letting an API client set journal_entry
+        # allowed attaching an arbitrary unrelated posted JE and then 'bouncing'
+        # the cheque to reverse books that have nothing to do with it.
         read_only_fields = ['id', 'status', 'bounce_reason', 'bounce_charge',
+                            'journal_entry', 'entry_no', 'bill_payment',
                             'bounce_journal_entry', 'bounce_entry_no',
                             'created_at', 'updated_at']
 

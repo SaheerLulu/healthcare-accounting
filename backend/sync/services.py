@@ -1,8 +1,9 @@
+import contextlib
 import logging
 import time
 import traceback
 from decimal import Decimal
-from django.db import transaction
+from django.db import transaction, connection
 from inventory_reader.models import (
     PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO,
     OpeningStockRO,
@@ -12,6 +13,40 @@ from journals.services import JournalAutoGenerationService
 from .models import SyncLog, SyncError
 
 logger = logging.getLogger('sync')
+
+
+# A fixed 63-bit key for the sync advisory lock. The UI SyncRunView and the
+# scheduled management command BOTH call sync_all(); this single lock serialises
+# them so the read-then-create idempotency check (`_synced_ids` → create) can't
+# race and double-post every order in the overlap window. Postgres-only — a
+# harmless no-op on other backends (e.g. SQLite under test), where there is no
+# second concurrent connection to race against anyway.
+_SYNC_ADVISORY_LOCK_KEY = 478223197
+
+
+@contextlib.contextmanager
+def sync_advisory_lock():
+    """Yield True if this process holds the exclusive sync lock (or the backend
+    isn't Postgres), False if another run already holds it."""
+    if connection.vendor != 'postgresql':
+        yield True
+        return
+    with connection.cursor() as cur:
+        cur.execute('SELECT pg_try_advisory_lock(%s)', [_SYNC_ADVISORY_LOCK_KEY])
+        acquired = bool(cur.fetchone()[0])
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            with connection.cursor() as cur:
+                cur.execute('SELECT pg_advisory_unlock(%s)', [_SYNC_ADVISORY_LOCK_KEY])
+
+
+# Inventory statuses that mean an order was voided/cancelled AFTER we may have
+# already posted its JE. Conservative, explicit list — a status not in here is
+# left untouched, so an ordinary state transition can never trigger a wrong
+# reversal (worst case we miss a cancellation, which is safe).
+CANCELLED_STATES = ('cancelled', 'canceled', 'void', 'voided', 'returned')
 
 
 class InventorySyncService:
@@ -274,7 +309,95 @@ class InventorySyncService:
 
         return results
 
+    def _reverse_entry(self, original: JournalEntry) -> JournalEntry:
+        """Post a balanced reversal of `original` (debits/credits swapped),
+        linked via reversal_of so it can never be reversed twice. The swap also
+        backs out the COGS / stock-relief legs automatically."""
+        from datetime import date as date_cls
+        from journals.models import JournalEntryLine
+        with transaction.atomic():
+            reversal = JournalEntry.objects.create(
+                date=date_cls.today(),
+                narration=f'Auto-reversal — {original.reference_type} '
+                          f'#{original.reference_id} cancelled upstream '
+                          f'(reverses {original.entry_no})',
+                voucher_type=original.voucher_type,
+                reference_type=original.reference_type,
+                reference_id=original.reference_id,
+                location_id=original.location_id,
+                reversal_of=original,
+            )
+            for line in original.lines.all():
+                JournalEntryLine.objects.create(
+                    entry=reversal, account=line.account,
+                    debit=line.credit, credit=line.debit,
+                    narration=line.narration,
+                    party_type=line.party_type, party_id=line.party_id,
+                )
+            reversal.post()
+        return reversal
+
+    def reverse_cancelled(self) -> int:
+        """Reverse the JE of any previously-synced order whose source document is
+        now cancelled/voided upstream, so the books stop carrying a sale or
+        purchase that no longer exists. Idempotent: skips reversal entries and
+        any original already reversed (reverse-once)."""
+        # Built at call time (not as a class attr) so the model names resolve to
+        # the current module globals — and stay patchable in tests.
+        specs = (
+            ('PurchaseOrder', PurchaseOrderRO, 'state'),
+            ('POSOrder', POSOrderRO, 'status'),
+            ('B2BSalesOrder', B2BSalesOrderRO, 'status'),
+            ('SalesReturn', SalesReturnRO, 'status'),
+            ('PurchaseReturn', PurchaseReturnRO, 'status'),
+        )
+        reversed_count = 0
+        for ref_type, model, state_field in specs:
+            originals = list(
+                JournalEntry.objects.filter(
+                    reference_type=ref_type, is_posted=True,
+                    reversal_of__isnull=True,      # not itself a reversal
+                    reversal_entry__isnull=True,   # not already reversed
+                ).exclude(reference_id__isnull=True)
+            )
+            if not originals:
+                continue
+            by_ref = {e.reference_id: e for e in originals}
+            try:
+                cancelled_ids = list(
+                    model.objects.filter(
+                        id__in=list(by_ref.keys()),
+                        **{f'{state_field}__in': CANCELLED_STATES},
+                    ).values_list('id', flat=True)
+                )
+            except Exception as e:
+                logger.warning('reverse_cancelled: source lookup failed for %s: %s', ref_type, e)
+                continue
+            for rid in cancelled_ids:
+                try:
+                    self._reverse_entry(by_ref[rid])
+                    reversed_count += 1
+                except Exception as e:
+                    self._log_error(f'{ref_type.lower()}_reversal', rid, e)
+        return reversed_count
+
     def sync_all(self) -> dict:
+        # Serialise overlapping runs (a UI click racing the */5 cron) so the
+        # idempotency check can't double-post. If another run holds the lock,
+        # skip — the in-progress run will pick up everything anyway.
+        with sync_advisory_lock() as acquired:
+            if not acquired:
+                logger.info('sync_all skipped — another sync run already holds the lock')
+                return {
+                    'skipped': True,
+                    'reason': 'another sync is already running',
+                    'opening_stocks': 0, 'purchases': 0, 'pos': 0, 'b2b': 0,
+                    'returns': 0, 'purchase_returns': 0, 'reversed_cancelled': 0,
+                    'total': 0,
+                }
+            return self._sync_all_locked()
+
+    def _sync_all_locked(self) -> dict:
         # Auto-provision a ledger for every supplier and every non-retail (B2B /
         # Hospital / Clinic) customer before posting, so the per-party ledgers
         # exist even for parties that haven't transacted yet. Idempotent and
@@ -293,6 +416,10 @@ class InventorySyncService:
         return_count = self.sync_returns(SyncLog.get_last_id('return'))
         purchase_return_count = self.sync_purchase_returns(SyncLog.get_last_id('purchase_return'))
 
+        # After posting new orders, back out any previously-synced order that
+        # was cancelled upstream so the books don't drift from inventory.
+        reversed_cancelled = self.reverse_cancelled()
+
         total = (opening_stock_count + purchase_count + pos_count + b2b_count
                  + return_count + purchase_return_count)
         SyncLog.objects.create(
@@ -308,6 +435,7 @@ class InventorySyncService:
             'b2b': b2b_count,
             'returns': return_count,
             'purchase_returns': purchase_return_count,
+            'reversed_cancelled': reversed_cancelled,
             'party_ledgers': provisioned,
             'total': total,
         }

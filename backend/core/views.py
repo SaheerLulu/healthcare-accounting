@@ -369,9 +369,13 @@ class DashboardView(APIView):
 
         location = get_active_location(request)
 
-        # Phase 5A: Single aggregate query instead of N+1 loops
+        # Phase 5A: Single aggregate query instead of N+1 loops.
+        # Exclude optional/memorandum vouchers so the dashboard KPIs match the
+        # ledger balances (ChartOfAccount.get_balance honours the same flags).
         fy_lines = JournalEntryLine.objects.filter(
             entry__is_posted=True,
+            entry__is_optional=False,
+            entry__is_memorandum=False,
             entry__date__range=[fy_start, fy_end],
         )
         if location:
@@ -399,6 +403,8 @@ class DashboardView(APIView):
         # Subtype aggregates for receivables, payables, GST
         subtype_qs = JournalEntryLine.objects.filter(
             entry__is_posted=True,
+            entry__is_optional=False,
+            entry__is_memorandum=False,
         )
         if location:
             subtype_qs = subtype_qs.filter(entry__location_id=location.id)
@@ -515,6 +521,7 @@ class CloseFiscalYearView(APIView):
         except (TypeError, ValueError):
             return Response({'detail': 'fy_start_year must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
 
+        from django.core.exceptions import ValidationError as DjangoValidationError
         try:
             result = close_fiscal_year(
                 fy_start_year,
@@ -524,6 +531,11 @@ class CloseFiscalYearView(APIView):
             )
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except DjangoValidationError as exc:
+            # Closing month sits in a locked period (PeriodLockedError) — surface
+            # a clean 400 with the reason instead of an unhandled 500.
+            msg = exc.messages[0] if hasattr(exc, 'messages') else str(exc)
+            return Response({'detail': msg}, status=status.HTTP_400_BAD_REQUEST)
 
         log_action('GENERATE', 'AccountingSettings', 'fy-close',
                    f"Closed FY {result['fy']}", request=request, extra=result)

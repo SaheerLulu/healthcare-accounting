@@ -163,7 +163,8 @@ export const voucherConfigs: Record<VoucherType, VoucherConfig> = {
     narrationTemplate: 'Being credit note to ',
     accountFilter: (a, side) => {
       if (!isPostable(a)) return false
-      if (side === 'Dr') return a.account_subtype === 'Sales' || a.account_type === 'REVENUE' || a.account_type === 'EXPENSE'
+      // Dr side reverses sales AND the output GST charged on the original invoice.
+      if (side === 'Dr') return a.account_subtype === 'Sales' || a.account_subtype === 'Output_GST' || a.account_type === 'REVENUE' || a.account_type === 'EXPENSE'
       return isReceivable(a) || isBankOrCash(a)
     },
   },
@@ -180,7 +181,8 @@ export const voucherConfigs: Record<VoucherType, VoucherConfig> = {
     accountFilter: (a, side) => {
       if (!isPostable(a)) return false
       if (side === 'Dr') return isPayable(a) || isBankOrCash(a)
-      return a.account_subtype === 'Purchases' || a.account_type === 'EXPENSE' || a.account_type === 'REVENUE'
+      // Cr side reverses purchases AND the input GST claimed on the original bill.
+      return a.account_subtype === 'Purchases' || a.account_subtype === 'Input_GST' || a.account_type === 'EXPENSE' || a.account_type === 'REVENUE'
     },
   },
 }

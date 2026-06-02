@@ -57,9 +57,10 @@ class DepreciationComputationTests(TestCase):
         self.asset = _make_asset(self.cls)
 
     def test_slm_monthly_amount(self):
-        # 60000 / (5 * 12) = 1000/month
+        # Depreciable base nets the Schedule II 5% residual: (60000 - 3000) / 60
+        # = 950/month (was naively 1000 before the residual floor was applied).
         amt = compute_monthly_depreciation(self.asset, period='2025-04')
-        self.assertEqual(amt, Decimal('1000.00'))
+        self.assertEqual(amt, Decimal('950.00'))
 
     def test_no_depreciation_before_acquisition(self):
         amt = compute_monthly_depreciation(self.asset, period='2025-03')
@@ -74,9 +75,9 @@ class DepreciationComputationTests(TestCase):
             dep_expense_account=self.coa['5410'],
         )
         asset = _make_asset(wdv_class, asset_no='WDV-001')
-        # First month: 60000 * 40 / 100 / 12 = 2000
+        # First month on (NBV - 5% residual): (60000 - 3000) * 40 / 100 / 12 = 1900
         m1 = compute_monthly_depreciation(asset, period='2025-04')
-        self.assertEqual(m1, Decimal('2000.00'))
+        self.assertEqual(m1, Decimal('1900.00'))
 
 
 class AcquisitionAndPostTests(TestCase):
@@ -129,18 +130,18 @@ class AcquisitionAndPostTests(TestCase):
         post_acquisition(self.asset)
         post_monthly_depreciation('2025-04')
         post_monthly_depreciation('2025-05')
-        # NBV after 2 months: 60000 - 2000 = 58000
+        # NBV after 2 months: 60000 - (950 × 2) = 58100; sell at 60000 → gain 1900
         je = dispose_asset(self.asset, disposal_date=date(2025, 6, 1),
                            proceeds=Decimal('60000'), mode='bank')
         self.asset.refresh_from_db()
         self.assertEqual(self.asset.status, 'disposed')
-        self.assertEqual(self.asset.gain_loss_on_disposal, Decimal('2000'))
+        self.assertEqual(self.asset.gain_loss_on_disposal, Decimal('1900'))
 
     def test_disposal_books_loss(self):
         post_acquisition(self.asset)
         post_monthly_depreciation('2025-04')
-        # NBV: 60000 - 1000 = 59000; sell for 50000 → loss 9000
+        # NBV: 60000 - 950 = 59050; sell for 50000 → loss 9050
         je = dispose_asset(self.asset, disposal_date=date(2025, 5, 1),
                            proceeds=Decimal('50000'), mode='bank')
         self.asset.refresh_from_db()
-        self.assertEqual(self.asset.gain_loss_on_disposal, Decimal('-9000'))
+        self.assertEqual(self.asset.gain_loss_on_disposal, Decimal('-9050'))

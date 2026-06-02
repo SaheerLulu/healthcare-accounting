@@ -44,6 +44,16 @@ class AccountingSettingsSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
+    def validate_financial_year_start(self, value):
+        # An out-of-range month (e.g. the UI's misleading 'MM-DD' field letting
+        # '13' through) makes date(year, month, 1) raise deep in the Dashboard
+        # and FY/period-lock math → HTTP 500 with the Dashboard inaccessible.
+        if value is not None and not (1 <= value <= 12):
+            raise serializers.ValidationError(
+                'Financial year start must be a month number between 1 and 12.'
+            )
+        return value
+
 
 class ChartOfAccountSerializer(serializers.ModelSerializer):
     parent_code = serializers.CharField(source='parent.account_code', read_only=True, default=None)
@@ -96,6 +106,22 @@ class AccountMappingSerializer(serializers.ModelSerializer):
         # location_id exposed since 53f6624c so the UI can read/write
         # per-store overrides; NULL = the shared default applies.
         fields = ['id', 'key', 'account', 'account_code', 'account_name', 'location_id']
+
+    def validate_account(self, account):
+        # Every auto-generated posting routes through these mappings, and
+        # JournalEntryLine.save() rejects non-leaf accounts — so a mapping to a
+        # group/inactive account doesn't fail here but bricks an entire posting
+        # category (payroll, COGS-sync, bills, year-end) the moment it's used.
+        if not account.is_leaf:
+            raise serializers.ValidationError(
+                f'{account.account_code} {account.account_name} is a group account; '
+                f'map to a leaf account that can be posted to.'
+            )
+        if not account.is_active:
+            raise serializers.ValidationError(
+                f'{account.account_code} {account.account_name} is inactive.'
+            )
+        return account
 
 
 class LockedPeriodSerializer(serializers.ModelSerializer):

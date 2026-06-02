@@ -225,6 +225,20 @@ def match_transaction(txn: BankTransaction, journal_entry: JournalEntry):
             f"Journal entry doesn't have a {'debit' if txn.amount > 0 else 'credit'} of "
             f"{abs_amt} on {bank_acct.account_code} — refusing to match."
         )
+    # A JE explains exactly one bank line per account/side. Matching it to a
+    # second transaction on the same account+side double-counts the
+    # reconciliation and can mark a non-tying account 'clean'. (Opposite sides
+    # are allowed — a genuine same-account contra legitimately matches twice.)
+    dup = BankTransaction.objects.filter(
+        bank_account=txn.bank_account, matched_journal_entry=journal_entry,
+    ).exclude(id=txn.id)
+    dup = dup.filter(amount__gt=0) if txn.amount > 0 else dup.filter(amount__lt=0)
+    if dup.exists():
+        raise ValidationError(
+            f'Journal entry {journal_entry.entry_no} is already reconciled to another '
+            f"{'debit' if txn.amount > 0 else 'credit'} transaction on "
+            f'{bank_acct.account_code}.'
+        )
     txn.matched_journal_entry = journal_entry
     txn.status = 'matched'
     txn.save(update_fields=['matched_journal_entry', 'status', 'updated_at'])
@@ -341,6 +355,19 @@ def mark_cheque_bounced(cheque, *, reason: str = '', bank_charge=None,
 
     if reverse_je and cheque.journal_entry_id and cheque.journal_entry.is_posted:
         original = cheque.journal_entry
+        # Only reverse an entry that actually involves THIS cheque's bank account
+        # for THIS cheque's amount. Without this, a mis-linked JE (e.g. an
+        # unrelated sales receipt) would be fully reversed against books that
+        # have nothing to do with the cheque.
+        bank_acct = cheque.bank_account.chart_account
+        touches_bank = original.lines.filter(account=bank_acct).filter(
+            Q(debit=cheque.amount) | Q(credit=cheque.amount)
+        ).exists()
+        if not touches_bank:
+            raise ValidationError(
+                f"Cheque {cheque.cheque_no}'s linked entry {original.entry_no} has no "
+                f"{cheque.amount} line on {bank_acct.account_code} — refusing to reverse it."
+            )
         if hasattr(original, 'reversal_entry'):
             # Already reversed for some other reason — don't double-reverse
             pass
@@ -454,6 +481,8 @@ def replenish_petty_cash(*, float_obj, date, amount, source: str = 'bank',
     from core.models import AccountMapping
     from .models import PettyCashTransaction
     amount = Decimal(str(amount))
+    if amount <= 0:
+        raise ValidationError('Replenishment amount must be greater than zero.')
     src_acct = (AccountMapping.get_account('BANK', location_id=float_obj.location_id)
                 if source == 'bank'
                 else AccountMapping.get_account('CASH', location_id=float_obj.location_id))

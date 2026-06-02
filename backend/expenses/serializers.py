@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 from .models import Expense, ExpenseItem, ExpenseAttachment
 
@@ -15,6 +17,28 @@ class ExpenseItemWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExpenseItem
         fields = ['account', 'description', 'amount']
+
+    def validate_account(self, account):
+        # The expense JE debits this account. The UI only offers EXPENSE leaves,
+        # but the serializer accepted any ChartOfAccount PK — a direct API/import
+        # client could debit a bank/payable/equity/revenue leaf, producing
+        # structurally-balanced but accounting-wrong books under a 'Payment'
+        # voucher (overstated assets / understated liabilities / contra-debited
+        # revenue), all immutable once posted.
+        if account.account_type != 'EXPENSE':
+            raise serializers.ValidationError(
+                f'{account.account_code} {account.account_name} is a '
+                f'{account.account_type} account; expense lines must debit an EXPENSE account.'
+            )
+        if not account.is_leaf:
+            raise serializers.ValidationError(
+                f'{account.account_code} is a group account — post to a leaf account.'
+            )
+        if not account.is_active:
+            raise serializers.ValidationError(
+                f'{account.account_code} {account.account_name} is inactive.'
+            )
+        return account
 
 
 class ExpenseAttachmentSerializer(serializers.ModelSerializer):
@@ -105,6 +129,39 @@ class ExpenseWriteSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError('Each line amount must be > 0.')
         if data.get('total_amount', 0) <= 0:
             raise serializers.ValidationError('Total must be > 0.')
+        # The expense JE credits paid_through for the full total — it must be a
+        # real Bank/Cash leaf, not an arbitrary account.
+        paid = data.get('paid_through_account') or getattr(self.instance, 'paid_through_account', None)
+        if paid is not None:
+            if paid.account_subtype not in ('Bank', 'Cash'):
+                raise serializers.ValidationError(
+                    f'Paid-through account {paid.account_code} must be a Bank or Cash account.'
+                )
+            if not paid.is_leaf or not paid.is_active:
+                raise serializers.ValidationError(
+                    'Paid-through account must be an active leaf account.'
+                )
+
+        # GST input credit must be substantiated by a supplier invoice. With no
+        # identified supplier and reference, the ITC is unsupported (and would
+        # never appear in the supplier's GSTR-1 → recipient's 2B). The model has
+        # no GSTIN field, so require at least a vendor + invoice reference.
+        def _field(key):
+            v = data.get(key)
+            if v is None and self.instance is not None:
+                v = getattr(self.instance, key, None)
+            return v
+        tax = (_field('tax_cgst') or Decimal('0')) + (_field('tax_sgst') or Decimal('0')) \
+            + (_field('tax_igst') or Decimal('0'))
+        if tax > 0:
+            if not (_field('vendor_id') or (_field('vendor_name') or '').strip()):
+                raise serializers.ValidationError(
+                    'Identify the supplier to claim GST input credit on this expense.'
+                )
+            if not (_field('reference') or '').strip():
+                raise serializers.ValidationError(
+                    'A supplier invoice / reference number is required to claim GST input credit.'
+                )
         return data
 
     def create(self, validated_data):

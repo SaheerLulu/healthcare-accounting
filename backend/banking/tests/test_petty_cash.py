@@ -30,6 +30,18 @@ class PettyCashTests(TestCase):
                              amount=Decimal('5000'))
         self.assertEqual(petty_cash_balance(self.float), Decimal('5000'))
 
+    def test_replenish_zero_amount_rejected(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            replenish_petty_cash(float_obj=self.float, date=date(2026, 4, 1),
+                                 amount=Decimal('0'))
+
+    def test_replenish_negative_amount_rejected(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            replenish_petty_cash(float_obj=self.float, date=date(2026, 4, 1),
+                                 amount=Decimal('-500'))
+
     def test_spend_decreases_balance(self):
         replenish_petty_cash(float_obj=self.float, date=date(2026, 4, 1),
                              amount=Decimal('5000'))

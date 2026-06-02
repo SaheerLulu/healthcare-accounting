@@ -20,6 +20,17 @@ from .models import (
 logger = logging.getLogger('gst_returns')
 
 
+# B2C-Large invoice-value threshold. It dropped from ₹2.5L to ₹1L for invoices
+# issued on/after 01-Aug-2024 (Notification 12/2024-CT — GSTR-1 Table 5/7).
+B2CL_THRESHOLD_CUTOVER = date(2024, 8, 1)
+
+
+def b2cl_threshold(invoice_date):
+    if invoice_date and invoice_date >= B2CL_THRESHOLD_CUTOVER:
+        return Decimal('100000')
+    return Decimal('250000')
+
+
 class GSTR1Generator:
 
     def __init__(self):
@@ -121,14 +132,20 @@ class GSTR1Generator:
                 (tax_total * Decimal('100') / taxable_base).quantize(Decimal('0.01'))
                 if taxable_base else Decimal('0.00')
             )
-            # B2C-Large applies only to inter-state supplies > ₹2.5L per
-            # Notification 12/2020-CT. Intra-state B2C is always B2C_SMALL
-            # regardless of value.
-            inv_type = (
-                'B2C_LARGE'
-                if supply_type == 'inter_state' and pos.total_amount > Decimal('250000')
-                else 'B2C_SMALL'
-            )
+            # A POS sale to a GST-registered buyer (GSTIN captured) is B2B — it
+            # must land in the b2b section so the recipient's 2B is populated and
+            # they can claim ITC. Only fall back to B2C otherwise. (Mirrors the
+            # B2B-order branch below; the POS branch used to force B2C always,
+            # misreporting every over-the-counter sale to a registered buyer.)
+            # B2C-Large applies only to inter-state B2C supplies above the
+            # date-aware threshold; intra-state B2C is always B2C_SMALL.
+            pos_inv_date = pos.sale_date.date() if hasattr(pos.sale_date, 'date') else pos.sale_date
+            if customer_gstin:
+                inv_type = 'B2B'
+            elif supply_type == 'inter_state' and pos.total_amount > b2cl_threshold(pos_inv_date):
+                inv_type = 'B2C_LARGE'
+            else:
+                inv_type = 'B2C_SMALL'
 
             GSTR1Entry.objects.create(
                 source_type='pos',
@@ -206,10 +223,11 @@ class GSTR1Generator:
                 customer_gstin[:2] if customer_gstin else
                 customer_state_code or self._settings.state_code
             )
-            # B2C-Large only applies to inter-state > ₹2.5L (Notif 12/2020-CT).
+            # B2C-Large only applies to inter-state above the date-aware threshold.
+            b2b_inv_date = order.sale_date or (order.created_at.date() if order.created_at else None)
             if customer_gstin:
                 inv_type = 'B2B'
-            elif supply_type == 'inter_state' and order.total_amount > Decimal('250000'):
+            elif supply_type == 'inter_state' and order.total_amount > b2cl_threshold(b2b_inv_date):
                 inv_type = 'B2C_LARGE'
             else:
                 inv_type = 'B2C_SMALL'
@@ -393,8 +411,16 @@ class GSTR2BGenerator:
     def generate(self, period: str, location_id: int):
         year, month = map(int, period.split('-'))
 
-        # Clear existing for re-generation
-        GSTR2BEntry.objects.filter(period=period, location_id=location_id).delete()
+        # Clear ONLY the auto-derived (PO-sourced) rows for re-generation.
+        # Rows uploaded from the official government GSTR-2B JSON have
+        # source_po_id NULL — those are the authoritative source for ITC
+        # reconciliation and must survive regeneration. The old unscoped
+        # delete() wiped them too, so clicking Generate on GSTR-2B/3B silently
+        # destroyed the uploaded government data with no way to recover it.
+        GSTR2BEntry.objects.filter(
+            period=period, location_id=location_id,
+            source_po_id__isnull=False,
+        ).delete()
 
         # Match POs whose bill_date falls in the period. POs with no bill_date
         # fall back to created_at — mirroring the write-time fallback at line

@@ -22,6 +22,7 @@ import { AccountPicker } from '../journals/AccountPicker'
 import { CreateLedgerModal } from './CreateLedgerModal'
 import { CostCenterPopup } from './CostCenterPopup'
 import { PaymentRowEditor, type PaymentRow } from './PaymentRowEditor'
+import { type BillRefValue } from './BillRefPickerSheet'
 
 type PartyKind = 'Supplier' | 'Customer'
 type VoucherMode = 'payment' | 'receipt'
@@ -256,12 +257,22 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
       setBankCashId(headerSide.account)
       setPaymentMode('bank')
     }
+    // When EDITING a draft, re-hydrate each row's bill-wise allocation from the
+    // line's embedded bill_references. The backend update() deletes & re-creates
+    // all lines (CASCADE-dropping their refs), and the save loop only re-attaches
+    // refs that are present — so without this, editing a draft silently wiped
+    // every allocation. (Repeat-last starts fresh, so it leaves ref null.)
+    const rehydrateRefs = !!editingId
     setRows(
       rowLines.length > 0
         ? rowLines.map((l): PaymentRow => {
             const pt = l.party_type
             const partyKind: PartyKind | null =
               pt === 'Supplier' || pt === 'Customer' ? pt : null
+            const brs = l.bill_references || []
+            const br = rehydrateRefs
+              ? (brs.find((b) => b.kind === 'AGAINST') || brs[0])
+              : undefined
             return {
               uid: uid(),
               party_type: partyKind,
@@ -269,9 +280,16 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
               account_id: l.account,
               amount: isPayment ? l.debit : l.credit,
               narration: l.narration || '',
-              // Bill references are not re-hydrated here — they'd need a separate
-              // fetch via listBillReferences and are not edit-critical for v1.
-              ref: null,
+              ref: br
+                ? {
+                    kind: br.kind as BillRefValue['kind'],
+                    bill_id: br.bill_id,
+                    ref_no: br.ref_no,
+                    ref_date: br.ref_date,
+                    amount: br.amount,
+                    label: br.ref_no || (br.bill_id ? `BILL-${br.bill_id}` : ''),
+                  }
+                : null,
             }
           })
         : [makeRow()]
@@ -440,6 +458,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
       const savedRowLines = entry.lines.filter((l) =>
         isPayment ? parseFloat(l.debit) > 0 : parseFloat(l.credit) > 0
       )
+      const refFailures: string[] = []
       for (let i = 0; i < positiveRows.length; i++) {
         const r = positiveRows[i]
         const drLine = savedRowLines[i]
@@ -453,7 +472,26 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
             ref_date: r.ref.ref_date,
             amount: parseFloat(r.amount).toFixed(2),
           })
-        } catch { /* don't block save on a single ref failure */ }
+        } catch (e) {
+          const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+          refFailures.push(
+            `${r.ref.ref_no || r.ref.label || 'allocation'}: ${
+              typeof detail === 'string' ? detail : 'rejected'
+            }`
+          )
+        }
+      }
+
+      // A rejected allocation (e.g. over-allocation past the invoice balance)
+      // must NOT silently post an unallocated over-payment. Keep the entry as a
+      // draft and surface the failure so the user can fix it.
+      if (refFailures.length > 0) {
+        toast.error(
+          `Saved as draft — allocation rejected: ${refFailures.join('; ')}. ` +
+          `Fix the amount, then post.`
+        )
+        navigate(`/journals/${entry.id}`)
+        return
       }
 
       if (thenPost) {

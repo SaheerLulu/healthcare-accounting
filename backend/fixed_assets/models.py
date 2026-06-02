@@ -5,7 +5,7 @@ Aligned with Companies Act 2013 Schedule II (useful-life-based) and Income
 Tax Act §32 (rate-based, WDV / SLM). The AssetClass record holds both so a
 single asset row can compute either book or tax depreciation.
 """
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.contrib.auth.models import User
 from django.db import models
@@ -131,8 +131,20 @@ class FixedAsset(models.Model):
         return self.asset_class.useful_life_years * 12
 
     @property
+    def effective_salvage_value(self) -> Decimal:
+        """Residual value used for depreciation. An explicit per-asset
+        salvage_value wins; otherwise fall back to the asset class's Schedule II
+        percentage (default 5%) so SLM/WDV stop at the residual instead of
+        depreciating the asset all the way to zero."""
+        if self.salvage_value and self.salvage_value > 0:
+            return self.salvage_value
+        pct = (self.asset_class.salvage_value_pct or Decimal('0')) if self.asset_class_id else Decimal('0')
+        return (self.acquisition_cost * pct / Decimal('100')).quantize(
+            Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+    @property
     def depreciable_base(self) -> Decimal:
-        return self.acquisition_cost - self.salvage_value
+        return self.acquisition_cost - self.effective_salvage_value
 
     def accumulated_depreciation(self, *, as_of=None) -> Decimal:
         """Sum of all DepreciationEntry amounts up to `as_of`."""

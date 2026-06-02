@@ -52,13 +52,22 @@ def record_expense(expense: Expense, *, user=None) -> JournalEntry:
             debit=item.amount, narration=item.description,
         )
 
-    # Debit GST inputs
-    if expense.tax_cgst > 0:
-        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_CGST', loc), debit=expense.tax_cgst)
-    if expense.tax_sgst > 0:
-        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_SGST', loc), debit=expense.tax_sgst)
-    if expense.tax_igst > 0:
-        JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_IGST', loc), debit=expense.tax_igst)
+    # Debit GST inputs. An unconfigured INPUT_* mapping raises a bare ValueError
+    # from AccountMapping.get_account — catch it and surface a clean,
+    # actionable 400 (mirroring the ROUND_OFF handling below) instead of the
+    # raw HTTP 500 it used to escape as.
+    try:
+        if expense.tax_cgst > 0:
+            JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_CGST', loc), debit=expense.tax_cgst)
+        if expense.tax_sgst > 0:
+            JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_SGST', loc), debit=expense.tax_sgst)
+        if expense.tax_igst > 0:
+            JournalEntryLine.objects.create(entry=entry, account=_acct('INPUT_IGST', loc), debit=expense.tax_igst)
+    except ValueError:
+        raise ValidationError(
+            'Configure the INPUT_CGST / INPUT_SGST / INPUT_IGST account mappings '
+            'before recording GST on an expense.'
+        )
 
     # Credit paid-through (single line)
     JournalEntryLine.objects.create(
@@ -66,8 +75,16 @@ def record_expense(expense: Expense, *, user=None) -> JournalEntry:
         credit=expense.total_amount,
     )
 
-    # Round-off if total ≠ items + tax
+    # Round-off if total ≠ items + tax. Cap it: round-off only absorbs sub-rupee
+    # rounding. A larger gap means the total doesn't tie to the lines+tax and was
+    # being silently dumped into ROUND_OFF (6100), distorting that account and
+    # hiding a data-entry error. Reject it instead.
     diff = expense.total_amount - (line_total + tax_total)
+    if abs(diff) > Decimal('1.00'):
+        raise ValidationError(
+            f'Total {expense.total_amount} does not tie to line items {line_total} + '
+            f'tax {tax_total} (off by {diff}). Add a line or fix the amounts.'
+        )
     if diff != 0:
         try:
             round_acct = _acct('ROUND_OFF', loc)

@@ -251,6 +251,22 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
                     f'{account.account_name} (line {idx + 1}). Post to a leaf account.'
                 )
                 continue
+            # Per-party-ledger line explicitly tagged with a DIFFERENT concrete
+            # party: the voucher's header party and the line's ledger disagree.
+            # _route_party_line would silently overwrite the tag to the ledger's
+            # own party — posting the receivable/payable to the WRONG party's
+            # books. Reject it instead of silently rerouting. (An untagged line on
+            # a per-party ledger is fine — that's the legitimate auto-tag path.)
+            if account is not None and getattr(account, 'party_id', None) is not None:
+                ptype, pid = line.get('party_type'), line.get('party_id')
+                if pid and ptype in ('Supplier', 'Customer') \
+                        and (ptype, pid) != (account.party_type, account.party_id):
+                    line_errors[idx] = (
+                        f'Line {idx + 1} posts to the {account.party_type} ledger '
+                        f'{account.account_code} ({account.account_name}), but the voucher '
+                        f'is for {ptype} #{pid}. Pick the matching ledger or change the party.'
+                    )
+                    continue
             # A party is required only for TRADE payable/receivable. Per-party
             # ledgers carry their own party (auto-tagged in create), and
             # statutory payables (PF/ESI/TDS…) are subtype Payable but need none.

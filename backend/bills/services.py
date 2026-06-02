@@ -9,7 +9,7 @@ entry (Dr Payables, Cr Bank/Cash) and updates amount_paid + status.
 from calendar import monthrange
 from datetime import date as date_cls, timedelta
 from decimal import Decimal
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.core.exceptions import ValidationError
 
 from core.models import AccountMapping
@@ -89,8 +89,16 @@ def post_bill(bill: Bill, user=None) -> JournalEntry:
         payable_args.update(party_type='Supplier', party_id=bill.vendor_id)
     JournalEntryLine.objects.create(**payable_args)
 
-    # Adjust for any rounding difference between (lines + tax) and total
+    # Adjust for any rounding difference between (lines + tax) and total. Cap it:
+    # ROUND_OFF only absorbs sub-rupee rounding. A larger gap means the bill total
+    # doesn't tie to lines+tax and was being silently dumped into ROUND_OFF,
+    # inflating/deflating Trade Payables — reject it instead.
     diff = bill.total_amount - (line_total + tax_total)
+    if abs(diff) > Decimal('1.00'):
+        raise ValidationError(
+            f'Bill total {bill.total_amount} does not tie to line items {line_total} + '
+            f'tax {tax_total} (off by {diff}). Add a line or fix the amounts.'
+        )
     if diff != 0:
         # Post the rounding to ROUND_OFF so the entry balances
         try:
@@ -221,6 +229,14 @@ def generate_one(rb: RecurringBill, *, user=None) -> Bill:
 
     seq = Bill.objects.filter(notes__contains=f'recurring:{rb.id}').count() + 1
     bill_no = _format_bill_no(rb.bill_no_pattern, bill_date, seq) or ''
+    # A constant / non-cycling pattern (e.g. 'RENT' or '{YYYY}') renders the same
+    # number every cycle and collides on the (vendor_id, bill_no) unique
+    # constraint — which used to raise IntegrityError and abort the whole
+    # run-due batch. Disambiguate with the sequence so generation keeps working.
+    if bill_no and rb.vendor_id and Bill.objects.filter(
+        vendor_id=rb.vendor_id, bill_no=bill_no,
+    ).exists():
+        bill_no = f'{bill_no}-{seq:04d}'
 
     notes_parts = [f'Auto-generated from recurring profile "{rb.profile_name}" (recurring:{rb.id})']
     if rb.notes:
@@ -284,7 +300,13 @@ def generate_due(*, today: date_cls | None = None, user=None) -> dict:
             try:
                 bill = generate_one(rb, user=user)
                 created.append({'recurring_id': rb.id, 'bill_id': bill.id})
-            except ValidationError as e:
+            except (ValidationError, IntegrityError) as e:
+                # IntegrityError (e.g. a bill_no collision the disambiguation
+                # missed) must not escape as a 500 that aborts the batch and
+                # leaves the failing profile to re-crash every cron run. Record
+                # it, pause the profile, and move on to the next one. generate_one
+                # is @transaction.atomic, so its savepoint is already rolled back
+                # by the time we get here — rb.save() below is safe.
                 msg = e.messages[0] if hasattr(e, 'messages') else str(e)
                 errors.append({'recurring_id': rb.id, 'error': msg})
                 rb.last_error = msg

@@ -22,9 +22,15 @@ class PayrollService:
         """Calculate salary components from a SalaryStructure."""
         gross = structure.gross_salary
 
-        pf_employee = (structure.basic_salary * structure.pf_employee_pct / 100).quantize(
+        # EPF statutory wage ceiling: PF is computed on basic capped at ₹15,000
+        # (12% of 15,000 = ₹1,800). The EPFO ECR file already caps wages at
+        # 15,000, so without the same cap here the booked PF Payable never
+        # reconciled to the deposited challan.
+        EPF_WAGE_CEILING = Decimal('15000')
+        pf_wage = min(structure.basic_salary, EPF_WAGE_CEILING)
+        pf_employee = (pf_wage * structure.pf_employee_pct / 100).quantize(
             Decimal('0.01'), rounding=ROUND_HALF_UP)
-        pf_employer = (structure.basic_salary * structure.pf_employer_pct / 100).quantize(
+        pf_employer = (pf_wage * structure.pf_employer_pct / 100).quantize(
             Decimal('0.01'), rounding=ROUND_HALF_UP)
         esi_employee = (gross * structure.esi_employee_pct / 100).quantize(
             Decimal('0.01'), rounding=ROUND_HALF_UP)

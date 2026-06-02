@@ -1,3 +1,6 @@
+from decimal import Decimal
+
+from django.db.models import Sum
 from rest_framework import serializers
 from .models import TDSDeduction, TDSChallan, TDSRateConfig, TCSCollection, Form26ASEntry
 
@@ -44,7 +47,7 @@ class TDSChallanSerializer(serializers.ModelSerializer):
         deductions = validated_data.pop('deductions', [])
         challan = TDSChallan.objects.create(**validated_data)
         if deductions:
-            challan.deductions.set(deductions)
+            self._link_deductions(challan, deductions)
         return challan
 
     def update(self, instance, validated_data):
@@ -53,8 +56,27 @@ class TDSChallanSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         instance.save()
         if deductions is not None:
-            instance.deductions.set(deductions)
+            self._link_deductions(instance, deductions)
         return instance
+
+    @staticmethod
+    def _link_deductions(challan, deductions):
+        """Link deductions AND mark them challan_paid + stamp the challan ref,
+        mirroring auto_generate_challan. Without this the deductions stayed
+        'pending', so Auto-Generate would re-pick them into a SECOND challan —
+        double-counting the deposited TDS. The total is recomputed from the
+        linked deductions rather than trusted from the client."""
+        challan.deductions.set(deductions)
+        linked = challan.deductions.all()
+        linked.update(
+            status='challan_paid',
+            challan_no=challan.challan_no,
+            challan_date=challan.deposit_date,
+        )
+        total = linked.aggregate(t=Sum('tds_amount'))['t'] or Decimal('0.00')
+        if total != challan.total_tds_amount:
+            challan.total_tds_amount = total
+            challan.save(update_fields=['total_tds_amount'])
 
 
 class TCSCollectionSerializer(serializers.ModelSerializer):
