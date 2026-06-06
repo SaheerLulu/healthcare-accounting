@@ -16,7 +16,7 @@ def _trade_control_ids():
     ).values_list('account_id', flat=True))
 
 
-def _route_party_line(line_data, control_ids):
+def _route_party_line(line_data, control_ids, location_id=None):
     """Keep each line's account and party tag consistent:
 
     - If the account IS a per-party ledger, carry that ledger's party onto the
@@ -47,7 +47,7 @@ def _route_party_line(line_data, control_ids):
     if ptype not in ('Supplier', 'Customer') or not pid or acct.id not in control_ids:
         return line_data
     routed = dict(line_data)
-    routed['account'] = resolve_party_account(ptype, pid, acct)
+    routed['account'] = resolve_party_account(ptype, pid, acct, location_id=location_id)
     return routed
 
 
@@ -300,7 +300,8 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
         entry = JournalEntry.objects.create(**validated_data)
         control_ids = _trade_control_ids()
         for line_data in lines_data:
-            JournalEntryLine.objects.create(entry=entry, **_route_party_line(line_data, control_ids))
+            JournalEntryLine.objects.create(
+                entry=entry, **_route_party_line(line_data, control_ids, entry.location_id))
         return entry
 
     def update(self, instance, validated_data):
@@ -314,7 +315,8 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
             instance.lines.all().delete()
             control_ids = _trade_control_ids()
             for line_data in lines_data:
-                JournalEntryLine.objects.create(entry=instance, **_route_party_line(line_data, control_ids))
+                JournalEntryLine.objects.create(
+                    entry=instance, **_route_party_line(line_data, control_ids, instance.location_id))
         return instance
 
 

@@ -6,9 +6,10 @@ Design (see [[party-ledger-per-party]]):
   each named customer gets `1125-C<id>` under group 1125 Sundry Debtors.
 - The leaf is linked to its inventory party via ChartOfAccount.party_type/party_id
   (a DB-unique pair), NOT by parsing the account_code.
-- Party ledgers are ALWAYS shared (location_id NULL): one consolidated statement
-  per party across stores. The resolver REFUSES a non-NULL location_id, and a
-  CheckConstraint enforces it at the DB level.
+- Party ledgers are PER STORE: each (party, location) gets its own leaf
+  (`<group>-<tag><pid>-L<loc>`) under the shared group, so a store's books carry
+  only its own balance with that party. The resolver REQUIRES a location_id and
+  a UniqueConstraint enforces one leaf per (party, location).
 - account_subtype is copied from the control ('Payable'/'Receivable') so every
   subtype-filtered report (AR/AP, aging, ratios, MSME) keeps working unchanged.
 - Walk-in / cash customers (NULL party_id) are NEVER given a ledger — those
@@ -43,9 +44,9 @@ def party_ledgers_enabled() -> bool:
     return getattr(settings, 'PARTY_LEDGERS_ENABLED', True)
 
 
-def party_ledger_code(party_type: str, party_id: int) -> str:
+def party_ledger_code(party_type: str, party_id: int, location_id: int) -> str:
     cfg = _PARTY_CFG[party_type]
-    return f"{cfg['group']}-{cfg['tag']}{party_id}"
+    return f"{cfg['group']}-{cfg['tag']}{party_id}-L{location_id}"
 
 
 def _party_name(party_type: str, party_id: int) -> str:
@@ -71,34 +72,36 @@ def _party_name(party_type: str, party_id: int) -> str:
     return (name or fallback)[:255]
 
 
-def get_party_ledger(party_type: str, party_id):
-    """Non-creating lookup. Returns the ChartOfAccount leaf or None."""
+def get_party_ledger(party_type: str, party_id, location_id=None):
+    """Non-creating lookup of the PER-STORE party leaf. Returns the
+    ChartOfAccount leaf or None. `location_id` is required to identify the
+    store's leaf (party ledgers are per store)."""
     from core.models import ChartOfAccount
-    if party_type not in _PARTY_CFG or not party_id:
+    if party_type not in _PARTY_CFG or not party_id or not location_id:
         return None
     return (
         ChartOfAccount.objects
-        .filter(party_type=party_type, party_id=party_id, location_id__isnull=True)
+        .filter(party_type=party_type, party_id=party_id, location_id=location_id)
         .first()
     )
 
 
-def get_or_create_party_ledger(party_type: str, party_id, *, location_id=None):
-    """Resolve (or lazily create) the shared leaf ledger for a party.
+def get_or_create_party_ledger(party_type: str, party_id, *, location_id):
+    """Resolve (or lazily create) the PER-STORE leaf ledger for a party.
 
-    Idempotent and concurrency-safe. Raises ValueError on bad input or when the
-    parent group is missing (run seed_coa first).
+    Each (party, store) gets its own leaf (code `<group>-<tag><pid>-L<loc>`)
+    under the shared group, so a store's books carry only its own balance with
+    that party. Idempotent and concurrency-safe. Raises ValueError on bad input
+    or when the parent group is missing (run seed_coa first).
     """
     from core.models import ChartOfAccount
 
-    if location_id is not None:
-        raise ValueError(
-            'Party ledgers are shared across locations; pass location_id=None.'
-        )
+    if not location_id:
+        raise ValueError('Per-store party ledgers require a location_id.')
     if party_type not in _PARTY_CFG or not party_id:
         raise ValueError(f'Invalid party for ledger: {party_type!r}/{party_id!r}')
 
-    existing = get_party_ledger(party_type, party_id)
+    existing = get_party_ledger(party_type, party_id, location_id)
     if existing is not None:
         return existing
 
@@ -122,9 +125,9 @@ def get_or_create_party_ledger(party_type: str, party_id, *, location_id=None):
             acct, _created = ChartOfAccount.objects.get_or_create(
                 party_type=party_type,
                 party_id=party_id,
-                location_id=None,
+                location_id=location_id,
                 defaults={
-                    'account_code': party_ledger_code(party_type, party_id),
+                    'account_code': party_ledger_code(party_type, party_id, location_id),
                     'account_name': _party_name(party_type, party_id),
                     'account_type': cfg['account_type'],
                     'account_subtype': cfg['subtype'],
@@ -136,7 +139,7 @@ def get_or_create_party_ledger(party_type: str, party_id, *, location_id=None):
         return acct
     except IntegrityError:
         # Lost a create race — the row now exists, re-fetch it.
-        return get_party_ledger(party_type, party_id)
+        return get_party_ledger(party_type, party_id, location_id)
 
 
 def retail_customer_types():
@@ -149,63 +152,39 @@ def retail_customer_types():
 
 
 def provision_all_party_ledgers(*, suppliers=True, customers=True):
-    """Idempotently create a ledger for EVERY supplier and every non-retail
-    (B2B / institutional) customer in the inventory master.
+    """No-op under per-store party ledgers.
 
-    Returns {'suppliers_created': n, 'customers_created': n}. Safe to call
-    repeatedly — existing ledgers are skipped via a single prefetch, so steady
-    state is a couple of queries and no writes. Called automatically from
-    sync_all and by the provision_party_ledgers command. Respects the
-    PARTY_LEDGERS_ENABLED flag.
+    Pre-creating a leaf for every supplier/customer × every store would explode
+    the chart of accounts, so per-store leaves are instead created LAZILY at
+    posting time (resolve_party_account) — by the time a party-tagged line is
+    posted at a store, its leaf exists. Kept for call-site/flag compatibility
+    (sync_all, the provision command); returns zero counts. To split EXISTING
+    historical postings into per-store leaves, run
+    `manage.py backfill_party_ledgers_per_store`.
     """
-    from core.models import ChartOfAccount
-    result = {'suppliers_created': 0, 'customers_created': 0}
-    if not party_ledgers_enabled():
-        return result
-    from inventory_reader.models import SupplierRO, CustomerRO
-
-    if suppliers:
-        have = set(ChartOfAccount.objects
-                   .filter(party_type='Supplier', party_id__isnull=False)
-                   .values_list('party_id', flat=True))
-        for pid in SupplierRO.objects.values_list('id', flat=True):
-            if pid not in have:
-                get_or_create_party_ledger('Supplier', pid)
-                result['suppliers_created'] += 1
-
-    if customers:
-        retail = retail_customer_types()
-        have = set(ChartOfAccount.objects
-                   .filter(party_type='Customer', party_id__isnull=False)
-                   .values_list('party_id', flat=True))
-        for cid, ctype in CustomerRO.objects.values_list('id', 'customer_type'):
-            if cid in have or (ctype or '').strip().lower() in retail:
-                continue
-            get_or_create_party_ledger('Customer', cid)
-            result['customers_created'] += 1
-
-    return result
+    return {'suppliers_created': 0, 'customers_created': 0}
 
 
-def resolve_party_account(party_type, party_id, fallback):
-    """The chokepoint posting sites use. Returns the per-party ledger when the
-    feature is enabled and the party is concrete; otherwise the fallback control
-    account (walk-in/cash, unlinked bills, or flag-off).
+def resolve_party_account(party_type, party_id, fallback, *, location_id=None):
+    """The chokepoint posting sites use. Returns the party's PER-STORE ledger
+    when the feature is enabled, the party is concrete AND a location is known;
+    otherwise the fallback control account (walk-in/cash, unlinked bills, no
+    location, or flag-off).
 
-    Degrades gracefully: if the per-party ledger can't be resolved/created
+    Degrades gracefully: if the per-store ledger can't be resolved/created
     (e.g. the 2105/1125 groups aren't seeded, or the inventory master is
     unreachable), it logs a warning and returns the control account so journal
-    posting never crashes. In a correctly-seeded environment this never trips.
+    posting never crashes.
     """
     if not party_ledgers_enabled():
         return fallback
-    if party_type not in _PARTY_CFG or not party_id:
+    if party_type not in _PARTY_CFG or not party_id or not location_id:
         return fallback
     try:
-        return get_or_create_party_ledger(party_type, party_id)
+        return get_or_create_party_ledger(party_type, party_id, location_id=location_id)
     except Exception as exc:
         logger.warning(
-            'Falling back to control account for %s#%s: %s',
-            party_type, party_id, exc,
+            'Falling back to control account for %s#%s @loc%s: %s',
+            party_type, party_id, location_id, exc,
         )
         return fallback
