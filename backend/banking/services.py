@@ -406,9 +406,11 @@ def mark_cheque_bounced(cheque, *, reason: str = '', bank_charge=None,
     if cheque.bounce_charge and cheque.bounce_charge > 0:
         from core.models import AccountMapping
         # Use the cheque's original-JE location so bank charges land on the
-        # right store's books; falls back to NULL/global if no location.
+        # right store's books; fall back to the cheque's bank account's store.
         loc = (cheque.journal_entry.location_id
                if cheque.journal_entry_id else None)
+        if loc is None and cheque.bank_account_id:
+            loc = cheque.bank_account.location_id
         try:
             bank_charges_acct = AccountMapping.get_account('BANK_CHARGES', location_id=loc)
             bank_acct = (cheque.bank_account.chart_account
@@ -423,7 +425,7 @@ def mark_cheque_bounced(cheque, *, reason: str = '', bank_charge=None,
                 narration=f'Bounce charge for cheque {cheque.cheque_no}',
                 voucher_type='PAYMENT',
                 reference_type='Manual',
-                location_id=cheque.journal_entry.location_id if cheque.journal_entry_id else None,
+                location_id=loc,
                 created_by=user,
             )
             JournalEntryLine.objects.create(
