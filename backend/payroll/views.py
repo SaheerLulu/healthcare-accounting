@@ -10,15 +10,20 @@ from .services import (
     generate_epfo_ecr_file, generate_esi_contribution_file,
 )
 from audit.utils import log_action
+from core.mixins import LocationFilterMixin, get_active_location
 
 
-class EmployeeViewSet(viewsets.ModelViewSet):
+class EmployeeViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     queryset = Employee.objects.all()
     serializer_class = EmployeeSerializer
     pagination_class = None
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        location = get_active_location(self.request)
+        extra = {}
+        if location and 'location_id' not in serializer.validated_data:
+            extra['location_id'] = location.id
+        instance = serializer.save(**extra)
         log_action('CREATE', 'Employee', instance.pk, str(instance), request=self.request)
 
     def perform_update(self, serializer):
@@ -30,13 +35,15 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         instance.delete()
 
 
-class SalaryStructureViewSet(viewsets.ModelViewSet):
+class SalaryStructureViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     queryset = SalaryStructure.objects.select_related('employee').all()
     serializer_class = SalaryStructureSerializer
     pagination_class = None
+    # Scope through the employee's store (SalaryStructure has no own location).
+    location_field = 'employee__location_id'
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset()  # LocationFilterMixin scopes via employee__location_id
         employee_id = self.request.query_params.get('employee_id')
         if employee_id:
             qs = qs.filter(employee_id=employee_id)

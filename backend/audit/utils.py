@@ -39,6 +39,18 @@ def log_action(action, model_name, object_id, object_repr, user=None, request=No
     if user is None and request is not None and request.user.is_authenticated:
         user = request.user
 
+    # Store scope for per-location audit isolation (metadata only — not hashed).
+    location_id = None
+    if request is not None:
+        location_id = getattr(request, 'active_location_id', None)
+        if location_id is None:
+            try:
+                from core.mixins import get_active_location
+                loc = get_active_location(request)
+                location_id = loc.id if loc else None
+            except Exception:
+                location_id = None
+
     last = AuditLog.objects.order_by('-id').only('content_hash').first()
     prev_hash = last.content_hash if last else ''
 
@@ -63,6 +75,7 @@ def log_action(action, model_name, object_id, object_repr, user=None, request=No
         changes=changes,
         ip_address=get_client_ip(request),
         extra=extra,
+        location_id=location_id,
         prev_hash=prev_hash,
         content_hash=content_hash,
     )

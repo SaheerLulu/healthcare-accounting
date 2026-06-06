@@ -1364,10 +1364,13 @@ class MSMEComplianceReportView(APIView):
             })
 
         # Aged payables: outstanding per supplier with the bill's accounting date
+        location = get_active_location(request)
         lines = (JournalEntryLine.objects
                  .filter(party_type='Supplier', party_id__in=msme_index.keys(),
                          entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of)
                  .select_related('entry', 'account'))
+        if location:
+            lines = lines.filter(entry__location_id=location.id)
 
         # Build per-supplier outstanding bills (by entry, not invoice — JE is the
         # accounting unit available)
@@ -1570,7 +1573,10 @@ class BankReconciliationSummaryView(APIView):
             request.query_params.get('as_of', date.today().isoformat()))
         bank_account_id = request.query_params.get('bank_account_id')
 
+        location = get_active_location(request)
         accounts = BankAccount.objects.all()
+        if location:
+            accounts = accounts.filter(location_id=location.id)
         if bank_account_id:
             accounts = accounts.filter(id=int(bank_account_id))
 
@@ -1927,14 +1933,17 @@ class CashFlowStatementView(APIView):
 
         # 6. Net change in cash
         cash_subtypes = ('Cash', 'Bank')
+        opening_cash_qs = JournalEntryLine.objects.filter(
+            account__account_subtype__in=cash_subtypes,
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lt=start,
+        )
+        if location:
+            # Same store scope as the period transactions, else opening cash
+            # would fold in every other store's historical balance.
+            opening_cash_qs = opening_cash_qs.filter(entry__location_id=location.id)
         opening_cash = sum(
-            (
-                Decimal(str((line.debit - line.credit)))
-                for line in JournalEntryLine.objects.filter(
-                    account__account_subtype__in=cash_subtypes,
-                    entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lt=start,
-                )
-            ), Decimal('0'),
+            (Decimal(str((line.debit - line.credit))) for line in opening_cash_qs),
+            Decimal('0'),
         )
         closing_cash = opening_cash + sum(
             (Decimal(str((l.debit - l.credit))) for l in all_lines

@@ -6,6 +6,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 
 from audit.utils import log_action
+from core.mixins import LocationFilterMixin, get_active_location
 from journals.models import JournalEntry
 
 from .models import BankAccount, BankTransaction, Cheque, PettyCashFloat, PettyCashTransaction
@@ -17,13 +18,13 @@ from .serializers import (
 from . import services
 
 
-class BankAccountViewSet(viewsets.ModelViewSet):
+class BankAccountViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     queryset = BankAccount.objects.select_related('chart_account')
     serializer_class = BankAccountSerializer
     pagination_class = None
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset()  # LocationFilterMixin scopes by location_id
         if self.request.query_params.get('is_active') == 'true':
             qs = qs.filter(is_active=True)
         if self.request.query_params.get('is_active') == 'false':
@@ -31,7 +32,15 @@ class BankAccountViewSet(viewsets.ModelViewSet):
         return qs.order_by('name')
 
     def perform_create(self, serializer):
-        instance = serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+        # Tag the account to the active store unless one is explicitly given.
+        location = get_active_location(self.request)
+        extra = {}
+        if location and 'location_id' not in serializer.validated_data:
+            extra['location_id'] = location.id
+        instance = serializer.save(
+            created_by=self.request.user if self.request.user.is_authenticated else None,
+            **extra,
+        )
         log_action('CREATE', 'BankAccount', instance.pk, str(instance), request=self.request)
 
     def perform_update(self, serializer):
@@ -77,12 +86,14 @@ class BankAccountViewSet(viewsets.ModelViewSet):
         return Response({'entry_no': je.entry_no}, status=status.HTTP_201_CREATED)
 
 
-class BankTransactionViewSet(viewsets.ModelViewSet):
+class BankTransactionViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     queryset = BankTransaction.objects.select_related('bank_account', 'matched_journal_entry')
     serializer_class = BankTransactionSerializer
+    # No own location_id — scope through the owning bank account's store.
+    location_field = 'bank_account__location_id'
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset()  # LocationFilterMixin scopes via bank_account__location_id
         params = self.request.query_params
         if params.get('bank_account'):
             qs = qs.filter(bank_account_id=params['bank_account'])
@@ -223,14 +234,14 @@ class BankTransactionViewSet(viewsets.ModelViewSet):
         return Response(BankTransactionSerializer(txn).data, status=status.HTTP_201_CREATED)
 
 
-class ChequeViewSet(viewsets.ModelViewSet):
+class ChequeViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     """Cheque register: PDC + clearance + bounce tracking (issued + received)."""
     queryset = Cheque.objects.select_related('bank_account', 'journal_entry',
                                              'bounce_journal_entry')
     serializer_class = ChequeSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset()  # LocationFilterMixin scopes by location_id
         params = self.request.query_params
         if (k := params.get('kind')):
             qs = qs.filter(kind=k)
@@ -244,8 +255,13 @@ class ChequeViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
+        location = get_active_location(self.request)
+        extra = {}
+        if location and 'location_id' not in serializer.validated_data:
+            extra['location_id'] = location.id
         instance = serializer.save(
             created_by=self.request.user if self.request.user.is_authenticated else None,
+            **extra,
         )
         log_action('CREATE', 'Cheque', instance.pk, str(instance), request=self.request)
 
@@ -279,7 +295,7 @@ class ChequeViewSet(viewsets.ModelViewSet):
         return Response(ChequeSerializer(cheque).data)
 
 
-class PettyCashFloatViewSet(viewsets.ModelViewSet):
+class PettyCashFloatViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     queryset = PettyCashFloat.objects.select_related('chart_account')
     serializer_class = PettyCashFloatSerializer
     pagination_class = None
