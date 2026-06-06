@@ -1014,8 +1014,9 @@ class JournalAutoGenerationService:
                 Cr Closing Stock              value
 
         Expiry write-offs land in Expiry Loss; damage/wastage in Inventory
-        Loss — both Indirect Expenses (abnormal losses), so they show up
-        separately from COGS in the P&L.
+        Loss — these keep their existing classification (write-offs are left
+        as-is, per client policy; only stock audit variances are reclassified
+        as indirect — see generate_stock_adjustment).
 
         Idempotent via reference_type='StockWriteOff' (reference_id = the
         StockMovement id), so re-running sync never double-posts. ITC
@@ -1065,11 +1066,12 @@ class JournalAutoGenerationService:
     def generate_stock_adjustment(self, movement_id):
         """Auto-post the GL effect of a physical-count stock audit adjustment.
 
-        Variances post against Closing Stock at weighted-average cost, with
-        the offset in Inventory Loss (an INDIRECT expense, per client policy):
+        Variances post against Closing Stock at weighted-average cost, with the
+        offset in Stock Audit Variance (5490) — a dedicated INDIRECT expense,
+        per client policy, kept separate from write-off losses:
 
-            shortage (qty < 0):  Dr Inventory Loss / Cr Closing Stock
-            overage  (qty > 0):  Dr Closing Stock  / Cr Inventory Loss  (gain)
+            shortage (qty < 0):  Dr Stock Audit Variance / Cr Closing Stock
+            overage  (qty > 0):  Dr Closing Stock / Cr Stock Audit Variance (gain)
 
         Idempotent via reference_type='StockAdjustment' (reference_id = the
         StockMovement id).
@@ -1088,7 +1090,7 @@ class JournalAutoGenerationService:
         if value <= 0:
             return None
 
-        loss_acct = self._acct('INVENTORY_LOSS', loc)
+        loss_acct = self._acct('STOCK_AUDIT_VARIANCE', loc)
         stock_acct = self._acct('CLOSING_STOCK', loc)
 
         entry = JournalEntry.objects.create(

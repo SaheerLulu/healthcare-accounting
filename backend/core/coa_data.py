@@ -224,13 +224,11 @@ LEAVES = [
     ('5510', 'Carriage Inward',                'EXPENSE',   'Other_Expense',     '5500', None),
     ('5520', 'Wages - Direct',                 'EXPENSE',   'Other_Expense',     '5500', None),
     ('5530', 'Power & Fuel',                   'EXPENSE',   'Other_Expense',     '5500', None),
+    # Write-off losses (damage / wastage / expiry) keep their existing
+    # Direct-Expenses classification — see generate_stock_writeoff.
+    ('5540', 'Inventory Loss / Shrinkage',     'EXPENSE',   'Other_Expense',     '5500', 'INVENTORY_LOSS'),
+    ('5550', 'Expired Stock Write-off',        'EXPENSE',   'Other_Expense',     '5500', 'EXPIRY_LOSS'),
     ('5560', 'Cost of Goods Sold',             'EXPENSE',   'Other_Expense',     '5500', 'COGS'),
-    # Inventory & expiry losses are ABNORMAL losses, not part of the trading
-    # (direct) cost of goods, so they sit under Indirect Expenses (5700). Stock
-    # audit variances and damage/expiry write-offs post here — see
-    # JournalAutoGenerationService.generate_stock_adjustment / _writeoff.
-    ('5540', 'Inventory Loss / Shrinkage',     'EXPENSE',   'Other_Expense',     '5700', 'INVENTORY_LOSS'),
-    ('5550', 'Expired Stock Write-off',        'EXPENSE',   'Other_Expense',     '5700', 'EXPIRY_LOSS'),
 
     # Indirect Expenses (5700) — Personnel
     ('5400', 'Salary Expense',                 'EXPENSE',   'Other_Expense',     '5700', 'SALARY_EXPENSE'),
@@ -296,6 +294,9 @@ LEAVES = [
     ('5483', 'Miscellaneous Expense',          'EXPENSE',   'Other_Expense',     '5700', None),
     ('5484', 'Subscriptions & Memberships',    'EXPENSE',   'Other_Expense',     '5700', None),
     ('5485', 'Books, Journals, CME',           'EXPENSE',   'Other_Expense',     '5700', None),
+    # Stock audit (physical-count) variances post here as an INDIRECT expense,
+    # kept separate from write-off losses — see generate_stock_adjustment.
+    ('5490', 'Stock Audit Variance',           'EXPENSE',   'Other_Expense',     '5700', 'STOCK_AUDIT_VARIANCE'),
 
     # Suspense / Round-off (6000)
     ('6100', 'Round Off',                      'EXPENSE',   'Other_Expense',     '6000', 'ROUND_OFF'),
