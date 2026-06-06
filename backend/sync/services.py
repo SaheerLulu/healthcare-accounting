@@ -498,8 +498,11 @@ class InventorySyncService:
         # exist even for parties that haven't transacted yet. Idempotent and
         # best-effort — a provisioning hiccup must not abort the sync.
         from core.party_ledgers import provision_all_party_ledgers
+        # Savepoint-isolated so a DB hiccup here rolls back cleanly instead of
+        # poisoning the rest of sync_all's transaction.
         try:
-            provisioned = provision_all_party_ledgers()
+            with transaction.atomic():
+                provisioned = provision_all_party_ledgers()
         except Exception:
             logger.exception('Party-ledger provisioning failed during sync_all')
             provisioned = {'suppliers_created': 0, 'customers_created': 0}
@@ -511,7 +514,8 @@ class InventorySyncService:
         # best-effort so a hiccup never aborts the sync.
         from core.location_coa import ensure_locations_bootstrapped
         try:
-            coa_bootstrapped = ensure_locations_bootstrapped()
+            with transaction.atomic():
+                coa_bootstrapped = ensure_locations_bootstrapped()
         except Exception:
             logger.exception('Per-store COA bootstrap failed during sync_all')
             coa_bootstrapped = {'locations': 0, 'accounts': 0, 'mappings': 0}

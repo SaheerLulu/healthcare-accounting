@@ -775,6 +775,8 @@ class JournalAutoGenerationService:
         split = compute_tax_split(taxable, gst_rate, supply_type)
 
         loc = rcm_data.get('location_id')
+        if loc is None:
+            raise ValueError('location_id is required to post an RCM voucher (store isolation).')
         entry = JournalEntry.objects.create(
             date=rcm_data['date'],
             narration=f"RCM: {rcm_data['service_type']} from {rcm_data['supplier_name']}",
@@ -804,6 +806,8 @@ class JournalAutoGenerationService:
     def generate_payment(self, data):
         """Generate payment journal entry (Phase 4C). Manual trigger."""
         loc = data.get('location_id')
+        if loc is None:
+            raise ValueError('location_id is required to post a Payment voucher (store isolation).')
         entry = JournalEntry.objects.create(
             date=data['date'],
             narration=data.get('narration', 'Payment'),
@@ -877,6 +881,8 @@ class JournalAutoGenerationService:
                 )
 
         loc = data.get('location_id')
+        if loc is None:
+            raise ValueError('location_id is required to post a Receipt voucher (store isolation).')
         entry = JournalEntry.objects.create(
             date=data['date'],
             narration=data.get('narration', 'Receipt'),
@@ -1230,6 +1236,8 @@ class JournalAutoGenerationService:
     def generate_contra(self, data):
         """Generate contra journal entry (Phase 4C). Manual trigger."""
         loc = data.get('location_id')
+        if loc is None:
+            raise ValueError('location_id is required to post a Contra voucher (store isolation).')
         entry = JournalEntry.objects.create(
             date=data['date'],
             narration=data.get('narration', 'Contra Entry'),

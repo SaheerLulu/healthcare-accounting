@@ -26,6 +26,10 @@ class AuditLog(models.Model):
     changes = models.JSONField(null=True, blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     extra = models.JSONField(null=True, blank=True)
+    # Store scope of the action, for per-location audit isolation. Metadata only
+    # (deliberately NOT part of the tamper-evident hash chain). NULL = legacy /
+    # company-level action, visible to all-location users only.
+    location_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
 
     # Tamper-evident hash chain. content_hash covers the row's payload;
     # prev_hash is the previous row's content_hash so any retro-edit breaks the chain.

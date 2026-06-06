@@ -7,6 +7,23 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import AuditLog
 from .serializers import AuditLogSerializer
+from core.mixins import get_active_location
+from core.middleware import _has_all_location_access
+
+
+def _scope_audit_qs(request, qs):
+    """Per-location audit isolation: a store only sees its own audit trail.
+
+    All-location users (superuser/admin) with no active location see everything
+    (consolidated); with a location they see that store. Regular users are
+    confined to their active store; legacy NULL-location rows stay hidden from
+    them (visible to all-location users only)."""
+    location = get_active_location(request)
+    if _has_all_location_access(request.user) and location is None:
+        return qs
+    if location:
+        return qs.filter(location_id=location.id)
+    return qs.none()
 
 
 class AuditLogFilter(django_filters.FilterSet):
@@ -33,12 +50,15 @@ class AuditLogListView(generics.ListAPIView):
     filter_backends = [django_filters.rest_framework.DjangoFilterBackend, filters.SearchFilter]
     search_fields = ['object_repr', 'model_name', 'user__username']
 
+    def get_queryset(self):
+        return _scope_audit_qs(self.request, super().get_queryset())
+
 
 class AuditLogCSVExportView(APIView):
     """WP 672 — CSV export of filtered audit log."""
 
     def get(self, request):
-        qs = AuditLog.objects.select_related('user').order_by('-timestamp')
+        qs = _scope_audit_qs(request, AuditLog.objects.select_related('user').order_by('-timestamp'))
         f = AuditLogFilter(request.query_params, queryset=qs)
         qs = f.qs[:50000]  # cap
 

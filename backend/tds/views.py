@@ -265,7 +265,7 @@ class TCSCollectionViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         return Response({'rows': rows, 'count': len(rows)})
 
 
-class Form26ASViewSet(viewsets.ModelViewSet):
+class Form26ASViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     """Form 26AS — TDS deducted on payments received by the company.
 
     Workflow:

@@ -113,20 +113,39 @@ def bootstrap_location(loc_id, loc_name, loc_code, *, dry_run=False):
 def ensure_locations_bootstrapped(*, only_missing=True):
     """Bootstrap per-store COA for every inventory location, cheaply.
 
-    Intended to run on every sync: a single `exists`-style query collects the
-    locations that already have clones, and the heavy clone work runs ONLY for
-    stores that have none yet (genuinely new stores). Returns a summary dict.
-    Best-effort callers should still wrap this in try/except.
+    Intended to run on every sync. Detects, per location, whether every
+    non-shared mapping key already has a per-store override; a store is
+    (re)bootstrapped when it is missing ANY of them. This catches both brand-new
+    stores AND stores bootstrapped before a new expense/cost account was added
+    (e.g. a newly un-shared ROUND_OFF, or a freshly added PETTY_EXPENSE), so no
+    cost ever silently falls back to a shared account. `bootstrap_location` is
+    idempotent, so it only fills the gaps. Best-effort: wrap in try/except.
     """
+    from collections import defaultdict
     from inventory_reader.models import LocationRO
 
     summary = {'locations': 0, 'accounts': 0, 'mappings': 0}
-    existing_clone_locs = set(
-        ChartOfAccount.objects.filter(location_id__isnull=False)
-        .values_list('location_id', flat=True).distinct()
+
+    # Every mapping key that SHOULD have a per-store override.
+    nonshared_keys = set(
+        AccountMapping.objects.filter(location_id__isnull=True)
+        .exclude(key__in=AccountMapping.SHARED_KEYS)
+        .values_list('key', flat=True)
     )
+    if not nonshared_keys:
+        return summary
+
+    # Per-location keys that already have an override.
+    have = defaultdict(set)
+    for loc_id, key in (
+        AccountMapping.objects.filter(location_id__isnull=False, key__in=nonshared_keys)
+        .values_list('location_id', 'key')
+    ):
+        have[loc_id].add(key)
+
     for loc in LocationRO.objects.all().order_by('id'):
-        if only_missing and loc.id in existing_clone_locs:
+        missing = nonshared_keys - have.get(loc.id, set())
+        if only_missing and not missing:
             continue
         code = derive_location_code(loc.name)
         clones, mappings = bootstrap_location(loc.id, loc.name, code)
