@@ -119,3 +119,41 @@ class BootstrapLocationCOATests(TestCase):
         self._run(loc_id=8, loc_name='Delhi', dry_run=True)
         self.assertEqual(ChartOfAccount.objects.filter(location_id=8).count(), 0)
         self.assertEqual(AccountMapping.objects.filter(location_id=8).count(), 0)
+
+
+class EnsureLocationsBootstrappedTests(TestCase):
+    """The sync hook auto-bootstraps only stores that have no clones yet."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+
+    def _ensure(self, locations):
+        from core import location_coa
+        with patch('inventory_reader.models.LocationRO') as MockLoc:
+            MockLoc.objects.all.return_value.order_by.return_value = locations
+            return location_coa.ensure_locations_bootstrapped()
+
+    def test_bootstraps_new_store(self):
+        summary = self._ensure([_FakeLocation(7, 'Mumbai Branch')])
+        self.assertEqual(summary['locations'], 1)
+        self.assertTrue(summary['accounts'] > 0)
+        self.assertTrue(
+            ChartOfAccount.objects.filter(account_code='1110-MUM', location_id=7).exists()
+        )
+
+    def test_skips_already_bootstrapped_store(self):
+        loc = _FakeLocation(7, 'Mumbai Branch')
+        self._ensure([loc])               # first run creates clones
+        summary = self._ensure([loc])     # second run must be a no-op
+        self.assertEqual(summary['locations'], 0)
+        self.assertEqual(summary['accounts'], 0)
+        self.assertEqual(summary['mappings'], 0)
+
+    def test_only_new_store_among_existing(self):
+        mum, delhi = _FakeLocation(7, 'Mumbai'), _FakeLocation(8, 'Delhi')
+        self._ensure([mum])                       # Mumbai done
+        summary = self._ensure([mum, delhi])      # only Delhi is new
+        self.assertEqual(summary['locations'], 1)
+        self.assertTrue(
+            ChartOfAccount.objects.filter(account_code='1110-DEL', location_id=8).exists()
+        )
