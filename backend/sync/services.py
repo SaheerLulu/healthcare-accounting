@@ -6,7 +6,7 @@ from decimal import Decimal
 from django.db import transaction, connection
 from inventory_reader.models import (
     PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO,
-    OpeningStockRO,
+    OpeningStockRO, StockMovementRO,
 )
 from journals.models import JournalEntry
 from journals.services import JournalAutoGenerationService
@@ -273,6 +273,68 @@ class InventorySyncService:
         self._record_metrics('purchase_return', started, errors_before)
         return count
 
+    def sync_stock_writeoffs(self, since_id: int = 0) -> int:
+        """Post a loss JV for every inventory write-off (damage/wastage/expiry).
+
+        Reads the inventory StockMovement audit log directly — write-offs have
+        no separate header document, the movement IS the record. Idempotent via
+        reference_type='StockWriteOff'.
+        """
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='stock_writeoff', resolved=False).count()
+        already_synced = self._synced_ids('StockWriteOff')
+        movements = StockMovementRO.objects.filter(
+            movement_type__in=JournalAutoGenerationService.WRITEOFF_MOVEMENT_TYPES,
+        ).exclude(id__in=already_synced).order_by('id')
+
+        count = 0
+        last_id = since_id
+        for mv in movements:
+            try:
+                entry = self.journal_service.generate_stock_writeoff(mv.id)
+                if entry:
+                    count += 1
+                self._resolve_error('stock_writeoff', mv.id)
+                last_id = max(last_id, mv.id)
+            except Exception as e:
+                self._log_error('stock_writeoff', mv.id, e)
+
+        SyncLog.objects.update_or_create(
+            sync_type='stock_writeoff',
+            defaults={'last_synced_id': last_id, 'records_processed': count}
+        )
+        self._record_metrics('stock_writeoff', started, errors_before)
+        return count
+
+    def sync_stock_adjustments(self, since_id: int = 0) -> int:
+        """Post a variance JV for every physical-count stock audit adjustment.
+        Idempotent via reference_type='StockAdjustment'."""
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='stock_adjustment', resolved=False).count()
+        already_synced = self._synced_ids('StockAdjustment')
+        movements = StockMovementRO.objects.filter(
+            movement_type='adjustment',
+        ).exclude(id__in=already_synced).order_by('id')
+
+        count = 0
+        last_id = since_id
+        for mv in movements:
+            try:
+                entry = self.journal_service.generate_stock_adjustment(mv.id)
+                if entry:
+                    count += 1
+                self._resolve_error('stock_adjustment', mv.id)
+                last_id = max(last_id, mv.id)
+            except Exception as e:
+                self._log_error('stock_adjustment', mv.id, e)
+
+        SyncLog.objects.update_or_create(
+            sync_type='stock_adjustment',
+            defaults={'last_synced_id': last_id, 'records_processed': count}
+        )
+        self._record_metrics('stock_adjustment', started, errors_before)
+        return count
+
     def retry_failed(self):
         """Retry all unresolved sync errors."""
         errors = SyncError.objects.filter(resolved=False)
@@ -292,6 +354,10 @@ class InventorySyncService:
                     self.journal_service.generate_sales_return(error.source_id)
                 elif error.sync_type == 'purchase_return':
                     self.journal_service.generate_purchase_return(error.source_id)
+                elif error.sync_type == 'stock_writeoff':
+                    self.journal_service.generate_stock_writeoff(error.source_id)
+                elif error.sync_type == 'stock_adjustment':
+                    self.journal_service.generate_stock_adjustment(error.source_id)
                 else:
                     continue
 
@@ -392,7 +458,9 @@ class InventorySyncService:
                     'skipped': True,
                     'reason': 'another sync is already running',
                     'opening_stocks': 0, 'purchases': 0, 'pos': 0, 'b2b': 0,
-                    'returns': 0, 'purchase_returns': 0, 'reversed_cancelled': 0,
+                    'returns': 0, 'purchase_returns': 0,
+                    'stock_writeoffs': 0, 'stock_adjustments': 0,
+                    'reversed_cancelled': 0,
                     'total': 0,
                 }
             return self._sync_all_locked()
@@ -415,13 +483,16 @@ class InventorySyncService:
         b2b_count = self.sync_b2b(SyncLog.get_last_id('b2b'))
         return_count = self.sync_returns(SyncLog.get_last_id('return'))
         purchase_return_count = self.sync_purchase_returns(SyncLog.get_last_id('purchase_return'))
+        writeoff_count = self.sync_stock_writeoffs(SyncLog.get_last_id('stock_writeoff'))
+        adjustment_count = self.sync_stock_adjustments(SyncLog.get_last_id('stock_adjustment'))
 
         # After posting new orders, back out any previously-synced order that
         # was cancelled upstream so the books don't drift from inventory.
         reversed_cancelled = self.reverse_cancelled()
 
         total = (opening_stock_count + purchase_count + pos_count + b2b_count
-                 + return_count + purchase_return_count)
+                 + return_count + purchase_return_count
+                 + writeoff_count + adjustment_count)
         SyncLog.objects.create(
             sync_type='all',
             last_synced_id=0,
@@ -435,6 +506,8 @@ class InventorySyncService:
             'b2b': b2b_count,
             'returns': return_count,
             'purchase_returns': purchase_return_count,
+            'stock_writeoffs': writeoff_count,
+            'stock_adjustments': adjustment_count,
             'reversed_cancelled': reversed_cancelled,
             'party_ledgers': provisioned,
             'total': total,
@@ -447,6 +520,7 @@ AUTO_GEN_REF_TYPES = (
     'OpeningStock',
     'PurchaseOrder', 'POSOrder', 'B2BSalesOrder',
     'SalesReturn', 'PurchaseReturn',
+    'StockWriteOff', 'StockAdjustment',
 )
 
 
