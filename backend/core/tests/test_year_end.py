@@ -47,7 +47,7 @@ class CloseFiscalYearTests(TestCase):
         self._book_revenue(Decimal('100000'))
         self._book_expense(Decimal('40000'))
 
-        result = close_fiscal_year(2025, generate_opening=False)
+        result = close_fiscal_year(2025, location_id=1, generate_opening=False)
         self.assertEqual(result['fy'], '2025-26')
         self.assertEqual(result['net_profit'], '60000.00')
 
@@ -71,25 +71,25 @@ class CloseFiscalYearTests(TestCase):
         self._book_revenue(Decimal('20000'))
         self._book_expense(Decimal('50000'))
 
-        result = close_fiscal_year(2025, generate_opening=False)
+        result = close_fiscal_year(2025, location_id=1, generate_opening=False)
         self.assertEqual(result['net_profit'], '-30000.00')
 
     def test_close_twice_raises(self):
         self._book_revenue(Decimal('100'))
         self._book_expense(Decimal('40'))
-        close_fiscal_year(2025, generate_opening=False)
+        close_fiscal_year(2025, location_id=1, generate_opening=False)
         with self.assertRaises(ValueError):
-            close_fiscal_year(2025, generate_opening=False)
+            close_fiscal_year(2025, location_id=1, generate_opening=False)
 
     def test_close_no_pl_activity_raises(self):
         with self.assertRaises(ValueError):
-            close_fiscal_year(2025, generate_opening=False)
+            close_fiscal_year(2025, location_id=1, generate_opening=False)
 
     def test_opening_balances_generated(self):
         self._book_revenue(Decimal('100000'))
         self._book_expense(Decimal('40000'))
         # also book some BS-side activity (cash already has balance from above)
-        result = close_fiscal_year(2025, generate_opening=True)
+        result = close_fiscal_year(2025, location_id=1, generate_opening=True)
         self.assertIsNotNone(result['opening_entry_no'])
 
         # Opening JV should be dated in the new FY

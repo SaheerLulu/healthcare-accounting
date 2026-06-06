@@ -39,8 +39,11 @@ DEFAULT_BUCKETS = [
 
 
 def compute_required_provision(*, as_of: date = None,
-                               buckets=None) -> tuple[Decimal, list]:
-    """Walk receivables aging and compute the total required provision balance."""
+                               buckets=None, location_id=None) -> tuple[Decimal, list]:
+    """Walk receivables aging and compute the total required provision balance.
+
+    Scoped to `location_id` when given so each store provisions only its own
+    receivables (store isolation)."""
     as_of = as_of or date.today()
     buckets = buckets or DEFAULT_BUCKETS
 
@@ -49,6 +52,8 @@ def compute_required_provision(*, as_of: date = None,
              .filter(account__account_subtype='Receivable',
                      entry__is_posted=True, entry__date__lte=as_of)
              .select_related('entry'))
+    if location_id is not None:
+        lines = lines.filter(entry__location_id=location_id)
 
     # Build per-customer aging
     from collections import defaultdict
@@ -88,15 +93,17 @@ def compute_required_provision(*, as_of: date = None,
     return total_provision, rows
 
 
-def existing_provision_balance() -> Decimal:
-    """Current credit balance on the Provision for Doubtful Debts account."""
+def existing_provision_balance(location_id=None) -> Decimal:
+    """Current credit balance on the Provision for Doubtful Debts account.
+    Scoped to `location_id` when given (store isolation)."""
     try:
-        prov_acct = AccountMapping.get_account('PROVISION_BAD_DEBTS')
+        prov_acct = AccountMapping.get_account('PROVISION_BAD_DEBTS', location_id=location_id)
     except ValueError:
         return Decimal('0')
-    agg = JournalEntryLine.objects.filter(
-        account=prov_acct, entry__is_posted=True,
-    ).aggregate(d=Sum('debit'), c=Sum('credit'))
+    qs = JournalEntryLine.objects.filter(account=prov_acct, entry__is_posted=True)
+    if location_id is not None:
+        qs = qs.filter(entry__location_id=location_id)
+    agg = qs.aggregate(d=Sum('debit'), c=Sum('credit'))
     return (agg['c'] or Decimal('0')) - (agg['d'] or Decimal('0'))
 
 
@@ -108,14 +115,16 @@ def post_provision_adjustment(*, as_of: date = None, location_id: int = None,
     Returns the computation + JE info.
     """
     as_of = as_of or date.today()
-    required, rows = compute_required_provision(as_of=as_of)
-    existing = existing_provision_balance()
+    if location_id is None:
+        raise ValueError('location_id is required to post a bad-debts provision (store isolation).')
+    required, rows = compute_required_provision(as_of=as_of, location_id=location_id)
+    existing = existing_provision_balance(location_id=location_id)
     delta = required - existing
 
     je_info = None
     if abs(delta) > Decimal('0.005'):
-        bd_exp = AccountMapping.get_account('BAD_DEBTS_EXPENSE')
-        prov = AccountMapping.get_account('PROVISION_BAD_DEBTS')
+        bd_exp = AccountMapping.get_account('BAD_DEBTS_EXPENSE', location_id=location_id)
+        prov = AccountMapping.get_account('PROVISION_BAD_DEBTS', location_id=location_id)
         je = JournalEntry.objects.create(
             date=as_of,
             narration=narration or

@@ -138,7 +138,7 @@ class ChartOfAccount(models.Model):
     def __str__(self):
         return f"{self.account_code} - {self.account_name}"
 
-    def get_balance(self, start_date=None, end_date=None):
+    def get_balance(self, start_date=None, end_date=None, location_id=None):
         from journals.models import JournalEntryLine
 
         # Optional/memorandum vouchers do not affect the books.
@@ -153,6 +153,8 @@ class ChartOfAccount(models.Model):
             qs = qs.filter(entry__date__gte=start_date)
         if end_date:
             qs = qs.filter(entry__date__lte=end_date)
+        if location_id is not None:
+            qs = qs.filter(entry__location_id=location_id)
 
         totals = qs.aggregate(
             total_debit=Sum('debit'),

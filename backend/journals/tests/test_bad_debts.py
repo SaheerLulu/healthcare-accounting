@@ -61,15 +61,15 @@ class BadDebtsTests(TestCase):
 
     def test_post_adjustment_creates_je(self):
         self._book_receivable(10000, customer_id=3, on=date(2026, 1, 1))
-        result = post_provision_adjustment(as_of=date(2026, 5, 1))
+        result = post_provision_adjustment(as_of=date(2026, 5, 1), location_id=1)
         self.assertEqual(result['adjustment'], '2500.00')
         self.assertIsNotNone(result['journal_entry'])
 
     def test_no_je_when_no_change_needed(self):
         # First run sets provision
         self._book_receivable(10000, customer_id=4, on=date(2026, 1, 1))
-        post_provision_adjustment(as_of=date(2026, 5, 1))
+        post_provision_adjustment(as_of=date(2026, 5, 1), location_id=1)
         # Second run on same date — no change
-        result = post_provision_adjustment(as_of=date(2026, 5, 1))
+        result = post_provision_adjustment(as_of=date(2026, 5, 1), location_id=1)
         self.assertEqual(result['adjustment'], '0.00')
         self.assertIsNone(result['journal_entry'])

@@ -44,7 +44,7 @@ class BalanceSheetCarryForwardTests(TestCase):
         self._book('1110', '4100', Decimal('100000'), date(2025, 6, 15))
         self._book('5410', '1110', Decimal('40000'), date(2025, 7, 10))
 
-        close_fiscal_year(2025, generate_opening=True)  # posts the opening JV
+        close_fiscal_year(2025, location_id=1, generate_opening=True)  # posts the opening JV
 
         resp = self._balance_sheet('2026-06-01')
         assets = {i['account_code']: Decimal(i['balance']) for i in resp.data['assets']['items']}
@@ -58,7 +58,7 @@ class BalanceSheetCarryForwardTests(TestCase):
         # the opening JV is its brought-forward, so it is NOT excluded there.
         self._book('1110', '4100', Decimal('100000'), date(2025, 6, 15))
         self._book('5410', '1110', Decimal('40000'), date(2025, 7, 10))
-        close_fiscal_year(2025, generate_opening=True)
+        close_fiscal_year(2025, location_id=1, generate_opening=True)
 
         request = self.factory.get(
             '/api/reports/trial-balance/',

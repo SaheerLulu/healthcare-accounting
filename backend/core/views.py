@@ -545,10 +545,12 @@ class CloseFiscalYearView(APIView):
             return Response({'detail': 'fy_start_year must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
 
         from django.core.exceptions import ValidationError as DjangoValidationError
+        from core.mixins import get_active_location
+        _loc = get_active_location(request)
         try:
             result = close_fiscal_year(
                 fy_start_year,
-                location_id=request.data.get('location_id'),
+                location_id=request.data.get('location_id') or (_loc.id if _loc else None),
                 generate_opening=bool(request.data.get('generate_opening', True)),
                 user=request.user if request.user.is_authenticated else None,
             )

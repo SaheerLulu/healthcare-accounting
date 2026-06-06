@@ -48,6 +48,7 @@ def void_opening_balance_je(ob, *, user=None):
                 voucher_type='JOURNAL',
                 reference_type=OPENING_BALANCE_REFERENCE,
                 reference_id=ob.party_id,
+                location_id=old.location_id,
                 reversal_of=old,
                 created_by=user,
             )
@@ -80,6 +81,9 @@ def post_opening_balance_je(ob, *, user=None):
     if amount == 0:
         return None
 
+    if ob.location_id is None:
+        raise ValueError('Opening balance must have a location (store isolation).')
+
     ledger = get_or_create_party_ledger(ob.party_type, ob.party_id)
     obe = AccountMapping.get_account('OPENING_BALANCE_EQUITY')
 
@@ -89,6 +93,7 @@ def post_opening_balance_je(ob, *, user=None):
         voucher_type='JOURNAL',
         reference_type=OPENING_BALANCE_REFERENCE,
         reference_id=ob.party_id,
+        location_id=ob.location_id,
         created_by=user,
     )
 

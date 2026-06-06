@@ -18,10 +18,13 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument('fy', type=str, help='Financial year to close (e.g., 2024-25)')
+        parser.add_argument('--location-id', type=int, required=True,
+                            help='Store to close (required — closing is per store).')
 
     @transaction.atomic
     def handle(self, *args, **options):
         fy = options['fy']
+        location_id = options['location_id']
 
         try:
             start_year, end_suffix = fy.split('-')
@@ -45,10 +48,11 @@ class Command(BaseCommand):
         if settings.last_closed_fy == fy:
             raise CommandError(f'FY {fy} is already closed.')
 
-        # Get all posted entries in this FY
+        # Get all posted entries in this FY, scoped to the store being closed.
         lines_qs = JournalEntryLine.objects.filter(
             entry__is_posted=True,
             entry__date__range=[fy_start, fy_end],
+            entry__location_id=location_id,
         )
 
         # Revenue accounts: close credit balances
@@ -61,6 +65,7 @@ class Command(BaseCommand):
             narration=f'FY {fy} Closing Entry',
             voucher_type='JOURNAL',
             reference_type='Manual',
+            location_id=location_id,
         )
 
         net_income = Decimal('0.00')

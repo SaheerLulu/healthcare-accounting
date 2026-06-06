@@ -126,18 +126,19 @@ def post_monthly_depreciation(period: str, *, location_id: int = None,
     if location_id is not None:
         qs = qs.filter(location_id=location_id)
 
-    # Group by asset_class so we post one JE per class (cleaner ledger)
-    by_class = {}
+    # Group by (location, asset_class): one JE per class PER STORE so each
+    # store's books carry only its own depreciation (store isolation).
+    by_group = {}
     for asset in qs:
         if DepreciationEntry.objects.filter(fixed_asset=asset, period=period).exists():
             continue
         amt = compute_monthly_depreciation(asset, period=period)
         if amt <= 0:
             continue
-        by_class.setdefault(asset.asset_class_id, []).append((asset, amt))
+        by_group.setdefault((asset.location_id, asset.asset_class_id), []).append((asset, amt))
 
     posted = []
-    for class_id, items in by_class.items():
+    for (loc_id, class_id), items in by_group.items():
         if not items:
             continue
         ac = items[0][0].asset_class
@@ -147,7 +148,7 @@ def post_monthly_depreciation(period: str, *, location_id: int = None,
             date=period_end,
             narration=f'Depreciation for {period} — {ac.name}',
             voucher_type='JOURNAL', reference_type='Manual',
-            location_id=location_id,
+            location_id=loc_id,
             created_by=user,
         )
         JournalEntryLine.objects.create(
