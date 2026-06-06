@@ -382,12 +382,18 @@ class AutoProvisionTests(TestCase):
         svc = InventorySyncService()
         sentinel = {'suppliers_created': 5, 'customers_created': 2}
         with patch('core.party_ledgers.provision_all_party_ledgers', return_value=sentinel) as mock_prov, \
+             patch('core.location_coa.ensure_locations_bootstrapped',
+                   return_value={'locations': 0, 'accounts': 0, 'mappings': 0}), \
              patch.object(svc, 'sync_opening_stocks', return_value=0), \
              patch.object(svc, 'sync_purchases', return_value=0), \
              patch.object(svc, 'sync_pos', return_value=0), \
              patch.object(svc, 'sync_b2b', return_value=0), \
              patch.object(svc, 'sync_returns', return_value=0), \
-             patch.object(svc, 'sync_purchase_returns', return_value=0):
+             patch.object(svc, 'sync_purchase_returns', return_value=0), \
+             patch.object(svc, 'sync_stock_writeoffs', return_value=0), \
+             patch.object(svc, 'sync_stock_adjustments', return_value=0), \
+             patch.object(svc, 'sync_petty_cash', return_value=0), \
+             patch.object(svc, 'reverse_cancelled', return_value=0):
             result = svc.sync_all()
         mock_prov.assert_called_once()
         self.assertEqual(result['party_ledgers'], sentinel)
