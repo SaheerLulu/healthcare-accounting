@@ -377,7 +377,10 @@ class StockMovementRO(models.Model):
         LocationRO, on_delete=models.DO_NOTHING, db_constraint=False
     )
     movement_type = models.CharField(max_length=30)
+    # Signed: +ve = stock in, -ve = stock out (e.g. write-off / shortage).
     quantity = models.IntegerField()
+    lot_name = models.CharField(max_length=100, blank=True)
+    notes = models.TextField(blank=True)
     reference_type = models.CharField(max_length=50, blank=True)
     reference_id = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField()

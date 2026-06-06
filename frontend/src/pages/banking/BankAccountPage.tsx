@@ -11,6 +11,7 @@ import {
   matchBankTxn, unmatchBankTxn, excludeBankTxn, restoreBankTxn,
   categorizeBankTxn, createBankTransaction, deleteBankTransaction,
   getChartOfAccounts, getSuppliers, getCustomers,
+  getCashInHand, depositCashToBank,
   type BankAccount, type BankTransaction, type Account, type Party, type MatchSuggestion,
 } from '../../lib/api'
 import { formatCurrency, formatDate, cn } from '../../lib/utils'
@@ -107,6 +108,9 @@ export default function BankAccountPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {account.account_type !== 'cash' && (
+            <DepositCashDialog bankAccount={account} onDeposited={load} />
+          )}
           <ImportCsvDialog bankAccount={account} onImported={load} />
           <ManualTxnSheet bankAccount={account} onCreated={load} />
         </div>
@@ -508,6 +512,75 @@ function CategorizeSheet({ txn, open, onClose, glAccounts, suppliers, customers,
         </form>
       </SheetContent>
     </Sheet>
+  )
+}
+
+// ─── Deposit cash dialog ───────────────────────────────────────────────────
+
+function DepositCashDialog({ bankAccount, onDeposited }: { bankAccount: BankAccount; onDeposited: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [amount, setAmount] = useState('')
+  const [narration, setNarration] = useState('')
+  const [cashInHand, setCashInHand] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    getCashInHand().then((d) => setCashInHand(d.cash_in_hand)).catch(() => setCashInHand(null))
+  }, [open])
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!amount || parseFloat(amount) <= 0) { toast.error('Amount must be > 0'); return }
+    setSaving(true)
+    try {
+      const r = await depositCashToBank(bankAccount.id, { date, amount, narration })
+      toast.success(`Cash deposited — ${r.entry_no}`)
+      setOpen(false); setAmount(''); setNarration(''); onDeposited()
+    } catch (err) {
+      const e = err as { response?: { data?: { detail?: string } } }
+      toast.error(e.response?.data?.detail || 'Failed to deposit cash')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => setOpen(o)}>
+      <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
+        <ArrowDownLeft size={14} /> Deposit Cash
+      </Button>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Deposit cash into {bankAccount.name}</DialogTitle></DialogHeader>
+        <p className="text-xs text-slate-500 mb-3">
+          Moves cash-in-hand (accumulated from cash sales) into this bank account.
+          Books <span className="font-mono">Dr {bankAccount.chart_account_code} / Cr Cash</span>.
+          {cashInHand != null && (
+            <> Current cash-in-hand: <span className="font-mono font-medium">{formatCurrency(cashInHand)}</span>.</>
+          )}
+        </p>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Date" required>
+              <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+            </Field>
+            <Field label="Amount" required>
+              <Input type="number" step="0.01" min="0.01" required value={amount}
+                onChange={(e) => setAmount(e.target.value)} className="text-right font-mono" placeholder="0.00" />
+            </Field>
+          </div>
+          <Field label="Narration">
+            <Input value={narration} onChange={(e) => setNarration(e.target.value)}
+              placeholder="e.g. Daily cash deposit" />
+          </Field>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="submit" disabled={saving}>
+              {saving && <Loader2 className="animate-spin" size={14} />} Deposit
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 

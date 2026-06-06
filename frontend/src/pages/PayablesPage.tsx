@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom'
 import { Loader2, Banknote, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  getBills, recordBillPayment,
-  type Bill,
+  getBills, recordBillPayment, getOpenSupplierInvoices,
+  type Bill, type OpenPartyInvoice,
 } from '../lib/api'
 import { formatCurrency, formatDate, cn } from '../lib/utils'
 import { Input } from '../components/ui/input'
@@ -14,17 +14,26 @@ import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
 import { EmptyState } from '../components/ui/EmptyState'
 import { SkeletonTable } from '../components/ui/Skeletons'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose,
 } from '../components/ui/sheet'
 
 /**
- * Payables — one row per open vendor bill. Each row shows the bill number,
- * dates, supplier, totals, and a Pay action that allocates the payment to
- * that specific bill via recordBillPayment (i.e. the BillPayment table).
+ * Payables — the full amount owed to suppliers/vendors, from BOTH sources:
+ *
+ *  - Supplier invoices: inventory purchases synced from the inventory system,
+ *    which post straight to the GL (party-tagged Trade Payables) and never
+ *    create a row in the bills app. Read from the open-supplier-invoices report.
+ *  - Vendor bills: manually-entered non-inventory bills (rent, utilities, …),
+ *    each with a Pay action that allocates a payment via recordBillPayment.
+ *
+ * Showing only the latter (the old behaviour) made the page understate
+ * payables vs the dashboard, which aggregates the GL. Both are surfaced here.
  */
 export default function PayablesPage() {
   const [bills, setBills] = useState<Bill[]>([])
+  const [supplierInvoices, setSupplierInvoices] = useState<OpenPartyInvoice[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [paying, setPaying] = useState<Bill | null>(null)
@@ -34,10 +43,16 @@ export default function PayablesPage() {
     try {
       const params: Record<string, string> = { status: 'open,partially_paid' }
       if (search) params.search = search
-      const res = await getBills(params)
-      setBills(res.results)
+      const supplierParams: Record<string, string> = {}
+      if (search) supplierParams.search = search
+      const [billRes, supplierRes] = await Promise.all([
+        getBills(params),
+        getOpenSupplierInvoices(supplierParams).catch(() => ({ rows: [] as OpenPartyInvoice[] })),
+      ])
+      setBills(billRes.results)
+      setSupplierInvoices(supplierRes.rows)
     } catch {
-      toast.error('Failed to load open bills')
+      toast.error('Failed to load payables')
     } finally {
       setLoading(false)
     }
@@ -65,6 +80,13 @@ export default function PayablesPage() {
     }, { total: 0, overdue: 0, count: 0 })
   }, [bills, today])
 
+  const supplierTotal = useMemo(
+    () => supplierInvoices.reduce(
+      (s, r) => s + (parseFloat(r.outstanding_amount || r.amount) || 0), 0),
+    [supplierInvoices],
+  )
+  const grandTotal = totals.total + supplierTotal
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -73,28 +95,92 @@ export default function PayablesPage() {
             Payables
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
-            <span className="mono">{totals.count}</span> open bills totalling{' '}
-            <span className="font-medium mono" style={{ color: 'var(--warning)' }}>{formatCurrency(totals.total)}</span>
+            Total outstanding{' '}
+            <span className="font-medium mono" style={{ color: 'var(--warning)' }}>{formatCurrency(grandTotal)}</span>
+            {' '}— <span className="mono">{formatCurrency(supplierTotal)}</span> supplier invoices,{' '}
+            <span className="mono">{formatCurrency(totals.total)}</span> vendor bills
             {totals.overdue > 0 && (
               <>
                 {' '}·{' '}
                 <span className="font-medium mono" style={{ color: 'var(--danger)' }}>
-                  {formatCurrency(totals.overdue)} overdue
+                  {formatCurrency(totals.overdue)} bills overdue
                 </span>
               </>
             )}
-            . Click Pay on a bill to record a payment against it.
+            .
           </p>
         </div>
         <Input
           type="text"
-          placeholder="Search bill # or vendor…"
+          placeholder="Search invoice/bill # or vendor…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-64"
         />
       </div>
 
+      <Tabs defaultValue="supplier-invoices">
+        <TabsList>
+          <TabsTrigger value="supplier-invoices">
+            Supplier Invoices ({supplierInvoices.length})
+          </TabsTrigger>
+          <TabsTrigger value="vendor-bills">
+            Vendor Bills ({bills.length})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="supplier-invoices">
+          {loading ? (
+            <SkeletonTable rows={6} cols={5} />
+          ) : supplierInvoices.length === 0 ? (
+            <EmptyState
+              icon={Banknote}
+              title="No open supplier invoices"
+              description="Confirmed inventory purchases appear here once synced. Run a sync if you expect entries."
+            />
+          ) : (
+            <Card className="overflow-hidden p-0">
+              <Table>
+                <Thead>
+                  <Tr>
+                    <Th className="text-left">Invoice #</Th>
+                    <Th className="text-left">Date</Th>
+                    <Th className="text-left">Supplier</Th>
+                    <Th className="text-right px-3">Amount</Th>
+                    <Th className="text-right px-3">Outstanding</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {supplierInvoices.map((r) => (
+                    <Tr key={`${r.invoice_no}-${r.party_id}`}>
+                      <Td className="font-medium mono">{r.invoice_no}</Td>
+                      <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(r.date)}</Td>
+                      <Td className="text-sm" style={{ color: 'var(--ink)' }}>{r.party_name}</Td>
+                      <Td className="text-right mono px-3" style={{ color: 'var(--ink)' }}>
+                        {formatCurrency(r.amount)}
+                      </Td>
+                      <Td className="text-right mono px-3 font-semibold" style={{ color: 'var(--warning)' }}>
+                        {formatCurrency(r.outstanding_amount || r.amount)}
+                      </Td>
+                    </Tr>
+                  ))}
+                </Tbody>
+                <tfoot>
+                  <tr style={{ borderTop: '2px solid var(--line)', background: 'var(--color-grey-light)' }} className="font-semibold">
+                    <td colSpan={4} className="py-3 px-4 text-sm" style={{ color: 'var(--ink-2)' }}>
+                      Total · {supplierInvoices.length} invoice{supplierInvoices.length === 1 ? '' : 's'}
+                    </td>
+                    <td className="py-3 px-3 text-right mono" style={{ color: 'var(--warning)' }}>
+                      {formatCurrency(supplierTotal)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </Table>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="vendor-bills">
       {loading ? (
         <SkeletonTable rows={6} cols={8} />
       ) : bills.length === 0 ? (
@@ -184,6 +270,8 @@ export default function PayablesPage() {
           </Table>
         </Card>
       )}
+        </TabsContent>
+      </Tabs>
 
       {paying && (
         <PayBillSheet

@@ -11,6 +11,7 @@ from inventory_reader.models import (
     PurchaseReturnRO,
     OpeningStockRO,
     OpeningStockLineRO,
+    StockMovementRO,
 )
 from core.models import AccountMapping, AccountingSettings
 from core.party_ledgers import resolve_party_account
@@ -995,6 +996,132 @@ class JournalAutoGenerationService:
                                             credit=itc - half)
         je.post()
         return je
+
+    # Inventory write-off movement types on the inventory side that the books
+    # must relieve as a loss.
+    WRITEOFF_MOVEMENT_TYPES = ('damage_write_off', 'wastage_write_off', 'expiry_write_off')
+
+    @transaction.atomic
+    def generate_stock_writeoff(self, movement_id):
+        """Auto-post the GL effect of an inventory write-off (damage / wastage /
+        expiry) recorded on the inventory side.
+
+        Books, valued at the product's weighted-average cost of the units
+        written off (the same basis COGS uses, so the stock account drains
+        correctly):
+
+            Dr Inventory Loss / Expiry Loss   value
+                Cr Closing Stock              value
+
+        Expiry write-offs land in Expiry Loss; damage/wastage in Inventory
+        Loss — these keep their existing classification (write-offs are left
+        as-is, per client policy; only stock audit variances are reclassified
+        as indirect — see generate_stock_adjustment).
+
+        Idempotent via reference_type='StockWriteOff' (reference_id = the
+        StockMovement id), so re-running sync never double-posts. ITC
+        reversal under CGST §17(5)(h), where applicable, remains a manual
+        Closing-Entries adjustment — the inventory feed carries no tax value.
+        """
+        if self._entry_exists('StockWriteOff', movement_id):
+            return None
+        mv = StockMovementRO.objects.get(id=movement_id)
+        if mv.movement_type not in self.WRITEOFF_MOVEMENT_TYPES:
+            return None
+        qty = abs(Decimal(str(mv.quantity or 0)))
+        if qty <= 0:
+            return None
+        loc = mv.location_id
+        cost = self._product_avg_cost(mv.product_id, loc)
+        value = (qty * cost).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        if value <= 0:
+            # No cost basis (e.g. never purchased) — nothing to relieve.
+            return None
+
+        loss_key = 'EXPIRY_LOSS' if mv.movement_type == 'expiry_write_off' else 'INVENTORY_LOSS'
+        loss_acct = self._acct(loss_key, loc)
+        stock_acct = self._acct('CLOSING_STOCK', loc)
+
+        entry = JournalEntry.objects.create(
+            date=mv.created_at.date(),
+            narration=(mv.notes or f'Stock write-off ({mv.movement_type})')
+                      + f' — movement #{movement_id}',
+            voucher_type='JOURNAL',
+            reference_type='StockWriteOff',
+            reference_id=movement_id,
+            location_id=loc,
+        )
+        JournalEntryLine.objects.create(
+            entry=entry, account=loss_acct, debit=value,
+            narration='Stock write-off loss',
+        )
+        JournalEntryLine.objects.create(
+            entry=entry, account=stock_acct, credit=value,
+            narration='Stock relieved',
+        )
+        entry.post()
+        return entry
+
+    @transaction.atomic
+    def generate_stock_adjustment(self, movement_id):
+        """Auto-post the GL effect of a physical-count stock audit adjustment.
+
+        Variances post against Closing Stock at weighted-average cost, with the
+        offset in Stock Audit Variance (5490) — a dedicated INDIRECT expense,
+        per client policy, kept separate from write-off losses:
+
+            shortage (qty < 0):  Dr Stock Audit Variance / Cr Closing Stock
+            overage  (qty > 0):  Dr Closing Stock / Cr Stock Audit Variance (gain)
+
+        Idempotent via reference_type='StockAdjustment' (reference_id = the
+        StockMovement id).
+        """
+        if self._entry_exists('StockAdjustment', movement_id):
+            return None
+        mv = StockMovementRO.objects.get(id=movement_id)
+        if mv.movement_type != 'adjustment':
+            return None
+        delta = Decimal(str(mv.quantity or 0))
+        if delta == 0:
+            return None
+        loc = mv.location_id
+        cost = self._product_avg_cost(mv.product_id, loc)
+        value = (abs(delta) * cost).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        if value <= 0:
+            return None
+
+        loss_acct = self._acct('STOCK_AUDIT_VARIANCE', loc)
+        stock_acct = self._acct('CLOSING_STOCK', loc)
+
+        entry = JournalEntry.objects.create(
+            date=mv.created_at.date(),
+            narration=(mv.notes or 'Stock audit adjustment')
+                      + f' — movement #{movement_id}',
+            voucher_type='JOURNAL',
+            reference_type='StockAdjustment',
+            reference_id=movement_id,
+            location_id=loc,
+        )
+        if delta < 0:   # shortage → expense
+            JournalEntryLine.objects.create(
+                entry=entry, account=loss_acct, debit=value,
+                narration='Inventory shortage (audit)',
+            )
+            JournalEntryLine.objects.create(
+                entry=entry, account=stock_acct, credit=value,
+                narration='Stock relieved',
+            )
+        else:           # overage → variance gain (reduces the loss account)
+            JournalEntryLine.objects.create(
+                entry=entry, account=stock_acct, debit=value,
+                narration='Inventory overage (audit)',
+            )
+            JournalEntryLine.objects.create(
+                entry=entry, account=loss_acct, credit=value,
+                narration='Inventory variance gain',
+            )
+        entry.post()
+        return entry
 
     @transaction.atomic
     def post_stock_transfer(self, *, date, value: Decimal,

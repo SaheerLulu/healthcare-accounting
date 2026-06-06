@@ -6,6 +6,7 @@ import {
   spendPettyCash, replenishPettyCash, getPettyCashTxns,
   type PettyCashFloat, type PettyCashTxn,
 } from '../../lib/api'
+import { useLocation } from '../../contexts/LocationContext'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import { Badge } from '../../components/ui/badge'
@@ -99,8 +100,9 @@ export default function PettyCashPage() {
 }
 
 function NewFloatDialog({ open, onClose, onSaved }: any) {
+  const { activeLocationId, activeLocation } = useLocation()
   const [data, setData] = useState({
-    location_id: '', location_name: '', chart_account: '',
+    chart_account: '',
     imprest_amount: '5000', replenishment_threshold: '1000',
     custodian_name: '',
   })
@@ -108,11 +110,10 @@ function NewFloatDialog({ open, onClose, onSaved }: any) {
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent>
         <DialogHeader><DialogTitle>New Petty Cash Float</DialogTitle></DialogHeader>
+        <p className="text-xs mb-2" style={{ color: 'var(--ink-2)' }}>
+          Float store: <strong>{activeLocation?.name || 'Select a store from the switcher first'}</strong>
+        </p>
         <div className="grid grid-cols-2 gap-3">
-          <Input placeholder="Location ID" value={data.location_id}
-                 onChange={(e) => setData({ ...data, location_id: e.target.value })} />
-          <Input placeholder="Location name" value={data.location_name}
-                 onChange={(e) => setData({ ...data, location_name: e.target.value })} />
           <Input placeholder="Cash GL account ID" value={data.chart_account}
                  onChange={(e) => setData({ ...data, chart_account: e.target.value })} />
           <Input placeholder="Custodian name" value={data.custodian_name}
@@ -125,10 +126,12 @@ function NewFloatDialog({ open, onClose, onSaved }: any) {
         <DialogFooter>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button onClick={async () => {
+            if (!activeLocationId) { toast.error('Select a store first'); return }
             try {
               await createPettyCashFloat({
                 ...data,
-                location_id: parseInt(data.location_id) as any,
+                location_id: activeLocationId as any,
+                location_name: activeLocation?.name ?? '',
                 chart_account: parseInt(data.chart_account) as any,
               })
               toast.success('Float created'); onSaved(); onClose()

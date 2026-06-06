@@ -1174,6 +1174,18 @@ export async function updateBankAccount(id: number, data: Partial<BankAccount>) 
   return res.data as BankAccount
 }
 
+export async function getCashInHand() {
+  const res = await api.get('/banking/accounts/cash-in-hand/')
+  return res.data as { location_id: number | null; cash_in_hand: string }
+}
+
+export async function depositCashToBank(id: number, payload: {
+  date: string; amount: string; narration?: string
+}) {
+  const res = await api.post(`/banking/accounts/${id}/deposit-cash/`, payload)
+  return res.data as { entry_no: string }
+}
+
 export async function deleteBankAccount(id: number) {
   await api.delete(`/banking/accounts/${id}/`)
 }
@@ -1400,6 +1412,32 @@ export async function generateGSTR3B(period: string, locationId: number) {
 export async function getGSTR3BSummaries(params?: Record<string, string>) {
   const res = await api.get('/gst/gstr3b/', { params })
   return res.data as { results: GSTR3BSummary[]; count: number }
+}
+
+export interface GstGrandSummarySlab {
+  rate: string
+  output: { taxable: string; cgst: string; sgst: string; igst: string; total_tax: string }
+  input: { taxable: string; cgst: string; sgst: string; igst: string; total_tax: string }
+}
+export interface GstGrandSummary {
+  period: string
+  return_type: string
+  business_name: string
+  gstin: string
+  location_id: number | null
+  slabs: GstGrandSummarySlab[]
+  output_totals: { taxable: string; cgst: string; sgst: string; igst: string; total_tax: string }
+  input_totals: { taxable: string; cgst: string; sgst: string; igst: string; total_tax: string }
+  net: {
+    total_liability: string; total_itc: string
+    net_cgst: string; net_sgst: string; net_igst: string
+    net_payable: string; itc_carry_forward: string
+    late_fee: string; interest: string
+  }
+}
+export async function getGstGrandSummary(period: string) {
+  const res = await api.get('/gst/grand-summary/', { params: { period } })
+  return res.data as GstGrandSummary
 }
 
 export async function generateGSTR2B(period: string, locationId: number) {

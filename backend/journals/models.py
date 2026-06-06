@@ -21,6 +21,8 @@ class JournalEntry(models.Model):
         ('B2BSalesOrder', 'B2B Sales Order'),
         ('SalesReturn', 'Sales Return'),
         ('PurchaseReturn', 'Purchase Return'),
+        ('StockWriteOff', 'Stock Write-off'),
+        ('StockAdjustment', 'Stock Audit Adjustment'),
         ('RCM', 'RCM Entry'),
         ('PartyOpeningBalance', 'Party Opening Balance'),
         ('OpeningCarryForward', 'Opening Carry-Forward'),

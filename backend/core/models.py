@@ -232,6 +232,7 @@ class AccountMapping(models.Model):
         ('SUSPENSE', 'Suspense Account'),
         ('COGS', 'Cost of Goods Sold (perpetual mode)'),
         ('OPENING_BALANCE_EQUITY', 'Opening Balance Equity'),
+        ('STOCK_AUDIT_VARIANCE', 'Stock Audit Variance (Indirect Expense)'),
     ]
 
     # Default mapping from key to account_code for data migration. These map
@@ -267,6 +268,7 @@ class AccountMapping(models.Model):
         'CLOSING_STOCK': '1190',
         'INVENTORY_LOSS': '5540',
         'EXPIRY_LOSS': '5550',
+        'STOCK_AUDIT_VARIANCE': '5490',
         'STOCK_TRANSFER_TRANSIT': '1191',
         'TCS_PAYABLE': '2210',
         'BAD_DEBTS_EXPENSE': '5480',
