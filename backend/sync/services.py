@@ -504,6 +504,18 @@ class InventorySyncService:
             logger.exception('Party-ledger provisioning failed during sync_all')
             provisioned = {'suppliers_created': 0, 'customers_created': 0}
 
+        # Auto-bootstrap the per-store Chart of Accounts for any location that
+        # doesn't have its clones yet, so a newly-added store gets separate
+        # settlement/sales/expense/inventory accounts without a manual
+        # `bootstrap_location_coa` run. Cheap (one query) when nothing is new;
+        # best-effort so a hiccup never aborts the sync.
+        from core.location_coa import ensure_locations_bootstrapped
+        try:
+            coa_bootstrapped = ensure_locations_bootstrapped()
+        except Exception:
+            logger.exception('Per-store COA bootstrap failed during sync_all')
+            coa_bootstrapped = {'locations': 0, 'accounts': 0, 'mappings': 0}
+
         opening_stock_count = self.sync_opening_stocks(SyncLog.get_last_id('opening_stock'))
         purchase_count = self.sync_purchases(SyncLog.get_last_id('purchase'))
         pos_count = self.sync_pos(SyncLog.get_last_id('pos'))
@@ -539,6 +551,7 @@ class InventorySyncService:
             'petty_cash': petty_cash_count,
             'reversed_cancelled': reversed_cancelled,
             'party_ledgers': provisioned,
+            'coa_bootstrapped': coa_bootstrapped,
             'total': total,
         }
 
