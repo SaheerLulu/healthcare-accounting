@@ -67,9 +67,22 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         from django.db.models import Count
-        # Annotate document count (number of journal lines) so list view stays fast.
+        # "Number of entries" per account must match the ledger you land on when
+        # you click it (reports.LedgerView): posted, non-optional, non-memorandum
+        # lines, scoped to the active store. A bare Count('journal_lines') counted
+        # every store and every status, so the figure looked wrong on click.
+        doc_filter = models.Q(
+            journal_lines__entry__is_posted=True,
+            journal_lines__entry__is_optional=False,
+            journal_lines__entry__is_memorandum=False,
+        )
+        scope = self.request.query_params.get('location_scope', 'auto')
+        if scope not in ('all', 'shared'):
+            location = get_active_location(self.request)
+            if location:
+                doc_filter &= models.Q(journal_lines__entry__location_id=location.id)
         qs = ChartOfAccount.objects.select_related('parent').annotate(
-            _documents_count=Count('journal_lines')
+            _documents_count=Count('journal_lines', filter=doc_filter)
         ).order_by('account_code')
 
         params = self.request.query_params
