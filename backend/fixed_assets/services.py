@@ -50,7 +50,7 @@ def post_acquisition(asset: FixedAsset, *, payment_mode: str = 'bank',
     if payment_mode == 'credit' and asset.vendor_id:
         from core.party_ledgers import resolve_party_account
         cr_kwargs['account'] = resolve_party_account(
-            'Supplier', asset.vendor_id, credit_acct)
+            'Supplier', asset.vendor_id, credit_acct, location_id=asset.location_id)
         cr_kwargs['party_type'] = 'Supplier'
         cr_kwargs['party_id'] = asset.vendor_id
     JournalEntryLine.objects.create(**cr_kwargs)

@@ -121,17 +121,13 @@ class ChartOfAccount(models.Model):
                 name='unique_account_code_per_location',
                 nulls_distinct=False,
             ),
-            # One ledger per party. Partial: only constrains party leaves.
+            # One ledger per party PER STORE. Partial: only constrains party
+            # leaves. Party ledgers are per-store (each store keeps its own
+            # balance with a party), so the store is part of the key.
             models.UniqueConstraint(
-                fields=['party_type', 'party_id'],
+                fields=['party_type', 'party_id', 'location_id'],
                 condition=models.Q(party_id__isnull=False),
-                name='uniq_party_ledger',
-            ),
-            # Party ledgers are shared-only: a row may carry party_id OR
-            # location_id, never both. Guarantees the consolidated statement.
-            models.CheckConstraint(
-                condition=models.Q(party_id__isnull=True) | models.Q(location_id__isnull=True),
-                name='party_ledger_shared_only',
+                name='uniq_party_ledger_per_location',
             ),
         ]
 

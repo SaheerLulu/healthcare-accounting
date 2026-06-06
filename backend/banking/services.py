@@ -313,7 +313,8 @@ def categorize_transaction(txn: BankTransaction, *, account_id: int,
         # to the party's own ledger so the GL line matches the party tag.
         if other.account_subtype in ('Receivable', 'Payable'):
             from core.party_ledgers import resolve_party_account
-            line2['account'] = resolve_party_account(party_type, party_id, other)
+            line2['account'] = resolve_party_account(
+                party_type, party_id, other, location_id=txn.bank_account.location_id)
         line2['party_type'] = party_type
         line2['party_id'] = party_id
     JournalEntryLine.objects.create(**line2)

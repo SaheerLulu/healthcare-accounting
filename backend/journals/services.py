@@ -69,7 +69,7 @@ class JournalAutoGenerationService:
         (a tag on a settled line would inflate AR aging)."""
         if payment_type == 'Credit':
             account = resolve_party_account(
-                'Customer', customer_id, self._acct('TRADE_RECEIVABLES', loc))
+                'Customer', customer_id, self._acct('TRADE_RECEIVABLES', loc), location_id=loc)
             tag = dict(party_type='Customer', party_id=customer_id) if customer_id else {}
         else:
             account = self._acct('CASH', loc)
@@ -324,7 +324,7 @@ class JournalAutoGenerationService:
             JournalEntryLine.objects.create(
                 entry=entry,
                 account=resolve_party_account(
-                    'Supplier', po.supplier_id, self._acct('TRADE_PAYABLES', loc)),
+                    'Supplier', po.supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc),
                 credit=total_payable,
                 party_type='Supplier',
                 party_id=po.supplier_id,
@@ -623,7 +623,7 @@ class JournalAutoGenerationService:
                         entry=entry,
                         account=resolve_party_account(
                             'Customer', ret.customer_id,
-                            self._acct('TRADE_RECEIVABLES', loc)),
+                            self._acct('TRADE_RECEIVABLES', loc), location_id=loc),
                         credit=total,
                         party_type='Customer',
                         party_id=ret.customer_id,
@@ -740,7 +740,7 @@ class JournalAutoGenerationService:
             JournalEntryLine.objects.create(
                 entry=entry,
                 account=resolve_party_account(
-                    'Supplier', ret.supplier_id, self._acct('TRADE_PAYABLES', loc)),
+                    'Supplier', ret.supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc),
                 debit=total_return,
                 party_type='Supplier',
                 party_id=ret.supplier_id,
@@ -824,7 +824,7 @@ class JournalAutoGenerationService:
         JournalEntryLine.objects.create(
             entry=entry,
             account=resolve_party_account(
-                'Supplier', supplier_id, self._acct('TRADE_PAYABLES', loc)),
+                'Supplier', supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc),
             debit=amount,
             party_type='Supplier',
             party_id=supplier_id,
@@ -900,7 +900,7 @@ class JournalAutoGenerationService:
         JournalEntryLine.objects.create(
             entry=entry,
             account=resolve_party_account(
-                'Customer', party_id, self._acct('TRADE_RECEIVABLES', loc)),
+                'Customer', party_id, self._acct('TRADE_RECEIVABLES', loc), location_id=loc),
             credit=amount,
             party_type='Customer',
             party_id=party_id,
@@ -1330,7 +1330,7 @@ def generate_one_recurring_journal(rj: RecurringJournal, *, user=None) -> Journa
         # stale template FK): a template line tagged to a party posts to that
         # party's current ledger, falling back to the template's own account.
         party_type = tl.party_type if tl.party_type in ('Supplier', 'Customer') else None
-        account = resolve_party_account(party_type, tl.party_id, tl.account)
+        account = resolve_party_account(party_type, tl.party_id, tl.account, location_id=rj.location_id)
         JournalEntryLine.objects.create(
             entry=entry, account=account,
             debit=tl.debit, credit=tl.credit,

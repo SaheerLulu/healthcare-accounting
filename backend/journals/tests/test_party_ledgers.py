@@ -80,34 +80,42 @@ class PartyLedgerResolverTests(TestCase):
         ensure_party_groups()
 
     def test_creates_supplier_leaf_under_2105(self):
-        led = get_or_create_party_ledger('Supplier', 5)
-        self.assertEqual(led.account_code, '2105-S5')
+        led = get_or_create_party_ledger('Supplier', 5, location_id=1)
+        self.assertEqual(led.account_code, '2105-S5-L1')
         self.assertEqual(led.account_subtype, 'Payable')
         self.assertEqual(led.account_type, 'LIABILITY')
         self.assertEqual(led.parent.account_code, '2105')
-        self.assertIsNone(led.location_id)
+        self.assertEqual(led.location_id, 1)
         self.assertTrue(led.is_leaf)
         self.assertEqual((led.party_type, led.party_id), ('Supplier', 5))
 
     def test_creates_customer_leaf_under_1125(self):
-        led = get_or_create_party_ledger('Customer', 9)
-        self.assertEqual(led.account_code, '1125-C9')
+        led = get_or_create_party_ledger('Customer', 9, location_id=1)
+        self.assertEqual(led.account_code, '1125-C9-L1')
         self.assertEqual(led.account_subtype, 'Receivable')
         self.assertEqual(led.parent.account_code, '1125')
 
     def test_idempotent(self):
-        a = get_or_create_party_ledger('Supplier', 5)
-        b = get_or_create_party_ledger('Supplier', 5)
+        a = get_or_create_party_ledger('Supplier', 5, location_id=1)
+        b = get_or_create_party_ledger('Supplier', 5, location_id=1)
         self.assertEqual(a.id, b.id)
         self.assertEqual(ChartOfAccount.objects.filter(party_type='Supplier', party_id=5).count(), 1)
 
-    def test_location_guard_rejects_per_location(self):
+    def test_requires_location(self):
+        # Per-store ledgers: a location is mandatory.
         with self.assertRaises(ValueError):
-            get_or_create_party_ledger('Supplier', 5, location_id=7)
+            get_or_create_party_ledger('Supplier', 5, location_id=None)
+
+    def test_distinct_leaf_per_store(self):
+        a = get_or_create_party_ledger('Supplier', 5, location_id=1)
+        b = get_or_create_party_ledger('Supplier', 5, location_id=2)
+        self.assertNotEqual(a.id, b.id)
+        self.assertEqual(a.account_code, '2105-S5-L1')
+        self.assertEqual(b.account_code, '2105-S5-L2')
 
     def test_first_child_demotes_group_to_non_leaf(self):
         ChartOfAccount.objects.filter(account_code='2105').update(is_leaf=True)
-        get_or_create_party_ledger('Supplier', 5)
+        get_or_create_party_ledger('Supplier', 5, location_id=1)
         self.assertFalse(ChartOfAccount.objects.get(account_code='2105').is_leaf)
 
     def test_resolve_returns_fallback_for_no_party(self):
@@ -116,7 +124,7 @@ class PartyLedgerResolverTests(TestCase):
 
     def test_resolve_returns_ledger_for_party(self):
         ctrl = AccountMapping.get_account('TRADE_PAYABLES')
-        self.assertEqual(resolve_party_account('Supplier', 5, ctrl).account_code, '2105-S5')
+        self.assertEqual(resolve_party_account('Supplier', 5, ctrl, location_id=1).account_code, '2105-S5-L1')
 
 
 class FlagOffTests(TestCase):
@@ -130,7 +138,7 @@ class FlagOffTests(TestCase):
     def test_resolve_falls_back_when_disabled(self):
         ctrl = AccountMapping.get_account('TRADE_PAYABLES')
         self.assertEqual(resolve_party_account('Supplier', 5, ctrl).id, ctrl.id)
-        self.assertIsNone(get_party_ledger('Supplier', 5))
+        self.assertIsNone(get_party_ledger('Supplier', 5, 1))
 
 
 @ENABLED
@@ -153,7 +161,7 @@ class RoutingTests(TestCase):
         ar = [l for l in entry.lines.all()
               if l.account.account_subtype == 'Receivable' and l.debit > 0]
         self.assertEqual(len(ar), 1)
-        self.assertEqual(ar[0].account.account_code, '1125-C42')
+        self.assertEqual(ar[0].account.account_code, '1125-C42-L1')
         self.assertEqual((ar[0].party_type, ar[0].party_id), ('Customer', 42))
         self.assertFalse(JournalEntryLine.objects.filter(
             entry=entry, account__account_code='1130').exists())
@@ -162,14 +170,14 @@ class RoutingTests(TestCase):
         entry = self._gen_b2b(_b2b_order(payment_type='Cash', customer_id=55))
         self.assertTrue(JournalEntryLine.objects.filter(
             entry=entry, account__account_code='1110').exists())
-        self.assertIsNone(get_party_ledger('Customer', 55))
+        self.assertIsNone(get_party_ledger('Customer', 55, 1))
 
     def test_payment_routes_to_supplier_ledger(self):
         entry = self.svc.generate_payment({
             'date': date(2026, 4, 15), 'amount': Decimal('500.00'),
             'party_id': 7, 'payment_mode': 'cash', 'location_id': 1})
         pay = [l for l in entry.lines.all() if l.account.account_subtype == 'Payable']
-        self.assertEqual(pay[0].account.account_code, '2105-S7')
+        self.assertEqual(pay[0].account.account_code, '2105-S7-L1')
         self.assertEqual((pay[0].party_type, pay[0].party_id), ('Supplier', 7))
 
     def test_receipt_routes_to_customer_ledger(self):
@@ -178,7 +186,7 @@ class RoutingTests(TestCase):
             'party_id': 9, 'receipt_mode': 'cash', 'skip_ar_check': True,
             'location_id': 1})
         rec = [l for l in entry.lines.all() if l.account.account_subtype == 'Receivable']
-        self.assertEqual(rec[0].account.account_code, '1125-C9')
+        self.assertEqual(rec[0].account.account_code, '1125-C9-L1')
 
     def test_payment_without_party_stays_on_control(self):
         entry = self.svc.generate_payment({
@@ -196,7 +204,7 @@ class TagLedgerInvariantTests(TestCase):
         ensure_party_groups()
         self.entry = JournalEntry.objects.create(
             date=date(2026, 4, 15), voucher_type='PAYMENT', location_id=1)
-        self.s1 = get_or_create_party_ledger('Supplier', 1)
+        self.s1 = get_or_create_party_ledger('Supplier', 1, location_id=1)
 
     def test_mismatched_party_tag_rejected(self):
         with self.assertRaises(ValidationError):
@@ -245,7 +253,7 @@ class ManualJEAutoRouteTests(TestCase):
         ser.is_valid(raise_exception=True)
         entry = ser.save()
         cust_line = entry.lines.get(party_id=33)
-        self.assertEqual(cust_line.account.account_code, '1125-C33')
+        self.assertEqual(cust_line.account.account_code, '1125-C33-L1')
 
     def _wrong_party_payload(self, ledger_id, tagged_party_id):
         cash = AccountMapping.get_account('CASH')
@@ -263,7 +271,7 @@ class ManualJEAutoRouteTests(TestCase):
         # M2: header party 44 but the line posts to Customer 55's own ledger —
         # must be rejected (not silently rerouted to 55).
         from journals.serializers import JournalEntryCreateSerializer
-        ledger_b = get_or_create_party_ledger('Customer', 55)
+        ledger_b = get_or_create_party_ledger('Customer', 55, location_id=1)
         ser = JournalEntryCreateSerializer(data=self._wrong_party_payload(ledger_b.id, 44))
         self.assertFalse(ser.is_valid())
         self.assertIn('lines', ser.errors)
@@ -272,7 +280,7 @@ class ManualJEAutoRouteTests(TestCase):
 
     def test_serializer_accepts_ledger_for_matching_party(self):
         from journals.serializers import JournalEntryCreateSerializer
-        ledger = get_or_create_party_ledger('Customer', 55)
+        ledger = get_or_create_party_ledger('Customer', 55, location_id=1)
         ser = JournalEntryCreateSerializer(data=self._wrong_party_payload(ledger.id, 55))
         self.assertTrue(ser.is_valid(), ser.errors)
 
@@ -297,7 +305,7 @@ class OpeningBalanceGLTests(TestCase):
         ob = self._make_ob('Supplier', 5, '1000.00')
         self.assertIsNotNone(ob.journal_entry)
         je = ob.journal_entry
-        led = get_party_ledger('Supplier', 5)
+        led = get_party_ledger('Supplier', 5, 1)
         self.assertEqual(je.reference_type, 'PartyOpeningBalance')
         # Creditor: Cr party ledger, Dr 3300.
         self.assertEqual(led.get_balance(), Decimal('-1000.00'))
@@ -306,7 +314,7 @@ class OpeningBalanceGLTests(TestCase):
 
     def test_customer_ob_posts_debit_to_ledger(self):
         self._make_ob('Customer', 9, '750.00')
-        led = get_party_ledger('Customer', 9)
+        led = get_party_ledger('Customer', 9, 1)
         self.assertEqual(led.get_balance(), Decimal('750.00'))
 
     def test_ob_not_double_counted_in_party_overview(self):
@@ -320,7 +328,7 @@ class OpeningBalanceGLTests(TestCase):
         from parties.opening_balance import void_opening_balance_je
         ob = self._make_ob('Supplier', 5, '1000.00')
         void_opening_balance_je(ob)
-        led = get_party_ledger('Supplier', 5)
+        led = get_party_ledger('Supplier', 5, 1)
         # Original + reversal net to zero on the ledger.
         self.assertEqual(led.get_balance(), Decimal('0.00'))
         self.assertIsNone(ob.journal_entry)
@@ -334,38 +342,13 @@ class AutoProvisionTests(TestCase):
         make_settings()
         ensure_party_groups()
 
-    def test_provisions_suppliers_and_non_retail_customers_only(self):
+    def test_provisioning_is_noop_under_per_store(self):
+        # Per-store party leaves are created lazily at posting time, so the
+        # proactive provisioner no longer pre-creates anything.
         from core.party_ledgers import provision_all_party_ledgers, get_party_ledger
-        with patch('inventory_reader.models.SupplierRO') as MS, \
-             patch('inventory_reader.models.CustomerRO') as MC:
-            MS.objects.values_list.return_value = [1, 2, 3]
-            MS.objects.filter.return_value.only.return_value.first.return_value = None
-            MC.objects.values_list.return_value = [
-                (10, 'B2B'), (11, 'Retail'), (12, 'Hospital'), (13, ''), (14, 'Clinic'),
-            ]
-            MC.objects.filter.return_value.only.return_value.first.return_value = None
-            res = provision_all_party_ledgers()
-        self.assertEqual(res['suppliers_created'], 3)
-        self.assertEqual(res['customers_created'], 3)  # B2B, Hospital, Clinic — not Retail/blank
-        for pid in (1, 2, 3):
-            self.assertIsNotNone(get_party_ledger('Supplier', pid))
-        for pid in (10, 12, 14):
-            self.assertIsNotNone(get_party_ledger('Customer', pid))
-        for pid in (11, 13):  # Retail / blank → no ledger
-            self.assertIsNone(get_party_ledger('Customer', pid))
-
-    def test_idempotent(self):
-        from core.party_ledgers import provision_all_party_ledgers
-        with patch('inventory_reader.models.SupplierRO') as MS, \
-             patch('inventory_reader.models.CustomerRO') as MC:
-            MS.objects.values_list.return_value = [1, 2]
-            MS.objects.filter.return_value.only.return_value.first.return_value = None
-            MC.objects.values_list.return_value = [(10, 'B2B')]
-            MC.objects.filter.return_value.only.return_value.first.return_value = None
-            first = provision_all_party_ledgers()
-            second = provision_all_party_ledgers()
-        self.assertEqual((first['suppliers_created'], first['customers_created']), (2, 1))
-        self.assertEqual((second['suppliers_created'], second['customers_created']), (0, 0))
+        res = provision_all_party_ledgers()
+        self.assertEqual(res, {'suppliers_created': 0, 'customers_created': 0})
+        self.assertIsNone(get_party_ledger('Supplier', 1, 1))
 
     def test_disabled_flag_provisions_nothing(self):
         from core.party_ledgers import provision_all_party_ledgers
@@ -418,7 +401,7 @@ class RollupTests(TestCase):
         children_total = sum(
             (c.get_balance() for c in ChartOfAccount.objects.filter(parent=sc)),
             Decimal('0.00'))
-        s1 = get_party_ledger('Supplier', 1).get_balance()
-        s2 = get_party_ledger('Supplier', 2).get_balance()
+        s1 = get_party_ledger('Supplier', 1, 1).get_balance()
+        s2 = get_party_ledger('Supplier', 2, 1).get_balance()
         self.assertEqual(children_total, s1 + s2)
         self.assertEqual(s1, Decimal('500.00'))  # Dr payable (payment reduces liability)

@@ -83,7 +83,7 @@ def post_bill(bill: Bill, user=None) -> JournalEntry:
     # Credit Trade Payables — the vendor's own ledger when the bill is linked
     # to a supplier, else the generic control (e.g. utility bills with no vendor).
     payable_acct = resolve_party_account(
-        'Supplier', bill.vendor_id, _acct('TRADE_PAYABLES', loc))
+        'Supplier', bill.vendor_id, _acct('TRADE_PAYABLES', loc), location_id=loc)
     payable_args = dict(entry=entry, account=payable_acct, credit=bill.total_amount)
     if bill.vendor_id:
         payable_args.update(party_type='Supplier', party_id=bill.vendor_id)
@@ -152,7 +152,7 @@ def record_payment(bill: Bill, *, date, amount, mode='bank',
 
     # Debit Trade Payables (the vendor's own ledger when linked, for outstanding tracking)
     payable_acct = resolve_party_account(
-        'Supplier', bill.vendor_id, _acct('TRADE_PAYABLES', loc))
+        'Supplier', bill.vendor_id, _acct('TRADE_PAYABLES', loc), location_id=loc)
     payable_args = dict(entry=pay_entry, account=payable_acct, debit=amount)
     if bill.vendor_id:
         payable_args.update(party_type='Supplier', party_id=bill.vendor_id)
