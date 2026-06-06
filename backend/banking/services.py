@@ -514,6 +514,57 @@ def petty_cash_balance(float_obj) -> Decimal:
     return (agg['d'] or Decimal('0')) - (agg['c'] or Decimal('0'))
 
 
+@transaction.atomic
+def post_cash_deposit(*, bank_account, date, amount, location_id,
+                      narration: str = '', user=None):
+    """Deposit cash-in-hand into a bank account.
+
+    Books Dr Bank / Cr Cash — moving the day's accumulated cash sales (which
+    POS posts to the 1110 Cash GL) out of the till and into the bank, where it
+    shows up against the chosen bank account.
+
+        Dr <bank GL>     amount
+            Cr Cash      amount
+    """
+    from core.models import AccountMapping
+    amount = Decimal(str(amount))
+    if amount <= 0:
+        raise ValidationError('Deposit amount must be greater than zero.')
+    if bank_account.account_type == 'cash':
+        raise ValidationError('Select a bank account to deposit into, not a cash account.')
+
+    cash_acct = AccountMapping.get_account('CASH', location_id=location_id)
+    je = JournalEntry.objects.create(
+        date=_parse_date(date),
+        narration=narration or 'Cash deposited to bank',
+        voucher_type='CONTRA', reference_type='Manual',
+        location_id=location_id,
+        created_by=user,
+    )
+    JournalEntryLine.objects.create(entry=je, account=bank_account.chart_account, debit=amount)
+    JournalEntryLine.objects.create(entry=je, account=cash_acct, credit=amount)
+    je.post()
+    return je
+
+
+def cash_in_hand_balance(location_id) -> Decimal:
+    """Current cash-in-hand for a location — the posted balance of the Cash
+    (1110) GL account. Cash POS sales accumulate here; deposits drain it."""
+    from django.db.models import Sum
+    from core.models import AccountMapping
+    try:
+        cash_acct = AccountMapping.get_account('CASH', location_id=location_id)
+    except Exception:
+        return Decimal('0.00')
+    qs = JournalEntryLine.objects.filter(
+        account=cash_acct, entry__is_posted=True,
+    )
+    if location_id:
+        qs = qs.filter(entry__location_id=location_id)
+    agg = qs.aggregate(d=Sum('debit'), c=Sum('credit'))
+    return (agg['d'] or Decimal('0.00')) - (agg['c'] or Decimal('0.00'))
+
+
 def book_balance(account: BankAccount) -> Decimal:
     """Net balance from posted journal entry lines on the linked GL account."""
     from django.db.models import Sum

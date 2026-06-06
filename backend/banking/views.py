@@ -45,6 +45,37 @@ class BankAccountViewSet(viewsets.ModelViewSet):
         log_action('DELETE', 'BankAccount', instance.pk, str(instance), request=self.request)
         instance.delete()
 
+    @action(detail=False, methods=['get'], url_path='cash-in-hand')
+    def cash_in_hand(self, request):
+        """Cash-in-hand balance for the active location (Cash 1110 GL)."""
+        from core.mixins import get_active_location
+        location = get_active_location(request)
+        location_id = location.id if location else None
+        balance = services.cash_in_hand_balance(location_id)
+        return Response({'location_id': location_id, 'cash_in_hand': str(balance)})
+
+    @action(detail=True, methods=['post'], url_path='deposit-cash')
+    def deposit_cash(self, request, pk=None):
+        """Deposit cash-in-hand into this bank account (Dr Bank / Cr Cash)."""
+        from core.mixins import get_active_location
+        bank_account = self.get_object()
+        location = get_active_location(request)
+        location_id = location.id if location else bank_account.location_id
+        try:
+            je = services.post_cash_deposit(
+                bank_account=bank_account,
+                date=request.data.get('date'),
+                amount=request.data.get('amount'),
+                location_id=location_id,
+                narration=request.data.get('narration', ''),
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except DjangoValidationError as e:
+            return Response({'detail': '; '.join(e.messages)}, status=status.HTTP_400_BAD_REQUEST)
+        log_action('CREATE', 'JournalEntry', je.pk,
+                   f'Cash deposit to {bank_account.name}', request=request)
+        return Response({'entry_no': je.entry_no}, status=status.HTTP_201_CREATED)
+
 
 class BankTransactionViewSet(viewsets.ModelViewSet):
     queryset = BankTransaction.objects.select_related('bank_account', 'matched_journal_entry')

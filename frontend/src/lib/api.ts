@@ -1174,6 +1174,18 @@ export async function updateBankAccount(id: number, data: Partial<BankAccount>) 
   return res.data as BankAccount
 }
 
+export async function getCashInHand() {
+  const res = await api.get('/banking/accounts/cash-in-hand/')
+  return res.data as { location_id: number | null; cash_in_hand: string }
+}
+
+export async function depositCashToBank(id: number, payload: {
+  date: string; amount: string; narration?: string
+}) {
+  const res = await api.post(`/banking/accounts/${id}/deposit-cash/`, payload)
+  return res.data as { entry_no: string }
+}
+
 export async function deleteBankAccount(id: number) {
   await api.delete(`/banking/accounts/${id}/`)
 }
