@@ -1414,6 +1414,32 @@ export async function getGSTR3BSummaries(params?: Record<string, string>) {
   return res.data as { results: GSTR3BSummary[]; count: number }
 }
 
+export interface GstGrandSummarySlab {
+  rate: string
+  output: { taxable: string; cgst: string; sgst: string; igst: string; total_tax: string }
+  input: { taxable: string; cgst: string; sgst: string; igst: string; total_tax: string }
+}
+export interface GstGrandSummary {
+  period: string
+  return_type: string
+  business_name: string
+  gstin: string
+  location_id: number | null
+  slabs: GstGrandSummarySlab[]
+  output_totals: { taxable: string; cgst: string; sgst: string; igst: string; total_tax: string }
+  input_totals: { taxable: string; cgst: string; sgst: string; igst: string; total_tax: string }
+  net: {
+    total_liability: string; total_itc: string
+    net_cgst: string; net_sgst: string; net_igst: string
+    net_payable: string; itc_carry_forward: string
+    late_fee: string; interest: string
+  }
+}
+export async function getGstGrandSummary(period: string) {
+  const res = await api.get('/gst/grand-summary/', { params: { period } })
+  return res.data as GstGrandSummary
+}
+
 export async function generateGSTR2B(period: string, locationId: number) {
   const res = await api.post('/gst/gstr2b/generate/', { period, location_id: locationId })
   return res.data

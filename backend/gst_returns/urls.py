@@ -1,9 +1,11 @@
 from rest_framework.routers import DefaultRouter
+from django.urls import path
 from .views import (
     GSTR1EntryViewSet, GSTR1HSNSummaryViewSet, GSTR3BSummaryViewSet,
     GSTR2BEntryViewSet, ITCReconciliationViewSet, RCMEntryViewSet,
     GSTSetoffPreviewView, GSTR9View, GSTR9CView, GSTLateFeeView, EWayBillViewSet,
 )
+from .grand_summary import GSTGrandSummaryView
 
 router = DefaultRouter()
 router.register(r'gstr1', GSTR1EntryViewSet, basename='gstr1-entry')
@@ -18,4 +20,6 @@ router.register(r'gstr9c', GSTR9CView, basename='gstr9c')
 router.register(r'late-fee', GSTLateFeeView, basename='gst-late-fee')
 router.register(r'eway-bills', EWayBillViewSet, basename='eway-bill')
 
-urlpatterns = router.urls
+urlpatterns = router.urls + [
+    path('grand-summary/', GSTGrandSummaryView.as_view(), name='gst-grand-summary'),
+]

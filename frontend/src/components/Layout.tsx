@@ -161,6 +161,7 @@ const menuGroups: MenuGroup[] = [
           { id: 'gstr1', label: 'GSTR-1', to: '/gst/gstr1' },
           { id: 'gstr2b', label: 'GSTR-2B', to: '/gst/gstr2b' },
           { id: 'gstr3b', label: 'GSTR-3B', to: '/gst/gstr3b' },
+          { id: 'gst-grand', label: 'GST Grand Summary', to: '/gst/grand-summary' },
           { id: 'itc', label: 'ITC Reconciliation', to: '/gst/itc-reconciliation' },
           { id: 'gst-comp', label: 'GST Computation', to: '/reports/gst-computation' },
           { id: 'hsn', label: 'HSN Summary', to: '/reports/hsn-summary' },
