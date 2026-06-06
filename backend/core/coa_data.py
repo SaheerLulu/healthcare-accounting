@@ -297,6 +297,7 @@ LEAVES = [
     # Stock audit (physical-count) variances post here as an INDIRECT expense,
     # kept separate from write-off losses — see generate_stock_adjustment.
     ('5490', 'Stock Audit Variance',           'EXPENSE',   'Other_Expense',     '5700', 'STOCK_AUDIT_VARIANCE'),
+    ('5475', 'Petty Cash Expenses',            'EXPENSE',   'Other_Expense',     '5700', 'PETTY_EXPENSE'),
 
     # Suspense / Round-off (6000)
     ('6100', 'Round Off',                      'EXPENSE',   'Other_Expense',     '6000', 'ROUND_OFF'),

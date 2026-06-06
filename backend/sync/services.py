@@ -6,7 +6,7 @@ from decimal import Decimal
 from django.db import transaction, connection
 from inventory_reader.models import (
     PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO,
-    OpeningStockRO, StockMovementRO,
+    OpeningStockRO, StockMovementRO, PettyCashTxnRO,
 )
 from journals.models import JournalEntry
 from journals.services import JournalAutoGenerationService
@@ -335,6 +335,33 @@ class InventorySyncService:
         self._record_metrics('stock_adjustment', started, errors_before)
         return count
 
+    def sync_petty_cash(self, since_id: int = 0) -> int:
+        """Post journals for pharmacy-counter petty-cash movements (deposits to
+        bank, day-to-day expenses). Idempotent via reference_type='PettyCash'."""
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='petty_cash', resolved=False).count()
+        already_synced = self._synced_ids('PettyCash')
+        txns = PettyCashTxnRO.objects.exclude(id__in=already_synced).order_by('id')
+
+        count = 0
+        last_id = since_id
+        for txn in txns:
+            try:
+                entry = self.journal_service.generate_petty_cash(txn.id)
+                if entry:
+                    count += 1
+                self._resolve_error('petty_cash', txn.id)
+                last_id = max(last_id, txn.id)
+            except Exception as e:
+                self._log_error('petty_cash', txn.id, e)
+
+        SyncLog.objects.update_or_create(
+            sync_type='petty_cash',
+            defaults={'last_synced_id': last_id, 'records_processed': count}
+        )
+        self._record_metrics('petty_cash', started, errors_before)
+        return count
+
     def retry_failed(self):
         """Retry all unresolved sync errors."""
         errors = SyncError.objects.filter(resolved=False)
@@ -459,7 +486,7 @@ class InventorySyncService:
                     'reason': 'another sync is already running',
                     'opening_stocks': 0, 'purchases': 0, 'pos': 0, 'b2b': 0,
                     'returns': 0, 'purchase_returns': 0,
-                    'stock_writeoffs': 0, 'stock_adjustments': 0,
+                    'stock_writeoffs': 0, 'stock_adjustments': 0, 'petty_cash': 0,
                     'reversed_cancelled': 0,
                     'total': 0,
                 }
@@ -485,6 +512,7 @@ class InventorySyncService:
         purchase_return_count = self.sync_purchase_returns(SyncLog.get_last_id('purchase_return'))
         writeoff_count = self.sync_stock_writeoffs(SyncLog.get_last_id('stock_writeoff'))
         adjustment_count = self.sync_stock_adjustments(SyncLog.get_last_id('stock_adjustment'))
+        petty_cash_count = self.sync_petty_cash(SyncLog.get_last_id('petty_cash'))
 
         # After posting new orders, back out any previously-synced order that
         # was cancelled upstream so the books don't drift from inventory.
@@ -492,7 +520,7 @@ class InventorySyncService:
 
         total = (opening_stock_count + purchase_count + pos_count + b2b_count
                  + return_count + purchase_return_count
-                 + writeoff_count + adjustment_count)
+                 + writeoff_count + adjustment_count + petty_cash_count)
         SyncLog.objects.create(
             sync_type='all',
             last_synced_id=0,
@@ -508,6 +536,7 @@ class InventorySyncService:
             'purchase_returns': purchase_return_count,
             'stock_writeoffs': writeoff_count,
             'stock_adjustments': adjustment_count,
+            'petty_cash': petty_cash_count,
             'reversed_cancelled': reversed_cancelled,
             'party_ledgers': provisioned,
             'total': total,
