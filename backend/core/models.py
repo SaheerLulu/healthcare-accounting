@@ -233,6 +233,7 @@ class AccountMapping(models.Model):
         ('COGS', 'Cost of Goods Sold (perpetual mode)'),
         ('OPENING_BALANCE_EQUITY', 'Opening Balance Equity'),
         ('STOCK_AUDIT_VARIANCE', 'Stock Audit Variance (Indirect Expense)'),
+        ('PETTY_EXPENSE', 'Petty Cash Expenses (Indirect Expense)'),
     ]
 
     # Default mapping from key to account_code for data migration. These map
@@ -269,6 +270,7 @@ class AccountMapping(models.Model):
         'INVENTORY_LOSS': '5540',
         'EXPIRY_LOSS': '5550',
         'STOCK_AUDIT_VARIANCE': '5490',
+        'PETTY_EXPENSE': '5475',
         'STOCK_TRANSFER_TRANSIT': '1191',
         'TCS_PAYABLE': '2210',
         'BAD_DEBTS_EXPENSE': '5480',

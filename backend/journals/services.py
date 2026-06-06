@@ -12,6 +12,7 @@ from inventory_reader.models import (
     OpeningStockRO,
     OpeningStockLineRO,
     StockMovementRO,
+    PettyCashTxnRO,
 )
 from core.models import AccountMapping, AccountingSettings
 from core.party_ledgers import resolve_party_account
@@ -1120,6 +1121,52 @@ class JournalAutoGenerationService:
                 entry=entry, account=loss_acct, credit=value,
                 narration='Inventory variance gain',
             )
+        entry.post()
+        return entry
+
+    def generate_petty_cash(self, txn_id):
+        """Auto-post a pharmacy-counter petty-cash movement.
+
+            deposit:  Dr Bank (1120)            / Cr Cash (1110)
+            expense:  Dr Petty Cash Expenses(5475)/ Cr Cash (1110)
+
+        Cash POS sales already accumulate in the 1110 Cash GL via sync_pos;
+        deposits move that cash to the bank and expenses drain it. Idempotent
+        via reference_type='PettyCash' (reference_id = the PettyCashTxn id).
+        """
+        if self._entry_exists('PettyCash', txn_id):
+            return None
+        txn = PettyCashTxnRO.objects.get(id=txn_id)
+        amount = Decimal(str(txn.amount or 0)).quantize(Decimal('0.01'))
+        if amount <= 0:
+            return None
+        loc = txn.location_id
+        cash_acct = self._acct('CASH', loc)
+        if txn.txn_type == 'deposit':
+            debit_acct = self._acct('BANK', loc)
+            default_note = 'Cash deposited to bank'
+            voucher = 'CONTRA'
+        elif txn.txn_type == 'expense':
+            debit_acct = self._acct('PETTY_EXPENSE', loc)
+            default_note = 'Petty cash expense'
+            voucher = 'PAYMENT'
+        else:
+            return None
+
+        narration = (txn.description or default_note)
+        if txn.bank_reference:
+            narration = f'{narration} (ref: {txn.bank_reference})'
+
+        entry = JournalEntry.objects.create(
+            date=txn.txn_date,
+            narration=f'{narration} — petty cash #{txn_id}',
+            voucher_type=voucher,
+            reference_type='PettyCash',
+            reference_id=txn_id,
+            location_id=loc,
+        )
+        JournalEntryLine.objects.create(entry=entry, account=debit_acct, debit=amount, narration=narration)
+        JournalEntryLine.objects.create(entry=entry, account=cash_acct, credit=amount, narration='Paid from cash in hand')
         entry.post()
         return entry
 

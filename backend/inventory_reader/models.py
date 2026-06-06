@@ -474,3 +474,25 @@ class UserLocationAssignmentRO(models.Model):
     class Meta:
         managed = False
         db_table = 'user_management_userlocationassignment'
+
+
+class PettyCashTxnRO(models.Model):
+    """Read-only proxy for inventory.PettyCashTxn (cash-drawer movements
+    recorded at the pharmacy counter). The sync service posts the matching
+    journals (Dr Bank/Cr Cash for deposits; Dr Petty Expenses/Cr Cash)."""
+    location = models.ForeignKey(
+        LocationRO, on_delete=models.DO_NOTHING, db_constraint=False
+    )
+    txn_type = models.CharField(max_length=20)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    txn_date = models.DateField()
+    description = models.CharField(max_length=255, blank=True)
+    bank_reference = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'inventory_pettycashtxn'
+
+    def __str__(self):
+        return f"PettyCash#{self.id} {self.txn_type} {self.amount}"
