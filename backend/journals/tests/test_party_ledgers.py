@@ -288,7 +288,7 @@ class OpeningBalanceGLTests(TestCase):
         from parties.models import PartyOpeningBalance
         from parties.opening_balance import post_opening_balance_je
         ob = PartyOpeningBalance.objects.create(
-            party_type=party_type, party_id=pid,
+            party_type=party_type, party_id=pid, location_id=1,
             amount=Decimal(amount), as_of_date=date(2026, 4, 1))
         post_opening_balance_je(ob)
         return ob

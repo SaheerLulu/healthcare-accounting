@@ -260,8 +260,10 @@ class _PartyOpeningBalanceView(APIView):
 
     def get(self, request, pk: int):
         self._ensure_party_exists(pk)
+        loc = get_active_location(request)
         ob = PartyOpeningBalance.objects.filter(
-            party_type=self.party_type, party_id=pk
+            party_type=self.party_type, party_id=pk,
+            location_id=loc.id if loc else None,
         ).first()
         if not ob:
             return Response(None)
@@ -270,15 +272,22 @@ class _PartyOpeningBalanceView(APIView):
     def put(self, request, pk: int):
         self._ensure_party_exists(pk)
         user = request.user if request.user.is_authenticated else None
+        loc = get_active_location(request)
+        if loc is None:
+            return Response(
+                {'detail': 'An active store (X-Location-Id) is required to set an opening balance.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         with transaction.atomic():
             ob = PartyOpeningBalance.objects.filter(
-                party_type=self.party_type, party_id=pk
+                party_type=self.party_type, party_id=pk, location_id=loc.id,
             ).first()
             ser = PartyOpeningBalanceSerializer(ob, data=request.data, partial=bool(ob))
             ser.is_valid(raise_exception=True)
             ser.save(
                 party_type=self.party_type,
                 party_id=pk,
+                location_id=loc.id,
                 created_by=user if not ob else (ob.created_by if ob else None),
             )
             # (Re)post the GL counterpart so the opening figure shows in the
@@ -294,9 +303,11 @@ class _PartyOpeningBalanceView(APIView):
     def delete(self, request, pk: int):
         self._ensure_party_exists(pk)
         user = request.user if request.user.is_authenticated else None
+        loc = get_active_location(request)
         with transaction.atomic():
             ob = PartyOpeningBalance.objects.filter(
-                party_type=self.party_type, party_id=pk
+                party_type=self.party_type, party_id=pk,
+                location_id=loc.id if loc else None,
             ).first()
             if ob is None:
                 return Response(status=status.HTTP_404_NOT_FOUND)

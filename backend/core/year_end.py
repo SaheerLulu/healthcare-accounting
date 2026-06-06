@@ -22,20 +22,23 @@ def fy_label(start_year: int) -> str:
     return f"{start_year}-{str(start_year + 1)[-2:]}"
 
 
-def _carryforward_basis(acct, end_date):
+def _carryforward_basis(acct, end_date, location_id=None):
     """Closing balance of a Balance-Sheet account from the *real* continuous
     ledger — i.e. excluding any prior opening carry-forward JV. Using
     acct.get_balance() here would fold in last year's carry-forward (which sits
     in the same account), so each successive close would compound the
-    restatement. Debit-positive, like get_balance()."""
+    restatement. Debit-positive, like get_balance(). Scoped to `location_id`
+    when given so each store carries forward only its own balances."""
     from journals.models import JournalEntryLine
     from django.db.models import Sum
-    agg = (JournalEntryLine.objects
-           .filter(account=acct, entry__is_posted=True,
-                   entry__is_optional=False, entry__is_memorandum=False,
-                   entry__date__lte=end_date)
-           .exclude(entry__reference_type=OPENING_CARRY_FORWARD)
-           .aggregate(dr=Sum('debit'), cr=Sum('credit')))
+    qs = (JournalEntryLine.objects
+          .filter(account=acct, entry__is_posted=True,
+                  entry__is_optional=False, entry__is_memorandum=False,
+                  entry__date__lte=end_date)
+          .exclude(entry__reference_type=OPENING_CARRY_FORWARD))
+    if location_id is not None:
+        qs = qs.filter(entry__location_id=location_id)
+    agg = qs.aggregate(dr=Sum('debit'), cr=Sum('credit'))
     return (agg['dr'] or Decimal('0.00')) - (agg['cr'] or Decimal('0.00'))
 
 
@@ -70,6 +73,9 @@ def close_fiscal_year(fy_start_year: int, *, location_id: int = None,
 
     Returns a dict with the created entry numbers + totals.
     """
+    if location_id is None:
+        raise ValueError('location_id is required to close a fiscal year (store isolation).')
+
     settings = AccountingSettings.get_settings()
     label = fy_label(fy_start_year)
 
@@ -89,7 +95,7 @@ def close_fiscal_year(fy_start_year: int, *, location_id: int = None,
     close_lines = []
     net_profit = Decimal('0.00')
     for acct in pl_accounts:
-        bal = acct.get_balance(end_date=fy_end)  # debit-positive
+        bal = acct.get_balance(end_date=fy_end, location_id=location_id)  # debit-positive
         if bal == 0:
             continue
         # Revenue accounts have credit balances (bal < 0); Expense accounts have debit balances (bal > 0).
@@ -137,7 +143,7 @@ def close_fiscal_year(fy_start_year: int, *, location_id: int = None,
         total_dr = Decimal('0.00')
         total_cr = Decimal('0.00')
         for acct in bs_accounts:
-            bal = _carryforward_basis(acct, fy_end)
+            bal = _carryforward_basis(acct, fy_end, location_id=location_id)
             if bal == 0:
                 continue
             if bal > 0:  # debit balance (typical for Asset)

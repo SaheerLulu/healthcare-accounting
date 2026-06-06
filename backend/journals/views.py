@@ -256,12 +256,14 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         """Post the provision-for-doubtful-debts adjustment for `as_of` date."""
         from datetime import date as _d
         from .bad_debts import post_provision_adjustment
+        from core.mixins import get_active_location
         try:
             as_of = (_d.fromisoformat(request.data['as_of'])
                      if request.data.get('as_of') else _d.today())
+            loc = get_active_location(request)
             result = post_provision_adjustment(
                 as_of=as_of,
-                location_id=request.data.get('location_id'),
+                location_id=request.data.get('location_id') or (loc.id if loc else None),
                 narration=request.data.get('narration', ''),
                 user=request.user if request.user.is_authenticated else None,
             )

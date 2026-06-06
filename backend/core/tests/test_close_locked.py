@@ -31,7 +31,7 @@ class CloseLockedPeriodTests(TestCase):
 
         request = self.factory.post(
             '/api/accounts/fy-close/',
-            data=json.dumps({'fy_start_year': 2025, 'generate_opening': False}),
+            data=json.dumps({'fy_start_year': 2025, 'generate_opening': False, 'location_id': 1}),
             content_type='application/json',
         )
         force_authenticate(request, self.admin)

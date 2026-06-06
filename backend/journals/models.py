@@ -147,8 +147,17 @@ class JournalEntry(models.Model):
 
         Validates regardless of current is_posted state — clean() guards by
         is_posted, which used to skip the check on first post().
+
+        Store-isolation guard: a posted entry MUST carry a location so it can
+        never land in the consolidated/shared bucket (which would leak cost and
+        balances across stores). Every posting path supplies one.
         """
         self._assert_balanced()
+        if self.location_id is None:
+            raise ValidationError(
+                'Journal entry must have a location_id before posting '
+                '(store isolation): ' + (self.entry_no or '(new)')
+            )
         self.is_posted = True
         self.save()
 

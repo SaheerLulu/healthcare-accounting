@@ -29,13 +29,13 @@ class MultiYearLockTests(TestCase):
     def test_closing_second_fy_keeps_first_locked(self):
         # Close FY 2025-26.
         self._book_revenue(Decimal('100000'), date(2025, 6, 15))
-        close_fiscal_year(2025, generate_opening=False)
+        close_fiscal_year(2025, location_id=1, generate_opening=False)
         with self.assertRaises(PeriodLockedError):
             assert_unlocked(date(2025, 6, 15))
 
         # Book + close FY 2026-27 (2026-06 is not in the FY2025 lock range).
         self._book_revenue(Decimal('50000'), date(2026, 6, 15))
-        close_fiscal_year(2026, generate_opening=False)
+        close_fiscal_year(2026, location_id=1, generate_opening=False)
 
         # The H16 bug: FY 2025-26 must STILL be locked after closing FY 2026-27.
         with self.assertRaises(PeriodLockedError):
@@ -46,6 +46,6 @@ class MultiYearLockTests(TestCase):
 
     def test_open_year_remains_postable(self):
         self._book_revenue(Decimal('100000'), date(2025, 6, 15))
-        close_fiscal_year(2025, generate_opening=False)
+        close_fiscal_year(2025, location_id=1, generate_opening=False)
         # A date in the still-open FY 2026-27 must not be locked.
         assert_unlocked(date(2026, 6, 15))  # no raise

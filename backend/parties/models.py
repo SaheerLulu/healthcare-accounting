@@ -72,6 +72,9 @@ class PartyOpeningBalance(models.Model):
 
     party_type = models.CharField(max_length=10, choices=PARTY_TYPES)
     party_id = models.PositiveIntegerField()
+    # Store this opening balance belongs to — opening balances are per store
+    # (the GL counterpart JE is store-stamped). NULL only on legacy rows.
+    location_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
     amount = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     as_of_date = models.DateField()
     narration = models.CharField(max_length=255, blank=True)
@@ -96,8 +99,8 @@ class PartyOpeningBalance(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(
-                fields=['party_type', 'party_id'],
-                name='parties_openingbalance_unique_party',
+                fields=['party_type', 'party_id', 'location_id'],
+                name='parties_openingbalance_unique_party_loc',
             ),
         ]
         indexes = [models.Index(fields=['party_type', 'party_id'])]
