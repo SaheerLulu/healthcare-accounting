@@ -44,9 +44,29 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
     serializer_class = ChartOfAccountSerializer
     pagination_class = None
 
+    def _apply_location_scope(self, qs):
+        """Per-store scoping shared by the list and counts endpoints.
+
+        By default (`location_scope=auto`) a request with X-Location-Id sees
+        this store's clones + the NULL-location shared accounts (GST, equity
+        etc.). `location_scope=all` opts out (COA admin view); `shared`
+        returns just the NULL-location templates. No active location → show
+        all (legacy admin behaviour).
+        """
+        scope = self.request.query_params.get('location_scope', 'auto')
+        if scope == 'all':
+            return qs
+        if scope == 'shared':
+            return qs.filter(location_id__isnull=True)
+        location = get_active_location(self.request)
+        if location:
+            return qs.filter(
+                models.Q(location_id=location.id) | models.Q(location_id__isnull=True)
+            )
+        return qs
+
     def get_queryset(self):
         from django.db.models import Count
-        from .mixins import get_active_location
         # Annotate document count (number of journal lines) so list view stays fast.
         qs = ChartOfAccount.objects.select_related('parent').annotate(
             _documents_count=Count('journal_lines')
@@ -81,23 +101,7 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
         p_id = params.get('party_id')
         if p_type and p_id:
             qs = qs.filter(party_type=p_type, party_id=p_id)
-        # Per-store scoping: by default a request with X-Location-Id sees this
-        # store's clones + the NULL-location shared accounts (GST, equity etc.).
-        # `location_scope=all` opts the user out (e.g., for the COA admin view).
-        # `location_scope=shared` returns just the NULL-location templates.
-        scope = params.get('location_scope', 'auto')
-        if scope == 'all':
-            pass
-        elif scope == 'shared':
-            qs = qs.filter(location_id__isnull=True)
-        else:  # 'auto' (default) or 'active'
-            location = get_active_location(self.request)
-            if location:
-                qs = qs.filter(
-                    models.Q(location_id=location.id) | models.Q(location_id__isnull=True)
-                )
-            # No active location → show all (legacy behaviour, used by admin).
-        return qs
+        return self._apply_location_scope(qs)
 
     def perform_create(self, serializer):
         instance = serializer.save()
@@ -160,12 +164,18 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='counts')
     def counts(self, request):
-        """Per-type counts for pill filter UI."""
+        """Per-type counts for pill filter UI.
+
+        Scoped to the active store the same way the list endpoint is, so the
+        pill totals match the rows actually shown (previously counted every
+        store's accounts).
+        """
         from django.db.models import Count
-        agg = ChartOfAccount.objects.values('account_type').annotate(c=Count('id'))
+        base = self._apply_location_scope(ChartOfAccount.objects.all())
+        agg = base.values('account_type').annotate(c=Count('id'))
         counts = {row['account_type']: row['c'] for row in agg}
-        active_count = ChartOfAccount.objects.filter(is_active=True).count()
-        inactive_count = ChartOfAccount.objects.filter(is_active=False).count()
+        active_count = base.filter(is_active=True).count()
+        inactive_count = base.filter(is_active=False).count()
         total = sum(counts.values())
         return Response({
             'total': total,

@@ -6,6 +6,7 @@ import {
   postAssetAcquisition, disposeAsset, previewDepreciation, postDepreciation,
   type FixedAsset, type AssetClass,
 } from '../../lib/api'
+import { useLocation } from '../../contexts/LocationContext'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import { Badge } from '../../components/ui/badge'
@@ -178,11 +179,12 @@ function AssetClassDialog({ open, onClose, onSaved }: any) {
 }
 
 function AssetDialog({ open, classes, onClose, onSaved }: any) {
+  const { activeLocationId } = useLocation()
   const [data, setData] = useState({
     asset_no: '', name: '', asset_class: '',
     acquisition_date: new Date().toISOString().slice(0, 10),
     acquisition_cost: '', salvage_value: '0', useful_life_months: 0,
-    location_id: '', vendor_name: '',
+    vendor_name: '',
   })
   return (
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
@@ -204,8 +206,6 @@ function AssetDialog({ open, classes, onClose, onSaved }: any) {
                  onChange={(e) => setData({ ...data, salvage_value: e.target.value })} />
           <Input placeholder="Vendor name" value={data.vendor_name}
                  onChange={(e) => setData({ ...data, vendor_name: e.target.value })} />
-          <Input placeholder="Location ID" value={data.location_id}
-                 onChange={(e) => setData({ ...data, location_id: e.target.value })} />
         </div>
         <DialogFooter>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
@@ -213,7 +213,7 @@ function AssetDialog({ open, classes, onClose, onSaved }: any) {
             try {
               await createFixedAsset({
                 ...data, asset_class: parseInt(data.asset_class) as any,
-                location_id: data.location_id ? parseInt(data.location_id) : null,
+                location_id: activeLocationId ?? null,
               })
               toast.success('Asset created'); onSaved(); onClose()
             } catch (e: any) { toast.error(e?.response?.data?.detail || 'Failed') }

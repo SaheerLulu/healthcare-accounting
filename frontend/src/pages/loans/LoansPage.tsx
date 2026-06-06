@@ -5,6 +5,7 @@ import {
   listLoans, createLoan, getLoanSchedule, disburseLoan, payEMI,
   type Loan, type EMIRow,
 } from '../../lib/api'
+import { useLocation } from '../../contexts/LocationContext'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import { Badge } from '../../components/ui/badge'
@@ -91,12 +92,13 @@ export default function LoansPage() {
 }
 
 function NewLoanDialog({ open, onClose, onSaved }: any) {
+  const { activeLocationId } = useLocation()
   const [data, setData] = useState({
     loan_no: '', lender_name: '', loan_type: 'term',
     principal_amount: '', interest_rate_pct: '',
     tenure_months: 36,
     start_date: new Date().toISOString().slice(0, 10),
-    emi_day: 5, location_id: '',
+    emi_day: 5,
     liability_account: '', interest_expense_account: '',
   })
   return (
@@ -128,8 +130,6 @@ function NewLoanDialog({ open, onClose, onSaved }: any) {
                  onChange={(e) => setData({ ...data, liability_account: e.target.value })} />
           <Input placeholder="Interest-expense GL account ID" value={data.interest_expense_account}
                  onChange={(e) => setData({ ...data, interest_expense_account: e.target.value })} />
-          <Input placeholder="Location ID" value={data.location_id}
-                 onChange={(e) => setData({ ...data, location_id: e.target.value })} />
         </div>
         <DialogFooter>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
@@ -140,7 +140,7 @@ function NewLoanDialog({ open, onClose, onSaved }: any) {
                 loan_type: data.loan_type as any,
                 liability_account: parseInt(data.liability_account) as any,
                 interest_expense_account: parseInt(data.interest_expense_account) as any,
-                location_id: data.location_id ? (parseInt(data.location_id) as any) : null,
+                location_id: (activeLocationId ?? null) as any,
               } as any)
               toast.success('Loan created with amortization schedule')
               onSaved(); onClose()

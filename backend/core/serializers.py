@@ -80,6 +80,34 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
             return annotated
         return obj.journal_lines.count()
 
+    def validate(self, attrs):
+        # Account names must be unique within a location scope, mirroring the
+        # per-(code, location) uniqueness of account_code. Per-store clones may
+        # legitimately reuse a name like "Cash" across different stores, so the
+        # check is scoped to location_id and is case-insensitive. Empty/None
+        # location (shared templates) form their own scope.
+        name = attrs.get('account_name')
+        if name is None and self.instance is not None:
+            name = self.instance.account_name
+        if 'location_id' in attrs:
+            location_id = attrs.get('location_id')
+        elif self.instance is not None:
+            location_id = self.instance.location_id
+        else:
+            location_id = None
+        if name:
+            dupes = ChartOfAccount.objects.filter(
+                account_name__iexact=name.strip(),
+                location_id=location_id,
+            )
+            if self.instance is not None:
+                dupes = dupes.exclude(pk=self.instance.pk)
+            if dupes.exists():
+                raise serializers.ValidationError({
+                    'account_name': 'An account with this name already exists for this store.'
+                })
+        return attrs
+
 
 class ChartOfAccountTreeSerializer(serializers.ModelSerializer):
     children = serializers.SerializerMethodField()
