@@ -317,20 +317,12 @@ class AccountMapping(models.Model):
         help_text='NULL = shared default; non-NULL = per-store override.',
     )
 
-    # Account roles that are NEVER per-location — GST/TDS *liabilities/assets*
-    # roll up under a single GSTIN/TAN and equity/control accounts are inherently
-    # consolidated. Anything not in this set is cloned per-store.
-    #
-    # Note: P&L *cost* accounts are intentionally NOT shared (max store
-    # isolation): ROUND_OFF, SUSPENSE and GST_LATE_FEE are cloned per store so
-    # no cost pools across stores. Only the GST/TDS heads and equity stay shared.
-    SHARED_KEYS = frozenset({
-        'OUTPUT_CGST', 'OUTPUT_SGST', 'OUTPUT_IGST',
-        'INPUT_CGST', 'INPUT_SGST', 'INPUT_IGST',
-        'TDS_RECEIVABLE', 'TDS_PAYABLE', 'TCS_PAYABLE',
-        'RCM_LIABILITY',
-        'RETAINED_EARNINGS', 'OPENING_BALANCE_EQUITY',
-    })
+    # Store-isolation policy: EVERYTHING is per-store. No account role is forced
+    # shared — every key is cloned per store on bootstrap and resolved at the
+    # active location (postings already pass location_id). A key only falls back
+    # to its NULL-location default for a store that hasn't been bootstrapped yet.
+    # To deliberately share a specific key again, add it back to this set.
+    SHARED_KEYS = frozenset()
 
     class Meta:
         ordering = ['key', 'location_id']

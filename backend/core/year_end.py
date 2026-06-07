@@ -84,7 +84,7 @@ def close_fiscal_year(fy_start_year: int, *, location_id: int = None,
 
     fy_start, fy_end = fy_window(fy_start_year, settings.financial_year_start or 4)
 
-    retained = AccountMapping.get_account('RETAINED_EARNINGS')
+    retained = AccountMapping.get_account('RETAINED_EARNINGS', location_id=location_id)
 
     # Build line list — close every Revenue and Expense leaf account.
     pl_accounts = ChartOfAccount.objects.filter(

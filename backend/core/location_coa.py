@@ -1,11 +1,11 @@
 """Per-location Chart of Accounts bootstrapping ([[per-location-coa]]).
 
 Shared service used by both the ``bootstrap_location_coa`` management command
-and the incremental sync. Every store gets its own settlement, party, sales,
-expense and inventory leaves under codes like ``1110-MUM`` (parent: the
-template ``1110 Cash``); a small ``AccountMapping.SHARED_KEYS`` set stays at the
-company level (GST/TDS/equity/suspense/round-off) because it rolls up under a
-single GSTIN/TAN/legal entity. All functions are idempotent.
+and the incremental sync. Every store gets its own leaves under codes like
+``1110-MUM`` (parent: the template ``1110 Cash``). Per the store-isolation
+policy ``AccountMapping.SHARED_KEYS`` is empty — EVERY mapped account is cloned
+per store, including the GST/TDS/equity heads; add a key back to that set only
+to deliberately keep it shared. All functions are idempotent.
 """
 import re
 
