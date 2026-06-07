@@ -592,7 +592,7 @@ function TDSRatesTab() {
 
 export default function SettingsPage() {
   return (
-    <div className="max-w-3xl mx-auto space-y-5">
+    <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
         <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Settings</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Company, account mappings, and tax configuration</p>
