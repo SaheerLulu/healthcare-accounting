@@ -85,7 +85,7 @@ def post_opening_balance_je(ob, *, user=None):
         raise ValueError('Opening balance must have a location (store isolation).')
 
     ledger = get_or_create_party_ledger(ob.party_type, ob.party_id, location_id=ob.location_id)
-    obe = AccountMapping.get_account('OPENING_BALANCE_EQUITY')
+    obe = AccountMapping.get_account('OPENING_BALANCE_EQUITY', location_id=ob.location_id)
 
     entry = JournalEntry.objects.create(
         date=ob.as_of_date,

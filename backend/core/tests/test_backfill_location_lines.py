@@ -80,7 +80,7 @@ class BackfillLocationJournalLinesTests(TestCase):
             account_code='1110-DEL', location_id=8,
         )
 
-    def test_repoints_cash_and_sales_but_not_gst(self):
+    def test_repoints_cash_sales_and_gst(self):
         entry = self._post_legacy_sale(loc_id=7)
         self._bootstrap_two_locations()
         call_command('backfill_location_journal_lines')
@@ -90,10 +90,10 @@ class BackfillLocationJournalLinesTests(TestCase):
                          'Cash should now point at Mumbai clone')
         self.assertEqual(lines['4100-MUM'].credit, Decimal('1000.00'),
                          'Sales POS should now point at Mumbai clone')
-        # GST stays shared — no per-store clone for 2120 because OUTPUT_CGST
-        # is in SHARED_KEYS.
-        self.assertIn('2120', lines)
-        self.assertEqual(lines['2120'].credit, Decimal('90.00'))
+        # Nothing is shared now — GST is repointed to its per-store clone too.
+        self.assertIn('2120-MUM', lines)
+        self.assertEqual(lines['2120-MUM'].credit, Decimal('90.00'))
+        self.assertNotIn('2120', lines, 'GST line moved off the shared template')
 
     def test_per_location_routing(self):
         self._post_legacy_sale(loc_id=7, amount=Decimal('500.00'))

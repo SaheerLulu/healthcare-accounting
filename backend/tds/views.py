@@ -293,9 +293,13 @@ class Form26ASViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         from journals.models import JournalEntryLine
         from core.models import AccountMapping
 
-        try:
-            tds_recv = AccountMapping.get_account('TDS_RECEIVABLE')
-        except ValueError:
+        # 26AS reconciliation is TAN-level: match against EVERY TDS-Receivable
+        # account (the shared default + all per-store clones), not just one.
+        tds_recv_ids = list(
+            AccountMapping.objects.filter(key='TDS_RECEIVABLE')
+            .values_list('account_id', flat=True)
+        )
+        if not tds_recv_ids:
             return Response({'detail': 'TDS_RECEIVABLE mapping not configured'},
                             status=400)
 
@@ -306,7 +310,7 @@ class Form26ASViewSet(LocationFilterMixin, viewsets.ModelViewSet):
 
         # Pre-load candidate JE lines (TDS Receivable debits in this FY)
         candidates = JournalEntryLine.objects.filter(
-            account=tds_recv, debit__gt=0, entry__is_posted=True,
+            account_id__in=tds_recv_ids, debit__gt=0, entry__is_posted=True,
         ).select_related('entry')
 
         matched = partial = unmatched = 0

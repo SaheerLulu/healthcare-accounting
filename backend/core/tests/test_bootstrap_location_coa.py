@@ -66,21 +66,16 @@ class BootstrapLocationCOATests(TestCase):
         self.assertEqual(clone.parent.account_code, '1110')
         self.assertIsNone(clone.parent.location_id)
 
-    def test_does_not_clone_shared_accounts(self):
+    def test_clones_all_mapped_accounts_per_store(self):
+        # Store-isolation policy: SHARED_KEYS is empty, so EVERY mapped account —
+        # including GST output (2120) and retained earnings (3200) — is cloned
+        # per store. Nothing is forced shared.
         self._run()
-        # OUTPUT_CGST (2120) must stay shared at the company level.
-        self.assertFalse(
-            ChartOfAccount.objects.filter(
-                account_code='2120-MUM', location_id=7,
-            ).exists(),
-            'GST output accounts must not be per-store (single-GSTIN filing)',
-        )
-        # Retained earnings (3200) must stay shared.
-        self.assertFalse(
-            ChartOfAccount.objects.filter(
-                account_code='3200-MUM', location_id=7,
-            ).exists(),
-        )
+        for code in ('2120-MUM', '3200-MUM', '1110-MUM'):
+            self.assertTrue(
+                ChartOfAccount.objects.filter(account_code=code, location_id=7).exists(),
+                f'{code} should be cloned per store (nothing is shared)',
+            )
 
     def test_creates_per_location_mapping_override(self):
         self._run()
@@ -98,13 +93,13 @@ class BootstrapLocationCOATests(TestCase):
         )
         self.assertEqual(AccountMapping.get_account('CASH', location_id=99), template_cash)
 
-    def test_shared_key_resolution_unchanged(self):
-        """OUTPUT_CGST asked-for-loc-7 still resolves to the shared template."""
+    def test_gst_head_now_resolves_per_store(self):
+        """With nothing shared, OUTPUT_CGST for loc 7 resolves to its per-store
+        clone (2120-MUM), not the shared template."""
         self._run()
-        template = ChartOfAccount.objects.get(
-            account_code='2120', location_id__isnull=True,
-        )
-        self.assertEqual(AccountMapping.get_account('OUTPUT_CGST', location_id=7), template)
+        resolved = AccountMapping.get_account('OUTPUT_CGST', location_id=7)
+        self.assertEqual(resolved.account_code, '2120-MUM')
+        self.assertEqual(resolved.location_id, 7)
 
     def test_idempotent(self):
         self._run()

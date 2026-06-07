@@ -46,10 +46,9 @@ class AccountMappingAPITests(APITestCase):
         self.assertIsNotNone(cash_row['override_id'])
         self.assertEqual(cash_row['account_code'], '1110-MUM')
 
-        # OUTPUT_CGST is shared-only so no override even at loc 7.
+        # Nothing is forced shared now — OUTPUT_CGST is per-store too.
         gst_row = next(r for r in res.data if r['key'] == 'OUTPUT_CGST')
-        self.assertFalse(gst_row['has_override'])
-        self.assertTrue(gst_row['is_shared_key'])
+        self.assertFalse(gst_row['is_shared_key'])
 
     def test_all_keys_with_no_location_returns_shared(self):
         res = self.client.get('/api/accounts/account-mappings/all-keys/')

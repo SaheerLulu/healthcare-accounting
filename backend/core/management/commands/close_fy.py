@@ -98,7 +98,7 @@ class Command(BaseCommand):
 
         # Net to Retained Earnings
         try:
-            retained_earnings_ac = AccountMapping.get_account('RETAINED_EARNINGS')
+            retained_earnings_ac = AccountMapping.get_account('RETAINED_EARNINGS', location_id=location_id)
         except ValueError:
             retained_earnings_ac = ChartOfAccount.objects.filter(
                 account_subtype='Retained_Earnings', is_leaf=True
