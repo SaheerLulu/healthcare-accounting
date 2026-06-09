@@ -87,6 +87,45 @@ export default function GSTComputationPage() {
             </CardContent>
           </Card>
 
+          {/* Adjustments — credit notes, RCM, exempt supplies */}
+          <Card className="overflow-hidden">
+            <CardContent>
+              <h2 className="text-sm font-semibold text-slate-900 mb-3">Adjustments</h2>
+              <Table>
+                <Thead>
+                  <Tr className="bg-slate-50">
+                    <Th className="text-left">Item</Th>
+                    <Th className="text-right">Taxable</Th>
+                    <Th className="text-right">CGST</Th>
+                    <Th className="text-right">SGST</Th>
+                    <Th className="text-right">IGST</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  <Tr>
+                    <Td className="text-slate-500">Less: Credit Notes (sales returns, §34)</Td>
+                    <Td className="text-right font-mono text-red-700">−{formatCurrency(data.credit_notes?.taxable ?? '0')}</Td>
+                    <Td className="text-right font-mono text-red-700">−{formatCurrency(data.credit_notes?.cgst ?? '0')}</Td>
+                    <Td className="text-right font-mono text-red-700">−{formatCurrency(data.credit_notes?.sgst ?? '0')}</Td>
+                    <Td className="text-right font-mono text-red-700">−{formatCurrency(data.credit_notes?.igst ?? '0')}</Td>
+                  </Tr>
+                  <Tr>
+                    <Td className="text-slate-500">Add: RCM inward (3.1(d), payable in cash)</Td>
+                    <Td className="text-right font-mono text-slate-900">{formatCurrency(data.rcm_inward?.taxable ?? '0')}</Td>
+                    <Td className="text-right font-mono text-slate-500">{formatCurrency(data.rcm_inward?.cgst ?? '0')}</Td>
+                    <Td className="text-right font-mono text-slate-500">{formatCurrency(data.rcm_inward?.sgst ?? '0')}</Td>
+                    <Td className="text-right font-mono text-slate-500">{formatCurrency(data.rcm_inward?.igst ?? '0')}</Td>
+                  </Tr>
+                  <Tr>
+                    <Td className="text-slate-500">Exempt outward supplies (3.1(c) — consultation etc.)</Td>
+                    <Td className="text-right font-mono text-slate-900">{formatCurrency(data.exempt_outward ?? '0')}</Td>
+                    <Td className="text-right font-mono text-slate-400" colSpan={3}>nil-rated / exempt — no tax</Td>
+                  </Tr>
+                </Tbody>
+              </Table>
+            </CardContent>
+          </Card>
+
           {/* Input Tax */}
           <Card>
             <CardContent>

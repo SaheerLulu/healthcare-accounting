@@ -54,6 +54,15 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
           {voucherLabel(entry.voucher_type)}
         </span>
         <span className="text-sm flex-1 truncate" style={{ color: 'var(--ink)' }}>{entry.narration || '—'}</span>
+        {entry.reference_type ? (
+          <span
+            className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-slate-100"
+            style={{ color: 'var(--ink-2)' }}
+            title="Pharmacy source document this entry was generated from"
+          >
+            {entry.reference_type}{entry.reference_id ? ` #${entry.reference_id}` : ''}
+          </span>
+        ) : null}
         <span className="text-sm font-mono w-28 text-right" style={{ color: 'var(--ink)' }}>{formatCurrency(totalDebit)}</span>
         <span className="text-sm font-mono w-28 text-right" style={{ color: 'var(--ink)' }}>{formatCurrency(totalCredit)}</span>
       </div>

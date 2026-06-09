@@ -371,6 +371,8 @@ class LedgerView(APIView):
                     'entry_no': line.entry.entry_no,
                     'narration': line.entry.narration or line.narration,
                     'voucher_type': line.entry.voucher_type,
+                    'reference_type': line.entry.reference_type or '',
+                    'reference_id': line.entry.reference_id,
                     'debit': str(line.debit),
                     'credit': str(line.credit),
                     'balance': str(running_balance),
@@ -397,6 +399,8 @@ class LedgerView(APIView):
                 'entry_no': line.entry.entry_no,
                 'narration': line.entry.narration or line.narration,
                 'voucher_type': line.entry.voucher_type,
+                'reference_type': line.entry.reference_type or '',
+                'reference_id': line.entry.reference_id,
                 'debit': str(line.debit),
                 'credit': str(line.credit),
                 'balance': str(running_balance),
@@ -458,11 +462,15 @@ class LedgerExportView(APIView):
         running = opening_balance
         for line in lines_qs:
             running += line.debit - line.credit
+            ref = line.entry.reference_type or ''
+            if ref and line.entry.reference_id:
+                ref = f'{ref}#{line.entry.reference_id}'
             rows.append({
                 'date': line.entry.date.isoformat(),
                 'entry_no': line.entry.entry_no,
                 'narration': line.entry.narration or line.narration,
                 'voucher_type': line.entry.voucher_type,
+                'source': ref,
                 'debit': str(line.debit),
                 'credit': str(line.credit),
                 'balance': str(running),
@@ -477,12 +485,12 @@ class LedgerExportView(APIView):
             ws.append([f'Period: {start_date or "all"} to {end_date or "all"}'])
             ws.append([f'Opening Balance: {opening_balance}'])
             ws.append([])
-            ws.append(['Date', 'Entry No', 'Narration', 'Voucher', 'Debit', 'Credit', 'Balance'])
+            ws.append(['Date', 'Entry No', 'Narration', 'Voucher', 'Source Doc', 'Debit', 'Credit', 'Balance'])
             for r in rows:
                 ws.append([r['date'], r['entry_no'], r['narration'], r['voucher_type'],
-                           r['debit'], r['credit'], r['balance']])
+                           r['source'], r['debit'], r['credit'], r['balance']])
             ws.append([])
-            ws.append(['', '', '', 'Closing', '', '', str(running)])
+            ws.append(['', '', '', 'Closing', '', '', '', str(running)])
             buf = io.BytesIO(); wb.save(buf); buf.seek(0)
             response = HttpResponse(
                 buf.read(),
@@ -512,18 +520,18 @@ class LedgerExportView(APIView):
                 Paragraph(f'Opening balance: {opening_balance}', styles['Normal']),
                 Spacer(1, 8),
             ]
-            data = [['Date', 'Entry', 'Narration', 'Voucher', 'Debit', 'Credit', 'Balance']]
+            data = [['Date', 'Entry', 'Narration', 'Voucher', 'Source', 'Debit', 'Credit', 'Balance']]
             for r in rows:
                 data.append([r['date'], r['entry_no'], r['narration'][:60],
-                             r['voucher_type'], r['debit'], r['credit'], r['balance']])
-            data.append(['', '', '', 'Closing', '', '', str(running)])
+                             r['voucher_type'], r['source'], r['debit'], r['credit'], r['balance']])
+            data.append(['', '', '', '', 'Closing', '', '', str(running)])
             tbl = Table(data, repeatRows=1)
             tbl.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e5e7eb')),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
                 ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
-                ('ALIGN', (4, 1), (6, -1), 'RIGHT'),
+                ('ALIGN', (5, 1), (7, -1), 'RIGHT'),
                 ('FONTSIZE', (0, 0), (-1, -1), 8),
             ]))
             story.append(tbl)
@@ -545,12 +553,12 @@ class LedgerExportView(APIView):
         w.writerow([f'Period: {start_date or "all"} to {end_date or "all"}'])
         w.writerow([f'Opening Balance: {opening_balance}'])
         w.writerow([])
-        w.writerow(['Date', 'Entry No', 'Narration', 'Voucher', 'Debit', 'Credit', 'Balance'])
+        w.writerow(['Date', 'Entry No', 'Narration', 'Voucher', 'Source Doc', 'Debit', 'Credit', 'Balance'])
         for r in rows:
             w.writerow([r['date'], r['entry_no'], r['narration'], r['voucher_type'],
-                        r['debit'], r['credit'], r['balance']])
+                        r['source'], r['debit'], r['credit'], r['balance']])
         w.writerow([])
-        w.writerow(['', '', '', 'Closing', '', '', str(running)])
+        w.writerow(['', '', '', '', 'Closing', '', '', str(running)])
         return response
 
 
@@ -576,6 +584,39 @@ def _age_open_invoices(invoices, payments, as_of):
                else '61_90' if days <= 90 else '90_plus')
         buckets[key] += open_amount
     return buckets
+
+
+def _party_tax_details(party_type, party_ids):
+    """Bulk-resolve tax-filing identifiers for a set of parties:
+    {party_id: {gstin, state, pan, msme_category, msme_udyam_no}}.
+
+    GSTIN/state come from the inventory master (CustomerRO/SupplierRO); PAN and
+    MSME registration from parties.PartyMetadata. All fields default to '' so
+    report rows are safe to render/export without null checks.
+    """
+    from inventory_reader.models import CustomerRO, SupplierRO
+    from parties.models import PartyMetadata
+
+    details = {pid: {'gstin': '', 'state': '', 'pan': '',
+                     'msme_category': '', 'msme_udyam_no': ''}
+               for pid in party_ids}
+    if not party_ids:
+        return details
+
+    model = CustomerRO if party_type == 'Customer' else SupplierRO
+    for row in model.objects.filter(id__in=list(party_ids)).values('id', 'gst_no', 'state'):
+        details[row['id']]['gstin'] = row['gst_no'] or ''
+        details[row['id']]['state'] = row['state'] or ''
+
+    for meta in PartyMetadata.objects.filter(
+            party_type=party_type, party_id__in=list(party_ids)):
+        d = details.get(meta.party_id)
+        if d is None:
+            continue
+        d['pan'] = meta.pan or ''
+        d['msme_category'] = meta.msme_category or ''
+        d['msme_udyam_no'] = meta.msme_udyam_no or ''
+    return details
 
 
 class ReceivablesAgingView(APIView):
@@ -607,6 +648,8 @@ class ReceivablesAgingView(APIView):
                 if line.debit > 0:
                     customer_dates[line.party_id].append((line.entry.date, line.debit))
 
+        tax_details = _party_tax_details('Customer', set(customer_balances.keys()))
+
         rows = []
         for customer_id, balance in customer_balances.items():
             if balance <= 0:
@@ -621,9 +664,13 @@ class ReceivablesAgingView(APIView):
             payments = sum((amt for _, amt in invoices), Decimal('0')) - balance
             aging = _age_open_invoices(invoices, payments, as_of)
 
+            d = tax_details.get(customer_id, {})
             rows.append({
                 'customer_id': customer_id,
                 'customer_name': name,
+                'gstin': d.get('gstin', ''),
+                'pan': d.get('pan', ''),
+                'state': d.get('state', ''),
                 'total_outstanding': str(balance),
                 'aging_0_30': str(aging['0_30']),
                 'aging_31_60': str(aging['31_60']),
@@ -787,6 +834,8 @@ class PayablesAgingView(APIView):
                 if line.credit > 0:
                     supplier_dates[line.party_id].append((line.entry.date, line.credit))
 
+        tax_details = _party_tax_details('Supplier', set(supplier_balances.keys()))
+
         rows = []
         for supplier_id, balance in supplier_balances.items():
             if balance <= 0:
@@ -801,9 +850,15 @@ class PayablesAgingView(APIView):
             payments = sum((amt for _, amt in invoices), Decimal('0')) - balance
             aging = _age_open_invoices(invoices, payments, as_of)
 
+            d = tax_details.get(supplier_id, {})
             rows.append({
                 'supplier_id': supplier_id,
                 'supplier_name': name,
+                'gstin': d.get('gstin', ''),
+                'pan': d.get('pan', ''),
+                'state': d.get('state', ''),
+                'msme_category': d.get('msme_category', ''),
+                'msme_udyam_no': d.get('msme_udyam_no', ''),
                 'total_outstanding': str(balance),
                 'aging_0_30': str(aging['0_30']),
                 'aging_31_60': str(aging['31_60']),
@@ -870,6 +925,8 @@ def _build_book_response(account_subtype, request):
                 'entry_no': line.entry.entry_no,
                 'narration': line.entry.narration or line.narration,
                 'voucher_type': line.entry.voucher_type,
+                'reference_type': line.entry.reference_type or '',
+                'reference_id': line.entry.reference_id,
                 'debit': str(line.debit),
                 'credit': str(line.credit),
                 'balance': str(running_balance),
@@ -948,6 +1005,8 @@ class DaybookView(APIView):
                 'entry_no': entry.entry_no,
                 'voucher_type': entry.voucher_type,
                 'narration': entry.narration,
+                'reference_type': entry.reference_type or '',
+                'reference_id': entry.reference_id,
                 'lines': entry_lines,
             })
             total_entries += 1
@@ -975,13 +1034,13 @@ class GSTComputationView(APIView):
         if not period:
             return Response({'error': 'period is required'}, status=400)
 
-        from gst_returns.models import GSTR1Entry, GSTR2BEntry
+        from gst_returns.models import GSTR1Entry, GSTR2BEntry, RCMEntry, GSTR3BSummary
 
         filters = {'period': period, 'is_active': True}
         if location:
             filters['location_id'] = location.id
 
-        # Output tax by rate
+        # Output tax by rate (forward supplies, gross of credit notes)
         output_entries = GSTR1Entry.objects.filter(**filters).exclude(invoice_type__in=['CREDIT_NOTE', 'CDNR', 'CDNUR'])
         output_by_rate = {}
         for entry in output_entries:
@@ -993,6 +1052,40 @@ class GSTComputationView(APIView):
             output_by_rate[rate_key]['sgst'] += entry.sgst
             output_by_rate[rate_key]['igst'] += entry.igst
 
+        # Credit notes (sales returns) — stored with NEGATIVE amounts. Shown as
+        # their own block and netted into the liability, mirroring GSTR-3B
+        # 3.1(a) which reports outward supplies net of CN (CGST §34). Without
+        # this the worksheet overstated the period's payable vs the filed 3B.
+        cn_qs = GSTR1Entry.objects.filter(
+            **filters, invoice_type__in=['CREDIT_NOTE', 'CDNR', 'CDNUR'],
+        ).exclude(is_time_barred=True)
+        cn_agg = cn_qs.aggregate(
+            taxable=Sum('taxable_value'),
+            cgst=Sum('cgst'), sgst=Sum('sgst'), igst=Sum('igst'),
+        )
+        cn_taxable = cn_agg['taxable'] or Decimal('0')
+        cn_cgst = cn_agg['cgst'] or Decimal('0')
+        cn_sgst = cn_agg['sgst'] or Decimal('0')
+        cn_igst = cn_agg['igst'] or Decimal('0')
+
+        # RCM inward liability (3.1(d)) — payable in cash, ITC claimable.
+        rcm_filters = {'period': period}
+        if location:
+            rcm_filters['location_id'] = location.id
+        rcm_agg = RCMEntry.objects.filter(**rcm_filters).aggregate(
+            taxable=Sum('taxable_value'),
+            cgst=Sum('cgst'), sgst=Sum('sgst'), igst=Sum('igst'),
+        )
+
+        # Exempt outward supplies (3.1(c)) — consultation/OPD income etc.
+        exempt_outward = Decimal('0')
+        if location:
+            summary_row = GSTR3BSummary.objects.filter(
+                period=period, location_id=location.id,
+            ).first()
+            if summary_row:
+                exempt_outward = summary_row.outward_exempt or Decimal('0')
+
         # Input tax from GSTR-2B
         input_filters = {'period': period, 'itc_eligible': True}
         if location:
@@ -1003,9 +1096,11 @@ class GSTComputationView(APIView):
             cgst=Sum('cgst'), sgst=Sum('sgst'), igst=Sum('igst'),
         )
 
-        total_output_cgst = sum(v['cgst'] for v in output_by_rate.values())
-        total_output_sgst = sum(v['sgst'] for v in output_by_rate.values())
-        total_output_igst = sum(v['igst'] for v in output_by_rate.values())
+        # Net outward liability = forward supplies + credit notes (negative)
+        # + RCM (payable in addition).
+        total_output_cgst = sum(v['cgst'] for v in output_by_rate.values()) + cn_cgst
+        total_output_sgst = sum(v['sgst'] for v in output_by_rate.values()) + cn_sgst
+        total_output_igst = sum(v['igst'] for v in output_by_rate.values()) + cn_igst
 
         itc_cgst = input_agg['cgst'] or Decimal('0')
         itc_sgst = input_agg['sgst'] or Decimal('0')
@@ -1032,6 +1127,20 @@ class GSTComputationView(APIView):
                 'total_sgst': str(total_output_sgst),
                 'total_igst': str(total_output_igst),
             },
+            # Credit notes shown as positive reductions for readability.
+            'credit_notes': {
+                'taxable': str(-cn_taxable),
+                'cgst': str(-cn_cgst),
+                'sgst': str(-cn_sgst),
+                'igst': str(-cn_igst),
+            },
+            'rcm_inward': {
+                'taxable': str(rcm_agg['taxable'] or Decimal('0')),
+                'cgst': str(rcm_agg['cgst'] or Decimal('0')),
+                'sgst': str(rcm_agg['sgst'] or Decimal('0')),
+                'igst': str(rcm_agg['igst'] or Decimal('0')),
+            },
+            'exempt_outward': str(exempt_outward),
             'input_tax': {
                 'taxable': str(input_agg['taxable'] or Decimal('0')),
                 'cgst': str(itc_cgst),
@@ -1062,12 +1171,23 @@ class HSNSummaryView(APIView):
         if location:
             filters['location_id'] = location.id
 
-        hsn_entries = GSTR1HSNSummary.objects.filter(**filters)
+        segment = request.query_params.get('segment', '').upper()
+        if segment in ('B2B', 'B2C'):
+            filters['segment'] = segment
+
+        hsn_entries = GSTR1HSNSummary.objects.filter(**filters).order_by(
+            'hsn_code', 'segment', 'rate')
 
         rows = []
+        seg_totals = {
+            'B2B': {'taxable': Decimal('0'), 'tax': Decimal('0')},
+            'B2C': {'taxable': Decimal('0'), 'tax': Decimal('0')},
+        }
         for entry in hsn_entries:
+            total_tax = entry.cgst + entry.sgst + entry.igst
             rows.append({
                 'hsn_code': entry.hsn_code,
+                'segment': entry.segment,
                 'description': entry.description,
                 'uqc': entry.uqc,
                 'quantity': str(entry.quantity),
@@ -1076,14 +1196,41 @@ class HSNSummaryView(APIView):
                 'sgst': str(entry.sgst),
                 'igst': str(entry.igst),
                 'rate': str(entry.rate),
-                'total_tax': str(entry.cgst + entry.sgst + entry.igst),
+                'total_tax': str(total_tax),
             })
+            bucket = seg_totals.setdefault(
+                entry.segment, {'taxable': Decimal('0'), 'tax': Decimal('0')})
+            bucket['taxable'] += entry.taxable_value
+            bucket['tax'] += total_tax
+
+        # CSV export in GSTR-1 Table 12 column order (per-segment tabs are
+        # filed separately — pass ?segment=B2B / ?segment=B2C to export one).
+        if request.query_params.get('export') == 'csv':
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = (
+                f'attachment; filename="HSN_Summary_{period}'
+                f'{"_" + segment if segment in ("B2B", "B2C") else ""}.csv"'
+            )
+            writer = csv.writer(response)
+            writer.writerow(['HSN', 'Segment', 'Description', 'UQC', 'Total Quantity',
+                             'Rate (%)', 'Taxable Value', 'Integrated Tax',
+                             'Central Tax', 'State/UT Tax'])
+            for r in rows:
+                writer.writerow([r['hsn_code'], r['segment'], r['description'],
+                                 r['uqc'], r['quantity'], r['rate'],
+                                 r['taxable_value'], r['igst'], r['cgst'], r['sgst']])
+            return response
 
         return Response({
             'period': period,
             'rows': rows,
             'total_taxable': str(sum(Decimal(r['taxable_value']) for r in rows)),
             'total_tax': str(sum(Decimal(r['total_tax']) for r in rows)),
+            # GSTR-1 Table 12 Phase-3 files B2B and B2C as separate tabs.
+            'segment_totals': {
+                seg: {'taxable': str(v['taxable']), 'tax': str(v['tax'])}
+                for seg, v in seg_totals.items()
+            },
         })
 
 
@@ -1141,6 +1288,8 @@ class PartyOutstandingView(APIView):
             model = SupplierRO
             name_field = 'company_name'
 
+        tax_details = _party_tax_details(party_type, set(party_data.keys()))
+
         rows = []
         for pid, data in party_data.items():
             closing = data['invoices_total'] - data['payments']
@@ -1153,9 +1302,14 @@ class PartyOutstandingView(APIView):
                 name = f'{party_type} #{pid}'
 
             aging = _age_open_invoices(data['invoices'], data['payments'], as_of)
+            d = tax_details.get(pid, {})
             rows.append({
                 'party_id': pid,
                 'party_name': name,
+                'gstin': d.get('gstin', ''),
+                'pan': d.get('pan', ''),
+                'state': d.get('state', ''),
+                'msme_category': d.get('msme_category', ''),
                 'opening_balance': '0',
                 'invoices': str(data['invoices_total']),
                 'payments': str(data['payments']),

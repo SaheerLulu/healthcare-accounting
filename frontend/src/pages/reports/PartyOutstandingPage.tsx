@@ -50,6 +50,8 @@ export default function PartyOutstandingPage() {
           <Thead>
             <Tr className="bg-slate-50">
               <Th className="text-left">Party</Th>
+              <Th className="text-left">GSTIN</Th>
+              <Th className="text-left">PAN</Th>
               <Th className="text-right px-3">Invoices</Th>
               <Th className="text-right px-3">Payments</Th>
               <Th className="text-right px-3">Outstanding</Th>
@@ -61,12 +63,22 @@ export default function PartyOutstandingPage() {
           </Thead>
           <Tbody>
             {loading ? (
-              <tr><td colSpan={8} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
+              <tr><td colSpan={10} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-12 text-slate-400 text-sm">No outstanding balances</td></tr>
+              <tr><td colSpan={10} className="text-center py-12 text-slate-400 text-sm">No outstanding balances</td></tr>
             ) : rows.map((r) => (
               <Tr key={r.party_id}>
-                <Td className="font-medium">{r.party_name}</Td>
+                <Td className="font-medium">
+                  {r.party_name}
+                  {r.msme_category ? (
+                    <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-50 text-violet-700"
+                      title={`MSME ${r.msme_category} — §16 MSMED 45-day payment rule applies`}>
+                      MSME
+                    </span>
+                  ) : null}
+                </Td>
+                <Td className="font-mono text-xs text-slate-500">{r.gstin || '—'}</Td>
+                <Td className="font-mono text-xs text-slate-500">{r.pan || '—'}</Td>
                 <Td className="text-right font-mono text-slate-500 px-3">{formatCurrency(r.invoices)}</Td>
                 <Td className="text-right font-mono text-slate-500 px-3">{formatCurrency(r.payments)}</Td>
                 <Td className="text-right font-mono font-semibold px-3">{formatCurrency(r.closing_balance)}</Td>

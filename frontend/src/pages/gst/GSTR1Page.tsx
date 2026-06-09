@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Loader2, Download, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
-import { generateGSTR1, getGSTR1Entries, type GSTR1Entry } from '../../lib/api'
+import {
+  generateGSTR1, getGSTR1Entries, getGSTR1DocSummary,
+  type GSTR1Entry, type GSTR1DocSummaryRow,
+} from '../../lib/api'
 import { formatCurrency, formatDate, getCurrentPeriod } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import { PeriodPicker } from '../../components/ui/period-picker'
@@ -11,6 +14,7 @@ import { useLocation } from '../../contexts/LocationContext'
 
 export default function GSTR1Page() {
   const [entries, setEntries] = useState<GSTR1Entry[]>([])
+  const [docRows, setDocRows] = useState<GSTR1DocSummaryRow[]>([])
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [period, setPeriod] = useState(getCurrentPeriod())
@@ -27,6 +31,13 @@ export default function GSTR1Page() {
       toast.error('Failed to load GSTR-1 entries')
     } finally {
       setLoading(false)
+    }
+    // Table 13 — documents issued (independent of entry generation).
+    try {
+      const docs = await getGSTR1DocSummary(period)
+      setDocRows(docs.rows)
+    } catch {
+      setDocRows([])
     }
   }
 
@@ -51,12 +62,14 @@ export default function GSTR1Page() {
 
   function exportCSV() {
     if (entries.length === 0) { toast.error('No data to export'); return }
-    const headers = ['Invoice No', 'Date', 'Customer GSTIN', 'Type', 'Taxable Value', 'CGST', 'SGST', 'IGST', 'Total']
+    const headers = ['Invoice No', 'Date', 'Customer GSTIN', 'Type', 'Place of Supply', 'Rate (%)', 'Taxable Value', 'CGST', 'SGST', 'IGST', 'Total']
     const rows = entries.map((e) => [
       e.invoice_no,
       e.invoice_date,
       e.customer_gstin,
       e.invoice_type,
+      e.place_of_supply,
+      e.rate,
       e.taxable_value,
       e.cgst,
       e.sgst,
@@ -111,6 +124,8 @@ export default function GSTR1Page() {
               <Th className="text-left">Date</Th>
               <Th className="text-left">Customer GSTIN</Th>
               <Th className="text-left">Type</Th>
+              <Th className="text-left">PoS</Th>
+              <Th className="text-right">Rate</Th>
               <Th className="text-right">Taxable Value</Th>
               <Th className="text-right">CGST</Th>
               <Th className="text-right">SGST</Th>
@@ -119,9 +134,9 @@ export default function GSTR1Page() {
           </Thead>
           <Tbody>
             {loading ? (
-              <tr><td colSpan={8} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
+              <tr><td colSpan={10} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
             ) : entries.length === 0 ? (
-              <tr><td colSpan={8} className="text-center py-12 text-slate-400 text-sm">No GSTR-1 entries. Generate to populate.</td></tr>
+              <tr><td colSpan={10} className="text-center py-12 text-slate-400 text-sm">No GSTR-1 entries. Generate to populate.</td></tr>
             ) : (
               entries.map((e) => (
                 <Tr key={e.id}>
@@ -129,6 +144,8 @@ export default function GSTR1Page() {
                   <Td className="text-slate-500">{formatDate(e.invoice_date)}</Td>
                   <Td className="font-mono text-xs text-slate-500">{e.customer_gstin || '-'}</Td>
                   <Td className="capitalize text-slate-500">{e.invoice_type}</Td>
+                  <Td className="font-mono text-xs text-slate-500" title="Place of supply (state code)">{e.place_of_supply || '-'}</Td>
+                  <Td className="text-right font-mono text-slate-500">{Number(e.rate) ? `${e.rate}%` : '-'}</Td>
                   <Td className="text-right font-mono">{formatCurrency(e.taxable_value)}</Td>
                   <Td className="text-right font-mono text-slate-500">{formatCurrency(e.cgst)}</Td>
                   <Td className="text-right font-mono text-slate-500">{formatCurrency(e.sgst)}</Td>
@@ -140,7 +157,7 @@ export default function GSTR1Page() {
           {entries.length > 0 && (
             <tfoot>
               <tr className="border-t-2 border-slate-200 bg-slate-50 font-semibold">
-                <td colSpan={4} className="py-3 px-4 text-sm text-slate-500">Totals ({entries.length} invoices)</td>
+                <td colSpan={6} className="py-3 px-4 text-sm text-slate-500">Totals ({entries.length} invoices)</td>
                 <td className="py-3 px-4 text-right font-mono text-slate-900">{formatCurrency(totalTaxable)}</td>
                 <td className="py-3 px-4 text-right font-mono text-slate-900">{formatCurrency(totalCGST)}</td>
                 <td className="py-3 px-4 text-right font-mono text-slate-900">{formatCurrency(totalSGST)}</td>
@@ -148,6 +165,49 @@ export default function GSTR1Page() {
               </tr>
             </tfoot>
           )}
+        </Table>
+      </Card>
+
+      {/* Table 13 — Documents Issued */}
+      <Card className="overflow-hidden">
+        <div className="px-4 pt-4">
+          <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>
+            Documents Issued (Table 13)
+          </h2>
+          <p className="text-xs mt-0.5 mb-2" style={{ color: 'var(--ink-2)' }}>
+            Serial ranges per document series for the period. Internal = inter-store
+            transfer documents that consume serials but are not supplies.
+          </p>
+        </div>
+        <Table>
+          <Thead>
+            <Tr className="bg-slate-50">
+              <Th className="text-left">Nature of Document</Th>
+              <Th className="text-left">Series</Th>
+              <Th className="text-left">Sr. No. From</Th>
+              <Th className="text-left">Sr. No. To</Th>
+              <Th className="text-right">Total</Th>
+              <Th className="text-right">Cancelled</Th>
+              <Th className="text-right">Internal</Th>
+              <Th className="text-right">Net Issued</Th>
+            </Tr>
+          </Thead>
+          <Tbody>
+            {docRows.length === 0 ? (
+              <tr><td colSpan={8} className="text-center py-8 text-slate-400 text-sm">No documents issued in this period</td></tr>
+            ) : docRows.map((d, i) => (
+              <Tr key={i}>
+                <Td className="text-slate-700">{d.nature}</Td>
+                <Td className="font-mono text-xs text-slate-500">{d.series || '—'}</Td>
+                <Td className="font-mono text-xs">{d.sr_from}</Td>
+                <Td className="font-mono text-xs">{d.sr_to}</Td>
+                <Td className="text-right font-mono">{d.total_issued}</Td>
+                <Td className="text-right font-mono text-red-700">{d.cancelled}</Td>
+                <Td className="text-right font-mono text-slate-500">{d.internal}</Td>
+                <Td className="text-right font-mono font-semibold">{d.net_issued}</Td>
+              </Tr>
+            ))}
+          </Tbody>
         </Table>
       </Card>
     </div>

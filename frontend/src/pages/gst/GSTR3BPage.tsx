@@ -36,6 +36,10 @@ function SummaryCard({ summary }: { summary: GSTR3BSummary }) {
               <span className="font-mono font-medium text-slate-900">{formatCurrency(summary.outward_zero_rated)}</span>
             </div>
             <div className="flex justify-between text-sm">
+              <span className="text-slate-500" title="3.1(c) — exempt/nil-rated outward supplies (consultation income etc.)">Exempt / Nil-rated</span>
+              <span className="font-mono font-medium text-slate-900">{formatCurrency(summary.outward_exempt)}</span>
+            </div>
+            <div className="flex justify-between text-sm">
               <span className="text-slate-500">Total Outward GST</span>
               <span className="font-mono font-medium text-slate-900">{formatCurrency(summary.total_outward_gst)}</span>
             </div>

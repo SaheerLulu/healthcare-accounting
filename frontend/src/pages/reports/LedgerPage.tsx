@@ -124,6 +124,7 @@ export default function LedgerPage() {
                   <Th className="text-left">Date</Th>
                   <Th className="text-left">Voucher #</Th>
                   <Th className="text-left">Type</Th>
+                  <Th className="text-left">Source Doc</Th>
                   <Th className="text-left">Narration</Th>
                   <Th className="text-right px-3">Debit</Th>
                   <Th className="text-right px-3">Credit</Th>
@@ -132,7 +133,7 @@ export default function LedgerPage() {
               </Thead>
               <Tbody>
                 <Tr>
-                  <Td colSpan={6} className="text-sm" style={{ color: 'var(--ink-3)' }}>
+                  <Td colSpan={7} className="text-sm" style={{ color: 'var(--ink-3)' }}>
                     Opening balance
                   </Td>
                   <Td className="text-right mono px-3" style={{ color: 'var(--ink-2)' }}>
@@ -156,6 +157,10 @@ export default function LedgerPage() {
                         </Link>
                       </Td>
                       <Td className="text-xs" style={{ color: 'var(--ink-2)' }}>{t.voucher_type ?? '—'}</Td>
+                      <Td className="text-xs mono" style={{ color: 'var(--ink-2)' }}
+                        title="Pharmacy source document this entry was generated from">
+                        {t.reference_type ? `${t.reference_type}${t.reference_id ? ` #${t.reference_id}` : ''}` : '—'}
+                      </Td>
                       <Td className="text-sm truncate max-w-xs" style={{ color: 'var(--ink)' }}>{t.narration || '—'}</Td>
                       <Td className="text-right mono px-3" style={{ color: dr > 0 ? 'var(--ink)' : 'var(--ink-3)' }}>
                         {dr > 0 ? formatCurrency(dr) : '—'}
@@ -171,7 +176,7 @@ export default function LedgerPage() {
                 })}
                 {report.transactions.length === 0 && (
                   <Tr>
-                    <Td colSpan={7} className="py-8 text-center text-sm" style={{ color: 'var(--ink-3)' }}>
+                    <Td colSpan={8} className="py-8 text-center text-sm" style={{ color: 'var(--ink-3)' }}>
                       No transactions in this period.
                     </Td>
                   </Tr>

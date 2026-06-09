@@ -1296,6 +1296,7 @@ export interface GSTR3BSummary {
   outward_cgst: string
   outward_sgst: string
   outward_zero_rated: string
+  outward_exempt: string
   total_outward_gst: string
   itc_igst: string
   itc_cgst: string
@@ -1353,6 +1354,7 @@ export interface ITCReconciliationRow {
 
 export interface HSNSummaryRow {
   hsn_code: string
+  segment: string
   description: string
   uqc: string
   quantity: string
@@ -1372,6 +1374,9 @@ export interface GSTComputation {
     total_sgst: string
     total_igst: string
   }
+  credit_notes?: { taxable: string; cgst: string; sgst: string; igst: string }
+  rcm_inward?: { taxable: string; cgst: string; sgst: string; igst: string }
+  exempt_outward?: string
   input_tax: { taxable: string; cgst: string; sgst: string; igst: string }
   net_payable: { cgst: string; sgst: string; igst: string; total: string }
 }
@@ -1379,6 +1384,10 @@ export interface GSTComputation {
 export interface PartyOutstandingRow {
   party_id: number
   party_name: string
+  gstin?: string
+  pan?: string
+  state?: string
+  msme_category?: string
   opening_balance: string
   invoices: string
   payments: string
@@ -1472,7 +1481,26 @@ export async function getGSTComputation(params?: Record<string, string>) {
 
 export async function getHSNSummary(params?: Record<string, string>) {
   const res = await api.get('/reports/hsn-summary/', { params })
-  return res.data as { period: string; rows: HSNSummaryRow[]; total_taxable: string; total_tax: string }
+  return res.data as {
+    period: string; rows: HSNSummaryRow[]; total_taxable: string; total_tax: string
+    segment_totals?: Record<string, { taxable: string; tax: string }>
+  }
+}
+
+export interface GSTR1DocSummaryRow {
+  nature: string
+  series: string
+  sr_from: string
+  sr_to: string
+  total_issued: number
+  cancelled: number
+  internal: number
+  net_issued: number
+}
+
+export async function getGSTR1DocSummary(period: string) {
+  const res = await api.get('/gst/gstr1/doc-summary/', { params: { period } })
+  return res.data as { period: string; rows: GSTR1DocSummaryRow[] }
 }
 
 export async function getPartyOutstanding(params?: Record<string, string>) {
@@ -1625,6 +1653,9 @@ export interface BSReport {
 export interface ReceivablesAgingRow {
   customer_id: number
   customer_name: string
+  gstin?: string
+  pan?: string
+  state?: string
   total_outstanding: string
   aging_0_30: string
   aging_31_60: string
@@ -1635,6 +1666,11 @@ export interface ReceivablesAgingRow {
 export interface PayablesAgingRow {
   supplier_id: number
   supplier_name: string
+  gstin?: string
+  pan?: string
+  state?: string
+  msme_category?: string
+  msme_udyam_no?: string
   total_outstanding: string
   aging_0_30: string
   aging_31_60: string
@@ -1647,6 +1683,8 @@ export interface LedgerRow {
   entry_no: string
   narration: string
   voucher_type?: string
+  reference_type?: string
+  reference_id?: number | null
   debit: number | string
   credit: number | string
   balance: number | string
@@ -1871,6 +1909,8 @@ export interface DaybookEntry {
   entry_no: string
   voucher_type: string
   narration: string
+  reference_type?: string
+  reference_id?: number | null
   lines: { account_code: string; account_name: string; debit: string; credit: string }[]
 }
 
