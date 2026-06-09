@@ -66,10 +66,17 @@ class GSTR1Entry(models.Model):
 
 
 class GSTR1HSNSummary(models.Model):
-    """HSN-code level summary for GSTR-1 filing."""
+    """HSN-code level summary for GSTR-1 filing.
+
+    Table 12 Phase-3 (mandatory from May-2025 tax periods) requires the HSN
+    summary split into separate B2B and B2C tabs — `segment` carries that
+    bifurcation. Amounts are net of credit notes (returns subtract)."""
+    SEGMENT_CHOICES = [('B2B', 'B2B'), ('B2C', 'B2C')]
+
     period = models.CharField(max_length=7)
     location_id = models.PositiveIntegerField()
     hsn_code = models.CharField(max_length=20)
+    segment = models.CharField(max_length=3, choices=SEGMENT_CHOICES, default='B2C')
     description = models.CharField(max_length=255, blank=True)
     uqc = models.CharField(max_length=10, default='NOS')  # Unit Quantity Code
     quantity = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
@@ -103,6 +110,10 @@ class GSTR3BSummary(models.Model):
     outward_cgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     outward_sgst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     outward_zero_rated = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
+    # 3.1(c) Exempt / nil-rated outward supplies (e.g. consultation income —
+    # healthcare services are GST-exempt). Sourced from posted JE lines on the
+    # CONSULTATION_INCOME account for the period.
+    outward_exempt = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     # 3.1(d) Inward supplies liable to reverse charge
     rcm_taxable = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))
     rcm_igst = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal('0.00'))

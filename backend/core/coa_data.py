@@ -192,7 +192,7 @@ LEAVES = [
     ('4210', 'Sales - Wholesale',              'REVENUE',   'Sales',             '4000', None),
     ('4300', 'Sales - Lab Services',           'REVENUE',   'Sales',             '4000', None),
     ('4310', 'Sales - Diagnostic Services',    'REVENUE',   'Sales',             '4000', None),
-    ('4320', 'Sales - Consultation',           'REVENUE',   'Sales',             '4000', None),
+    ('4320', 'Sales - Consultation',           'REVENUE',   'Sales',             '4000', 'CONSULTATION_INCOME'),
     ('4330', 'Sales - Procedure / Day-care',   'REVENUE',   'Sales',             '4000', None),
     ('4340', 'Sales - Insurance Settlement',   'REVENUE',   'Sales',             '4000', None),
     # Contra-revenue
@@ -201,6 +201,7 @@ LEAVES = [
 
     # Direct Income (4500)
     ('4510', 'Other Operating Income',         'REVENUE',   'Other_Income',      '4500', None),
+    ('4520', 'Freight & Charges Recovered',    'REVENUE',   'Other_Income',      '4500', 'OTHER_CHARGES_RECOVERED'),
 
     # Indirect Income (4900)
     ('4910', 'Interest Received',              'REVENUE',   'Other_Income',      '4900', 'INTEREST_INCOME'),

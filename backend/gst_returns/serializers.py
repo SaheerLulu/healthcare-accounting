@@ -51,7 +51,7 @@ class GSTR3BSummarySerializer(serializers.ModelSerializer):
         fields = [
             'id', 'period', 'location_id',
             'outward_taxable', 'outward_igst', 'outward_cgst', 'outward_sgst',
-            'outward_zero_rated', 'total_outward_gst',
+            'outward_zero_rated', 'outward_exempt', 'total_outward_gst',
             'itc_igst', 'itc_cgst', 'itc_sgst', 'total_itc',
             'net_payable_igst', 'net_payable_cgst', 'net_payable_sgst', 'total_net_payable',
             'status', 'status_display', 'filed_date',

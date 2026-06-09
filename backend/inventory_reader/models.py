@@ -18,6 +18,9 @@ class LocationRO(models.Model):
 class SupplierRO(models.Model):
     company_name = models.CharField(max_length=255)
     gst_no = models.CharField(max_length=50)
+    # Auto-created counterparty for inter-store transfers (STORE-{n}); their
+    # documents are stock relocations, never real purchases.
+    is_internal = models.BooleanField(default=False)
     contact_person = models.CharField(max_length=255)
     phone = models.CharField(max_length=20)
     email = models.EmailField(blank=True)
@@ -46,6 +49,9 @@ class CustomerRO(models.Model):
     customer_name = models.CharField(max_length=255)
     customer_code = models.CharField(max_length=100, null=True, blank=True)
     gst_no = models.CharField(max_length=50, blank=True)
+    # Auto-created counterparty for inter-store transfers (STORE-{n}); their
+    # documents are stock relocations, never real sales.
+    is_internal = models.BooleanField(default=False)
     phone = models.CharField(max_length=20)
     email = models.EmailField(blank=True)
     address = models.TextField()
@@ -112,7 +118,17 @@ class PurchaseOrderRO(models.Model):
         LocationRO, null=True, blank=True,
         on_delete=models.DO_NOTHING, db_constraint=False
     )
+    # Inter/intra-store transfer markers (Indent-origin GRNs). '' = real purchase.
+    transfer_kind = models.CharField(max_length=20, blank=True, default='')
+    transfer_source_location_id = models.PositiveIntegerField(null=True, blank=True)
+    source_indent_id = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField()
+
+    TRANSFER_KINDS = ('inter_store', 'intra_store')
+
+    @property
+    def is_transfer(self):
+        return self.transfer_kind in self.TRANSFER_KINDS
 
     class Meta:
         managed = False
@@ -197,6 +213,23 @@ class POSOrderLineRO(models.Model):
         db_table = 'pos_posorderline'
 
 
+class POSPaymentRO(models.Model):
+    """Read-only proxy for pos.POSPayment — per-tender settlement rows of a
+    POS order (split payments: part cash, part UPI, …)."""
+    pos_order = models.ForeignKey(
+        POSOrderRO, on_delete=models.DO_NOTHING,
+        related_name='payments', db_constraint=False
+    )
+    payment_method = models.CharField(max_length=20)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    reference = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'pos_pospayment'
+
+
 class B2BSalesOrderRO(models.Model):
     invoice_no = models.CharField(max_length=100, blank=True)
     customer = models.ForeignKey(
@@ -216,8 +249,23 @@ class B2BSalesOrderRO(models.Model):
     total_cgst = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_sgst = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     total_igst = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # Header extra-charges block: total_amount = subtotal + tax + these
+    # + freight_tax − discount + round_off (see pharmacy b2b_sales/views.py).
+    freight_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    freight_tax_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    freight_tax_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    service_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    packing_charge = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    transportation_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    other_charges = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # Set when this "sale" is the supplying leg of an inter-store transfer.
+    source_indent_id = models.PositiveIntegerField(null=True, blank=True)
     status = models.CharField(max_length=20)
     created_at = models.DateTimeField()
+
+    @property
+    def is_internal_transfer(self):
+        return self.source_indent_id is not None
 
     class Meta:
         managed = False
@@ -474,6 +522,32 @@ class UserLocationAssignmentRO(models.Model):
     class Meta:
         managed = False
         db_table = 'user_management_userlocationassignment'
+
+
+class FeeCollectionRO(models.Model):
+    """Read-only proxy for front_office.FeeCollection — doctor consultation /
+    OPD fees collected at the front desk. Healthcare services by clinical
+    establishments are GST-exempt (Notification 12/2017-CT(R)), so the sync
+    books these as exempt service income with no output-tax legs."""
+    fee_id = models.CharField(max_length=20)
+    patient_id = models.PositiveIntegerField(null=True, blank=True)
+    doctor_id = models.PositiveIntegerField(null=True, blank=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    payment_mode = models.CharField(max_length=20)
+    payment_status = models.CharField(max_length=20)
+    receipt_number = models.CharField(max_length=20, blank=True)
+    collected_at = models.DateTimeField(null=True, blank=True)
+    location = models.ForeignKey(
+        LocationRO, on_delete=models.DO_NOTHING, db_constraint=False
+    )
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'front_office_feecollection'
+
+    def __str__(self):
+        return f"Fee {self.fee_id} ₹{self.amount}"
 
 
 class PettyCashTxnRO(models.Model):

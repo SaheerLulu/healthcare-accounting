@@ -376,6 +376,8 @@ class AutoProvisionTests(TestCase):
              patch.object(svc, 'sync_stock_writeoffs', return_value=0), \
              patch.object(svc, 'sync_stock_adjustments', return_value=0), \
              patch.object(svc, 'sync_petty_cash', return_value=0), \
+             patch.object(svc, 'sync_stock_transfers', return_value=0), \
+             patch.object(svc, 'sync_fee_collections', return_value=0), \
              patch.object(svc, 'reverse_cancelled', return_value=0):
             result = svc.sync_all()
         mock_prov.assert_called_once()

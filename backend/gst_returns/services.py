@@ -68,7 +68,19 @@ class GSTR1Generator:
         ).update(is_active=False)
 
         entries_created = 0
-        hsn_data = {}  # keyed by (hsn_code, rate)
+        # Table 12 Phase-3: HSN summary keyed by (hsn_code, rate, segment)
+        # where segment is 'B2B' (registered buyer) or 'B2C'. Net of returns.
+        hsn_data = {}
+
+        def _hsn_bucket(hsn, rate, segment, desc=''):
+            key = (hsn or 'UNKNOWN', rate, segment)
+            if key not in hsn_data:
+                hsn_data[key] = {
+                    'qty': Decimal('0'), 'taxable': Decimal('0'),
+                    'cgst': Decimal('0'), 'sgst': Decimal('0'),
+                    'igst': Decimal('0'), 'desc': desc,
+                }
+            return hsn_data[key]
 
         # POS Sales
         pos_orders = POSOrderRO.objects.filter(
@@ -168,27 +180,30 @@ class GSTR1Generator:
             entries_created += 1
 
             # Collect HSN data from lines
+            pos_segment = 'B2B' if customer_gstin else 'B2C'
             for line in pos.lines.all():
                 hsn = line.product.pharma_hsn_code if line.product else ''
                 rate = line.tax_percent
-                key = (hsn or 'UNKNOWN', rate)
-                if key not in hsn_data:
-                    hsn_data[key] = {'qty': Decimal('0'), 'taxable': Decimal('0'), 'cgst': Decimal('0'), 'sgst': Decimal('0'), 'igst': Decimal('0'), 'desc': line.product.name if line.product else ''}
+                bucket = _hsn_bucket(hsn, rate, pos_segment,
+                                     line.product.name if line.product else '')
                 line_inclusive = line.line_total
                 line_taxable = back_calculate_taxable(line_inclusive, rate)
                 line_split = compute_tax_split(line_taxable, rate, supply_type)
-                hsn_data[key]['qty'] += Decimal(str(line.quantity))
-                hsn_data[key]['taxable'] += line_taxable
-                hsn_data[key]['cgst'] += line_split['cgst']
-                hsn_data[key]['sgst'] += line_split['sgst']
-                hsn_data[key]['igst'] += line_split['igst']
+                bucket['qty'] += Decimal(str(line.quantity))
+                bucket['taxable'] += line_taxable
+                bucket['cgst'] += line_split['cgst']
+                bucket['sgst'] += line_split['sgst']
+                bucket['igst'] += line_split['igst']
 
-        # B2B Sales
+        # B2B Sales. Internal inter-store transfer legs (source_indent set) are
+        # stock relocations within the same GSTIN — not supplies under GST, so
+        # they must never inflate GSTR-1.
         b2b_orders = B2BSalesOrderRO.objects.filter(
             sale_date__year=year,
             sale_date__month=month,
             location_id=location_id,
             status__in=['confirmed', 'delivered', 'invoiced'],
+            source_indent_id__isnull=True,
         ).select_related('customer').prefetch_related('lines')
 
         for order in b2b_orders:
@@ -252,18 +267,18 @@ class GSTR1Generator:
             )
             entries_created += 1
 
+            b2b_segment = 'B2B' if customer_gstin else 'B2C'
             for line in order.lines.all():
                 hsn = line.product.pharma_hsn_code if line.product else ''
                 rate = line.tax_percent
-                key = (hsn or 'UNKNOWN', rate)
-                if key not in hsn_data:
-                    hsn_data[key] = {'qty': Decimal('0'), 'taxable': Decimal('0'), 'cgst': Decimal('0'), 'sgst': Decimal('0'), 'igst': Decimal('0'), 'desc': line.product.name if line.product else ''}
+                bucket = _hsn_bucket(hsn, rate, b2b_segment,
+                                     line.product.name if line.product else '')
                 line_taxable = line.line_total - (Decimal(str(line.cgst_amount or 0)) + Decimal(str(line.sgst_amount or 0)) + Decimal(str(line.igst_amount or 0)))
-                hsn_data[key]['qty'] += Decimal(str(line.quantity))
-                hsn_data[key]['taxable'] += line_taxable
-                hsn_data[key]['cgst'] += Decimal(str(line.cgst_amount or 0))
-                hsn_data[key]['sgst'] += Decimal(str(line.sgst_amount or 0))
-                hsn_data[key]['igst'] += Decimal(str(line.igst_amount or 0))
+                bucket['qty'] += Decimal(str(line.quantity))
+                bucket['taxable'] += line_taxable
+                bucket['cgst'] += Decimal(str(line.cgst_amount or 0))
+                bucket['sgst'] += Decimal(str(line.sgst_amount or 0))
+                bucket['igst'] += Decimal(str(line.igst_amount or 0))
 
         # Sales Returns (Credit Notes) — Phase 2B: CDNR/CDNUR
         returns = SalesReturnRO.objects.filter(
@@ -274,6 +289,10 @@ class GSTR1Generator:
         ).select_related('customer')
 
         for ret in returns.prefetch_related('lines'):
+            # Returns against internal transfer counterparties are unwinds of
+            # stock relocations — never credit notes in GSTR-1.
+            if ret.customer and getattr(ret.customer, 'is_internal', False):
+                continue
             customer_gstin = ret.customer.gst_no if ret.customer and ret.customer.gst_no else ''
             customer_state_code = (
                 state_name_to_code(ret.customer.state)
@@ -372,12 +391,30 @@ class GSTR1Generator:
             )
             entries_created += 1
 
-        # Generate HSN summary
-        for (hsn_code, rate), data in hsn_data.items():
+            # Table 12 is reported net of credit notes — subtract returned
+            # quantities/values from the matching HSN+rate+segment bucket.
+            ret_segment = 'B2B' if customer_gstin else 'B2C'
+            for line in ret.lines.all():
+                hsn = line.product.pharma_hsn_code if line.product else ''
+                rate = line.tax_percent
+                bucket = _hsn_bucket(hsn, rate, ret_segment,
+                                     line.product.name if line.product else '')
+                line_total = Decimal(str(line.line_total or 0))
+                line_taxable = back_calculate_taxable(line_total, rate)
+                line_split = compute_tax_split(line_taxable, rate, supply_type)
+                bucket['qty'] -= Decimal(str(line.quantity))
+                bucket['taxable'] -= line_taxable
+                bucket['cgst'] -= line_split['cgst']
+                bucket['sgst'] -= line_split['sgst']
+                bucket['igst'] -= line_split['igst']
+
+        # Generate HSN summary (Table 12 — separate B2B / B2C tabs, net of CN)
+        for (hsn_code, rate, segment), data in hsn_data.items():
             GSTR1HSNSummary.objects.create(
                 period=period,
                 location_id=location_id,
                 hsn_code=hsn_code,
+                segment=segment,
                 description=data['desc'][:255],
                 quantity=data['qty'],
                 taxable_value=data['taxable'],
@@ -431,6 +468,10 @@ class GSTR2BGenerator:
         purchases = PurchaseOrderRO.objects.filter(
             location_id=location_id,
             state__in=['confirmed', 'done', 'approved'],
+        ).exclude(
+            # Indent-origin transfer GRNs are same-GSTIN stock relocations —
+            # no supplier invoice, no ITC; keep them out of the 2B register.
+            transfer_kind__in=PurchaseOrderRO.TRANSFER_KINDS,
         ).filter(
             Q(bill_date__year=year, bill_date__month=month) |
             Q(bill_date__isnull=True,
@@ -567,6 +608,25 @@ class GSTR3BGenerator:
         total_itc_sgst = itc_by_code.get('1150', Decimal('0.00'))
         total_itc_igst = itc_by_code.get('1160', Decimal('0.00'))
 
+        # 3.1(c) Exempt / nil-rated outward supplies — consultation / OPD fee
+        # income (healthcare services, Notification 12/2017-CT(R)). Sourced
+        # from posted JE credits on the CONSULTATION_INCOME-mapped account so
+        # the figure always ties back to the GL.
+        outward_exempt = Decimal('0.00')
+        try:
+            from core.models import AccountMapping
+            exempt_acct = AccountMapping.get_account('CONSULTATION_INCOME', location_id=location_id)
+            row = JournalEntryLine.objects.filter(
+                entry__is_posted=True,
+                entry__date__year=year,
+                entry__date__month=month,
+                entry__location_id=location_id,
+                account=exempt_acct,
+            ).aggregate(c=Sum('credit'), d=Sum('debit'))
+            outward_exempt = (row['c'] or Decimal('0.00')) - (row['d'] or Decimal('0.00'))
+        except ValueError:
+            pass  # mapping not configured — report 0 exempt
+
         # 4(A)(5) "All other ITC" = total Input-GST debits − RCM ITC.
         # Negative residuals are clamped to 0 to handle the edge case where
         # an RCM JE was posted but the matching aggregation row was deleted.
@@ -605,6 +665,7 @@ class GSTR3BGenerator:
                 outward_igst=outward_igst,
                 outward_cgst=outward_cgst,
                 outward_sgst=outward_sgst,
+                outward_exempt=outward_exempt,
                 rcm_taxable=rcm_taxable,
                 rcm_cgst=rcm_cgst,
                 rcm_sgst=rcm_sgst,

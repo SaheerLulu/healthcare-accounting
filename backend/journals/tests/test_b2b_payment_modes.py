@@ -122,18 +122,21 @@ class B2BSalePaymentTypeRoutingTests(TestCase):
         ar_lines = [l for l in entry.lines.all() if l.account.account_code == '1130']
         self.assertEqual(ar_lines, [], 'Cash sale must NOT touch TRADE_RECEIVABLES')
 
-    def test_upi_card_bank_all_route_to_cash(self):
-        """Anything that isn't exactly 'Credit' is treated as paid-at-invoice
-        and lands in CASH — mirrors POS behaviour. If you want UPI/Card/Bank
-        to land in their own accounts, that's a separate routing change."""
+    def test_upi_card_bank_all_route_to_bank(self):
+        """UPI/Card/Bank/Cheque settle into the BANK account — they never
+        touch the cash drawer (UPI credits the linked bank account, card
+        settlements arrive via the acquirer, cheques are banked)."""
         # Deterministic, distinct oids — hash(mode) is randomized per process
         # (PYTHONHASHSEED) and two modes could collide, making the second
         # generate_b2b_sale a no-op (idempotency guard) and return None.
         for i, mode in enumerate(('UPI', 'Card', 'Bank', 'Cheque')):
             with self.subTest(mode=mode):
                 entry = self._generate(_b2b_order(payment_type=mode, oid=720 + i))
+                bank = [l for l in entry.lines.all() if l.account.account_code == '1120']
+                self.assertEqual(len(bank), 1, f'{mode!r} should debit BANK')
+                self.assertEqual(bank[0].debit, Decimal('1180.00'))
                 cash = [l for l in entry.lines.all() if l.account.account_code == '1110']
-                self.assertEqual(len(cash), 1, f'{mode!r} should debit CASH')
+                self.assertEqual(cash, [], f'{mode!r} must NOT touch CASH')
 
 
 class B2BReturnPaymentTypeRoutingTests(TestCase):

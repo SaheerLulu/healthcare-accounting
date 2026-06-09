@@ -6,7 +6,7 @@ from decimal import Decimal
 from django.db import transaction, connection
 from inventory_reader.models import (
     PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO,
-    OpeningStockRO, StockMovementRO, PettyCashTxnRO,
+    OpeningStockRO, StockMovementRO, PettyCashTxnRO, FeeCollectionRO,
 )
 from journals.models import JournalEntry
 from journals.services import JournalAutoGenerationService
@@ -111,8 +111,12 @@ class InventorySyncService:
         started = time.monotonic()
         errors_before = SyncError.objects.filter(sync_type='purchase', resolved=False).count()
         already_synced = self._synced_ids('PurchaseOrder')
+        # Indent-origin transfer GRNs are stock relocations, not purchases —
+        # they post via sync_stock_transfers instead (no AP, no ITC).
         orders = PurchaseOrderRO.objects.filter(
             state__in=['confirmed', 'done', 'approved'],
+        ).exclude(
+            transfer_kind__in=PurchaseOrderRO.TRANSFER_KINDS,
         ).exclude(id__in=already_synced).order_by('id')
 
         count = 0
@@ -165,8 +169,12 @@ class InventorySyncService:
         started = time.monotonic()
         errors_before = SyncError.objects.filter(sync_type='b2b', resolved=False).count()
         already_synced = self._synced_ids('B2BSalesOrder')
+        # Internal inter-store "sales" (source_indent set) are the supplying
+        # leg of a stock transfer — never revenue. Excluded here; the paired
+        # relocation JV posts from the destination GRN in sync_stock_transfers.
         orders = B2BSalesOrderRO.objects.filter(
             status__in=['confirmed', 'delivered', 'invoiced'],
+            source_indent_id__isnull=True,
         ).exclude(id__in=already_synced).order_by('id')
 
         count = 0
@@ -362,6 +370,76 @@ class InventorySyncService:
         self._record_metrics('petty_cash', started, errors_before)
         return count
 
+    def sync_stock_transfers(self, since_id: int = 0) -> int:
+        """Post paired relocation JVs for Indent-origin transfer GRNs.
+
+        Previously these were either booked as REAL purchases (inter-store —
+        inflating purchases, trade payables and GSTR-2B with self-dealing) or
+        never booked at all (intra-store, terminal state 'intra_done' was not
+        in the purchase sync filter, so the destination store's stock GL
+        silently drifted). Idempotent via reference_type='StockTransferIn'.
+        """
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='stock_transfer', resolved=False).count()
+        already_synced = self._synced_ids('StockTransferIn')
+        orders = PurchaseOrderRO.objects.filter(
+            state__in=['confirmed', 'done', 'approved', 'intra_done'],
+            transfer_kind__in=PurchaseOrderRO.TRANSFER_KINDS,
+        ).exclude(id__in=already_synced).order_by('id')
+
+        count = 0
+        last_id = since_id
+        for po in orders:
+            try:
+                entry = self.journal_service.generate_stock_transfer(po.id)
+                if entry:
+                    count += 1
+                self._resolve_error('stock_transfer', po.id)
+                last_id = max(last_id, po.id)
+            except Exception as e:
+                self._log_error('stock_transfer', po.id, e)
+
+        SyncLog.objects.update_or_create(
+            sync_type='stock_transfer',
+            defaults={'last_synced_id': last_id, 'records_processed': count}
+        )
+        self._record_metrics('stock_transfer', started, errors_before)
+        return count
+
+    def sync_fee_collections(self, since_id: int = 0) -> int:
+        """Post consultation / OPD fee receipts (front-office FeeCollection).
+
+        This revenue stream previously never reached the books at all. Only
+        'Paid' fees post (Pending/Waived rows are picked up if they flip to
+        Paid later). GST-exempt — no output-tax legs. Idempotent via
+        reference_type='FeeCollection'.
+        """
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='fee_collection', resolved=False).count()
+        already_synced = self._synced_ids('FeeCollection')
+        fees = FeeCollectionRO.objects.filter(
+            payment_status='Paid',
+        ).exclude(id__in=already_synced).order_by('id')
+
+        count = 0
+        last_id = since_id
+        for fee in fees:
+            try:
+                entry = self.journal_service.generate_fee_collection(fee.id)
+                if entry:
+                    count += 1
+                self._resolve_error('fee_collection', fee.id)
+                last_id = max(last_id, fee.id)
+            except Exception as e:
+                self._log_error('fee_collection', fee.id, e)
+
+        SyncLog.objects.update_or_create(
+            sync_type='fee_collection',
+            defaults={'last_synced_id': last_id, 'records_processed': count}
+        )
+        self._record_metrics('fee_collection', started, errors_before)
+        return count
+
     def retry_failed(self):
         """Retry all unresolved sync errors."""
         errors = SyncError.objects.filter(resolved=False)
@@ -385,6 +463,12 @@ class InventorySyncService:
                     self.journal_service.generate_stock_writeoff(error.source_id)
                 elif error.sync_type == 'stock_adjustment':
                     self.journal_service.generate_stock_adjustment(error.source_id)
+                elif error.sync_type == 'stock_transfer':
+                    self.journal_service.generate_stock_transfer(error.source_id)
+                elif error.sync_type == 'fee_collection':
+                    self.journal_service.generate_fee_collection(error.source_id)
+                elif error.sync_type == 'petty_cash':
+                    self.journal_service.generate_petty_cash(error.source_id)
                 else:
                     continue
 
@@ -443,6 +527,10 @@ class InventorySyncService:
             ('B2BSalesOrder', B2BSalesOrderRO, 'status'),
             ('SalesReturn', SalesReturnRO, 'status'),
             ('PurchaseReturn', PurchaseReturnRO, 'status'),
+            # Both legs of a transfer pair key on the destination GRN id, so a
+            # cancelled transfer reverses the OUT and IN JVs together.
+            ('StockTransferIn', PurchaseOrderRO, 'state'),
+            ('StockTransferOut', PurchaseOrderRO, 'state'),
         )
         reversed_count = 0
         for ref_type, model, state_field in specs:
@@ -487,6 +575,7 @@ class InventorySyncService:
                     'opening_stocks': 0, 'purchases': 0, 'pos': 0, 'b2b': 0,
                     'returns': 0, 'purchase_returns': 0,
                     'stock_writeoffs': 0, 'stock_adjustments': 0, 'petty_cash': 0,
+                    'stock_transfers': 0, 'fee_collections': 0,
                     'reversed_cancelled': 0,
                     'total': 0,
                 }
@@ -529,6 +618,8 @@ class InventorySyncService:
         writeoff_count = self.sync_stock_writeoffs(SyncLog.get_last_id('stock_writeoff'))
         adjustment_count = self.sync_stock_adjustments(SyncLog.get_last_id('stock_adjustment'))
         petty_cash_count = self.sync_petty_cash(SyncLog.get_last_id('petty_cash'))
+        stock_transfer_count = self.sync_stock_transfers(SyncLog.get_last_id('stock_transfer'))
+        fee_collection_count = self.sync_fee_collections(SyncLog.get_last_id('fee_collection'))
 
         # After posting new orders, back out any previously-synced order that
         # was cancelled upstream so the books don't drift from inventory.
@@ -536,7 +627,8 @@ class InventorySyncService:
 
         total = (opening_stock_count + purchase_count + pos_count + b2b_count
                  + return_count + purchase_return_count
-                 + writeoff_count + adjustment_count + petty_cash_count)
+                 + writeoff_count + adjustment_count + petty_cash_count
+                 + stock_transfer_count + fee_collection_count)
         SyncLog.objects.create(
             sync_type='all',
             last_synced_id=0,
@@ -553,6 +645,8 @@ class InventorySyncService:
             'stock_writeoffs': writeoff_count,
             'stock_adjustments': adjustment_count,
             'petty_cash': petty_cash_count,
+            'stock_transfers': stock_transfer_count,
+            'fee_collections': fee_collection_count,
             'reversed_cancelled': reversed_cancelled,
             'party_ledgers': provisioned,
             'coa_bootstrapped': coa_bootstrapped,
@@ -567,6 +661,7 @@ AUTO_GEN_REF_TYPES = (
     'PurchaseOrder', 'POSOrder', 'B2BSalesOrder',
     'SalesReturn', 'PurchaseReturn',
     'StockWriteOff', 'StockAdjustment',
+    'PettyCash', 'StockTransferIn', 'StockTransferOut', 'FeeCollection',
 )
 
 

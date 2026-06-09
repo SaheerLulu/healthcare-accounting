@@ -13,7 +13,14 @@ from inventory_reader.models import (
     OpeningStockLineRO,
     StockMovementRO,
     PettyCashTxnRO,
+    FeeCollectionRO,
 )
+
+
+def _dec(obj, name, default='0'):
+    """Decimal-coerce an optional attribute (tolerates RO rows and test mocks
+    that predate newly-added fields)."""
+    return Decimal(str(getattr(obj, name, None) or default))
 from core.models import AccountMapping, AccountingSettings
 from core.party_ledgers import resolve_party_account
 from decimal import ROUND_HALF_UP
@@ -61,20 +68,76 @@ class JournalAutoGenerationService:
         except ValueError:
             return None
 
+    # Tender modes that settle into the bank account, not the cash drawer.
+    # UPI credits the linked bank account directly; card settlements arrive
+    # via the acquirer; cheques are banked. Everything else (and unknown
+    # modes) stays in Cash — the conservative default.
+    BANK_SETTLEMENT_MODES = frozenset(
+        ('upi', 'card', 'bank', 'cheque', 'neft', 'rtgs', 'online'))
+
     def _sale_settlement(self, payment_type, customer_id, loc):
         """Debit account + party tag for the customer side of a sale (shared by
         POS and B2B). A CREDIT sale to a named customer hits that customer's own
-        ledger and is party-tagged so AR aging is accurate; cash / walk-in (or a
+        ledger and is party-tagged so AR aging is accurate. UPI/Card/Cheque
+        settle to Bank (they never touch the cash drawer); cash / walk-in (or a
         credit sale with no customer) hits Cash / the generic control, untagged
         (a tag on a settled line would inflate AR aging)."""
+        pt = (payment_type or '').strip().lower()
         if payment_type == 'Credit':
             account = resolve_party_account(
                 'Customer', customer_id, self._acct('TRADE_RECEIVABLES', loc), location_id=loc)
             tag = dict(party_type='Customer', party_id=customer_id) if customer_id else {}
+        elif pt in self.BANK_SETTLEMENT_MODES:
+            account = self._acct('BANK', loc)
+            tag = {}
         else:
             account = self._acct('CASH', loc)
             tag = {}
         return account, tag
+
+    def _refund_account(self, payment_type, loc):
+        """Credit account when refunding a sale — mirrors where the money
+        originally landed (Bank for UPI/Card/Cheque, Cash otherwise)."""
+        pt = (payment_type or '').strip().lower()
+        if pt in self.BANK_SETTLEMENT_MODES:
+            return self._acct('BANK', loc)
+        return self._acct('CASH', loc)
+
+    def _pos_settlement_legs(self, pos, loc):
+        """Settlement debit legs for a POS sale: [(account, amount, party_tag)].
+
+        Multi-tender orders carry per-tender POSPayment rows (part cash, part
+        UPI, …). When those rows exist and foot to the order total, post one
+        leg per settlement account so the cash book and bank book each show
+        what actually landed there. Otherwise fall back to the header
+        payment_type for the full amount."""
+        total = _dec(pos, 'total_amount')
+        payments = []
+        mgr = getattr(pos, 'payments', None)
+        if mgr is not None:
+            try:
+                payments = list(mgr.all())
+            except Exception:
+                payments = []
+        if payments and total > 0:
+            paid = sum((_dec(p, 'amount') for p in payments), Decimal('0.00'))
+            if paid == total:
+                legs = {}   # (account_id, party_id) -> [account, amount, tag]
+                for p in payments:
+                    amount = _dec(p, 'amount')
+                    if amount <= 0:
+                        continue
+                    account, tag = self._sale_settlement(
+                        p.payment_method, pos.customer_id, loc)
+                    key = (account.id, tag.get('party_id'))
+                    if key in legs:
+                        legs[key][1] += amount
+                    else:
+                        legs[key] = [account, amount, tag]
+                if legs:
+                    return [tuple(v) for v in legs.values()]
+        account, tag = self._sale_settlement(pos.payment_type, pos.customer_id, loc)
+        return [(account, total, tag)]
 
     def _entry_exists(self, reference_type, reference_id):
         return JournalEntry.objects.filter(
@@ -249,6 +312,11 @@ class JournalAutoGenerationService:
         po = PurchaseOrderRO.objects.select_related('supplier').prefetch_related('lines').get(id=po_id)
         if po.state not in ('confirmed', 'done', 'approved'):
             return None
+        # Indent-origin transfer GRN: stock relocation between stores, not a
+        # purchase — no supplier liability, no ITC. Posted as a paired
+        # stock-transfer JV by generate_stock_transfer instead.
+        if getattr(po, 'transfer_kind', '') in ('inter_store', 'intra_store'):
+            return None
 
         lines_data = po.lines.all()
         taxable_amount = Decimal('0.00')
@@ -411,10 +479,11 @@ class JournalAutoGenerationService:
             location_id=loc,
         )
 
-        debit_ac, ar_party = self._sale_settlement(pos.payment_type, pos.customer_id, loc)
         if total > 0:
-            JournalEntryLine.objects.create(
-                entry=entry, account=debit_ac, debit=total, **ar_party)
+            for debit_ac, leg_amount, ar_party in self._pos_settlement_legs(pos, loc):
+                if leg_amount > 0:
+                    JournalEntryLine.objects.create(
+                        entry=entry, account=debit_ac, debit=leg_amount, **ar_party)
         if sales_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_POS', loc), credit=sales_amount)
         if cgst > 0:
@@ -467,11 +536,28 @@ class JournalAutoGenerationService:
         order = B2BSalesOrderRO.objects.select_related('customer').prefetch_related('lines').get(id=b2b_id)
         if order.status not in ('confirmed', 'delivered', 'invoiced'):
             return None
+        # Inter-store transfer leg (Indent-origin): stock relocation, not
+        # revenue. generate_stock_transfer posts it from the destination GRN.
+        if getattr(order, 'source_indent_id', None):
+            return None
 
         total = order.total_amount
 
         # B2B is tax-exclusive: subtotal is the taxable base
         taxable = order.subtotal - order.discount_amount
+
+        # Header extra-charges block (billed on the invoice on top of goods):
+        # freight + service + packing + transport + other, plus GST charged on
+        # freight. These are part of total_amount — without crediting them the
+        # JE was unbalanced and the whole sale failed to post whenever a
+        # courier charge was added.
+        charges_total = (
+            _dec(order, 'freight_charge') + _dec(order, 'service_charge')
+            + _dec(order, 'packing_charge') + _dec(order, 'transportation_cost')
+            + _dec(order, 'other_charges')
+        )
+        freight_tax = _dec(order, 'freight_tax_amount')
+        round_off_hdr = _dec(order, 'round_off')
 
         # Always re-derive supply_type from the customer GSTIN (state fallback)
         # against the company state, matching GSTR-1.
@@ -489,6 +575,8 @@ class JournalAutoGenerationService:
              Decimal(str(l.igst_amount or 0)))
             for l in order.lines.all()
         )
+        # GST charged on freight follows the same supply-type split as goods.
+        total_tax += freight_tax
         if supply_type == 'inter_state':
             cgst, sgst, igst = Decimal('0.00'), Decimal('0.00'), total_tax
         else:
@@ -520,8 +608,38 @@ class JournalAutoGenerationService:
         if igst > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST', loc), credit=igst)
 
-        # Round-off for sub-rupee drift between debit (gross) and credits.
-        diff = total - (sales_amount + cgst + sgst + igst)
+        # Freight / service / packing / transport / other charges billed on the
+        # invoice — recovered income, kept off the goods Sales head so the
+        # GSTR-1 taxable (goods) and the GL sales account stay comparable.
+        charges_posted = Decimal('0.00')
+        if charges_total > 0:
+            charges_ac = self._acct_or_none('OTHER_CHARGES_RECOVERED', loc)
+            if charges_ac:
+                JournalEntryLine.objects.create(
+                    entry=entry, account=charges_ac, credit=charges_total,
+                    narration='Freight / other charges recovered',
+                )
+            else:
+                # No mapping yet — fold into Sales so the entry still balances.
+                JournalEntryLine.objects.create(
+                    entry=entry, account=self._acct('SALES_B2B', loc), credit=charges_total,
+                    narration='Freight / other charges (no OTHER_CHARGES_RECOVERED mapping)',
+                )
+            charges_posted = charges_total
+
+        # Header round-off was folded into total_amount by the source system;
+        # balance it explicitly so a ±₹0.xx round-off never tips the drift
+        # guard's ₹1 band when combined with paise-level tax drift.
+        if round_off_hdr != Decimal('0.00'):
+            round_off_ac = self._acct_or_none('ROUND_OFF', loc)
+            if round_off_ac:
+                if round_off_hdr > 0:
+                    JournalEntryLine.objects.create(entry=entry, account=round_off_ac, credit=round_off_hdr)
+                else:
+                    JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(round_off_hdr))
+
+        # Round-off for any remaining sub-rupee drift between debit and credits.
+        diff = total - (sales_amount + cgst + sgst + igst + charges_posted + round_off_hdr)
         if diff != Decimal('0.00') and abs(diff) < Decimal('1.00'):
             round_off_ac = self._acct_or_none('ROUND_OFF', loc)
             if round_off_ac:
@@ -610,33 +728,31 @@ class JournalAutoGenerationService:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST', loc), debit=igst)
 
         # Credit side mirrors the original sale's settlement account:
-        #   - POS returns always settle in cash (POS is cash-only in this app).
-        #   - B2B returns where the original sale was Credit reverse the receivable.
-        #   - B2B returns where the original sale was Cash/Bank/Card etc. refund cash.
+        #   - Returns of Credit sales reverse the customer's receivable.
+        #   - Otherwise the refund leaves the account the money landed in:
+        #     Bank for UPI/Card/Cheque-paid originals, Cash for cash sales
+        #     (and when the original order is unknown — conservative default).
         # Tagging party_type='Customer' on receivable returns keeps AR aging accurate
         # (reports/views.py:545 scopes aging to account_subtype='Receivable').
-        if ret.return_type == 'b2b':
-            orig = ret.original_b2b_order
-            if orig and orig.payment_type == 'Credit':
-                if total > 0:
-                    JournalEntryLine.objects.create(
-                        entry=entry,
-                        account=resolve_party_account(
-                            'Customer', ret.customer_id,
-                            self._acct('TRADE_RECEIVABLES', loc), location_id=loc),
-                        credit=total,
-                        party_type='Customer',
-                        party_id=ret.customer_id,
-                    )
-            else:
-                if total > 0:
-                    JournalEntryLine.objects.create(
-                        entry=entry, account=self._acct('CASH', loc), credit=total,
-                    )
+        orig = (ret.original_b2b_order if ret.return_type == 'b2b'
+                else getattr(ret, 'original_order', None))
+        orig_payment_type = getattr(orig, 'payment_type', '') if orig else ''
+        if orig_payment_type == 'Credit':
+            if total > 0:
+                JournalEntryLine.objects.create(
+                    entry=entry,
+                    account=resolve_party_account(
+                        'Customer', ret.customer_id,
+                        self._acct('TRADE_RECEIVABLES', loc), location_id=loc),
+                    credit=total,
+                    party_type='Customer',
+                    party_id=ret.customer_id,
+                )
         else:
             if total > 0:
                 JournalEntryLine.objects.create(
-                    entry=entry, account=self._acct('CASH', loc), credit=total,
+                    entry=entry, account=self._refund_account(orig_payment_type, loc),
+                    credit=total,
                 )
 
         # Round-off absorbs sub-rupee drift so the JE always balances.
@@ -1173,6 +1289,140 @@ class JournalAutoGenerationService:
         )
         JournalEntryLine.objects.create(entry=entry, account=debit_acct, debit=amount, narration=narration)
         JournalEntryLine.objects.create(entry=entry, account=cash_acct, credit=amount, narration='Paid from cash in hand')
+        entry.post()
+        return entry
+
+    @transaction.atomic
+    def generate_stock_transfer(self, po_id):
+        """Post the paired JVs for an Indent-origin inter/intra-store transfer.
+
+        The pharmacy models a transfer as an internal B2B "sale" at the source
+        plus a GRN at the destination (same line values by construction). In
+        the books it is a stock RELOCATION — no revenue, no purchases, no
+        AR/AP, no GST (same-GSTIN branch transfers are not supplies):
+
+            At source store:       Dr Stock-in-Transit / Cr Closing Stock
+            At destination store:  Dr Closing Stock    / Cr Stock-in-Transit
+
+        Both legs carry the document value (Σ qty × transfer rate) so the
+        transit account nets to zero per transfer. Idempotent via
+        reference_type='StockTransferIn' (the destination GRN id keys the pair;
+        the OUT leg is reference_type='StockTransferOut' with the same id).
+        """
+        if self._entry_exists('StockTransferIn', po_id):
+            return None
+
+        po = PurchaseOrderRO.objects.prefetch_related('lines').get(id=po_id)
+        if getattr(po, 'transfer_kind', '') not in ('inter_store', 'intra_store'):
+            return None
+        # 'intra_done' is the terminal state for intra-store transfers;
+        # inter-store ones land in 'confirmed' like normal GRNs.
+        if po.state not in ('confirmed', 'done', 'approved', 'intra_done'):
+            return None
+
+        value = Decimal('0.00')
+        for line in po.lines.all():
+            qty = Decimal(str((line.quantity or 0) + (line.free_qty or 0)))
+            value += qty * Decimal(str(line.purchase_rate or 0))
+        value = value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        if value <= 0:
+            return None
+
+        src = po.transfer_source_location_id
+        dst = po.location_id
+        if not src or not dst:
+            raise ValueError(
+                f'Transfer GRN #{po_id} is missing source/destination location '
+                f'(src={src}, dst={dst}); cannot post stock-transfer JV.'
+            )
+
+        entry_date = po.bill_date or po.created_at.date()
+        indent_ref = f' (Indent #{po.source_indent_id})' if po.source_indent_id else ''
+
+        out_entry = JournalEntry.objects.create(
+            date=entry_date,
+            narration=f'Stock transfer OUT — {po.bill_no}{indent_ref} to location {dst}',
+            voucher_type='JOURNAL',
+            reference_type='StockTransferOut',
+            reference_id=po_id,
+            location_id=src,
+        )
+        JournalEntryLine.objects.create(
+            entry=out_entry, account=self._acct('STOCK_TRANSFER_TRANSIT', src),
+            debit=value, narration='Goods in transit to receiving store',
+        )
+        JournalEntryLine.objects.create(
+            entry=out_entry, account=self._acct('CLOSING_STOCK', src),
+            credit=value, narration='Stock relieved at supplying store',
+        )
+        out_entry.post()
+
+        in_entry = JournalEntry.objects.create(
+            date=entry_date,
+            narration=f'Stock transfer IN — {po.bill_no}{indent_ref} from location {src}',
+            voucher_type='JOURNAL',
+            reference_type='StockTransferIn',
+            reference_id=po_id,
+            location_id=dst,
+        )
+        JournalEntryLine.objects.create(
+            entry=in_entry, account=self._acct('CLOSING_STOCK', dst),
+            debit=value, narration='Stock received from supplying store',
+        )
+        JournalEntryLine.objects.create(
+            entry=in_entry, account=self._acct('STOCK_TRANSFER_TRANSIT', dst),
+            credit=value, narration='Goods-in-transit cleared',
+        )
+        in_entry.post()
+        return in_entry
+
+    @transaction.atomic
+    def generate_fee_collection(self, fee_id):
+        """Post a front-office consultation / OPD fee receipt.
+
+            Dr Cash or Bank (per payment mode)
+                Cr Consultation Income (4320)
+
+        Healthcare services by clinical establishments are GST-exempt
+        (Notification 12/2017-CT(R) Sl. 74), so there are no output-tax legs;
+        the income still must reach the books (and GSTR-3B 3.1(c) exempt
+        outward supplies). Only 'Paid' fees post — Pending/Waived rows are
+        picked up if and when they flip to Paid. Idempotent via
+        reference_type='FeeCollection'.
+        """
+        if self._entry_exists('FeeCollection', fee_id):
+            return None
+        fee = FeeCollectionRO.objects.get(id=fee_id)
+        if (fee.payment_status or '').strip().lower() != 'paid':
+            return None
+        amount = Decimal(str(fee.amount or 0)).quantize(Decimal('0.01'))
+        if amount <= 0:
+            return None
+
+        loc = fee.location_id
+        settle_acct = self._refund_account(fee.payment_mode, loc)  # Cash vs Bank
+        income_acct = self._acct('CONSULTATION_INCOME', loc)
+
+        collected = fee.collected_at or fee.created_at
+        entry_date = collected.date() if hasattr(collected, 'date') else collected
+        receipt = f' (receipt {fee.receipt_number})' if fee.receipt_number else ''
+
+        entry = JournalEntry.objects.create(
+            date=entry_date,
+            narration=f'Consultation fee {fee.fee_id}{receipt} — GST-exempt',
+            voucher_type='RECEIPT',
+            reference_type='FeeCollection',
+            reference_id=fee_id,
+            location_id=loc,
+        )
+        JournalEntryLine.objects.create(
+            entry=entry, account=settle_acct, debit=amount,
+            narration=f'Fee collected via {fee.payment_mode}',
+        )
+        JournalEntryLine.objects.create(
+            entry=entry, account=income_acct, credit=amount,
+            narration='Consultation / OPD fee income (exempt)',
+        )
         entry.post()
         return entry
 

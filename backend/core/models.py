@@ -232,6 +232,8 @@ class AccountMapping(models.Model):
         ('OPENING_BALANCE_EQUITY', 'Opening Balance Equity'),
         ('STOCK_AUDIT_VARIANCE', 'Stock Audit Variance (Indirect Expense)'),
         ('PETTY_EXPENSE', 'Petty Cash Expenses (Indirect Expense)'),
+        ('OTHER_CHARGES_RECOVERED', 'Freight / Other Charges Recovered (on sales)'),
+        ('CONSULTATION_INCOME', 'Consultation / OPD Fee Income (GST-exempt)'),
     ]
 
     # Default mapping from key to account_code for data migration. These map
@@ -302,6 +304,8 @@ class AccountMapping(models.Model):
         'SUSPENSE': '6200',
         'COGS': '5560',
         'OPENING_BALANCE_EQUITY': '3300',
+        'OTHER_CHARGES_RECOVERED': '4520',
+        'CONSULTATION_INCOME': '4320',
     }
 
     key = models.CharField(max_length=30, choices=KEY_CHOICES)
