@@ -368,15 +368,30 @@ class UserLocationsView(APIView):
         return Response({'locations': result, 'can_see_all': can_see_all})
 
 
+def _scope_party_qs(request, qs):
+    """Store-scope a party dropdown queryset like LocationFilterMixin does:
+    active store → that store's parties; admin with no header → all;
+    regular user with no header → nothing."""
+    from .middleware import _has_all_location_access
+    location = get_active_location(request)
+    if location:
+        return qs.filter(location_id=location.id)
+    if _has_all_location_access(request.user):
+        return qs
+    return qs.none()
+
+
 class SuppliersListView(APIView):
     def get(self, request):
-        suppliers = SupplierRO.objects.all().order_by('company_name').values('id', 'company_name')
+        qs = _scope_party_qs(request, SupplierRO.objects.all())
+        suppliers = qs.order_by('company_name').values('id', 'company_name')
         return Response([{'id': s['id'], 'name': s['company_name']} for s in suppliers])
 
 
 class CustomersListView(APIView):
     def get(self, request):
-        customers = CustomerRO.objects.all().order_by('customer_name').values('id', 'customer_name')
+        qs = _scope_party_qs(request, CustomerRO.objects.all())
+        customers = qs.order_by('customer_name').values('id', 'customer_name')
         return Response([{'id': c['id'], 'name': c['customer_name']} for c in customers])
 
 

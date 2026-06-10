@@ -166,8 +166,12 @@ class TDSService:
         )
         return deduction
 
-    def auto_generate_challan(self, section: str, period: str):
-        """Auto-generate challan from pending deductions (Phase 3C)."""
+    def auto_generate_challan(self, section: str, period: str, location_id=None):
+        """Auto-generate challan from pending deductions (Phase 3C).
+
+        location_id scopes the sweep to one store and stamps the challan;
+        None (admin All-Stores mode) keeps the company-wide sweep.
+        """
         year, month = map(int, period.split('-'))
         pending = TDSDeduction.objects.filter(
             section=section,
@@ -175,6 +179,8 @@ class TDSService:
             transaction_date__year=year,
             transaction_date__month=month,
         )
+        if location_id:
+            pending = pending.filter(location_id=location_id)
 
         if not pending.exists():
             return None
@@ -192,6 +198,7 @@ class TDSService:
             period=period,
             section=section,
             total_tds_amount=total_tds,
+            location_id=location_id,
         )
         challan.deductions.set(pending)
 

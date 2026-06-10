@@ -82,6 +82,8 @@ class TDSChallan(models.Model):
     period = models.CharField(max_length=7)  # YYYY-MM
     section = models.CharField(max_length=10)
     total_tds_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    # NULL = company-wide challan (admin All-Stores sweep / legacy rows).
+    location_id = models.PositiveIntegerField(null=True, blank=True)
     deductions = models.ManyToManyField(TDSDeduction, blank=True, related_name='challans')
     created_at = models.DateTimeField(auto_now_add=True)
 

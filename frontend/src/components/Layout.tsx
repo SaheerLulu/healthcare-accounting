@@ -615,13 +615,16 @@ function GlobalNavShortcuts() {
 }
 
 export default function Layout() {
+  const { activeLocationId } = useAppLocation()
   return (
     <HotkeyProvider>
       <div className="min-h-screen" style={{ backgroundColor: 'var(--surface-1)' }}>
         <TopNav />
         <GlobalNavShortcuts />
         <main className="px-6 pb-14 pt-20">
-          <PageTransition>
+          {/* Keyed by store: switching the store remounts the routed page so
+              every screen refetches with the new X-Location-Id. */}
+          <PageTransition key={activeLocationId ?? 'all'}>
             <Outlet />
           </PageTransition>
         </main>

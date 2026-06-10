@@ -22,7 +22,7 @@ from .services import (
     generate_one_recurring_journal, generate_due_recurring_journals,
 )
 from audit.utils import log_action
-from core.mixins import LocationFilterMixin
+from core.mixins import LocationFilterMixin, get_active_location
 
 
 class JournalEntryFilter(django_filters.FilterSet):
@@ -386,7 +386,7 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-class RecurringJournalViewSet(viewsets.ModelViewSet):
+class RecurringJournalViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     """Recurring journal-entry templates that auto-generate JEs on a schedule."""
     queryset = RecurringJournal.objects.prefetch_related('lines__account').select_related('created_by')
 
@@ -408,7 +408,13 @@ class RecurringJournalViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        # Stamp the active store so the template (and every JE it generates)
+        # stays store-scoped. Explicit location_id in the payload wins.
+        location = get_active_location(self.request)
+        extra = {}
+        if location and serializer.validated_data.get('location_id') is None:
+            extra['location_id'] = location.id
+        instance = serializer.save(**extra)
         log_action('CREATE', 'RecurringJournal', instance.pk, str(instance), request=self.request)
 
     def perform_update(self, serializer):
@@ -471,8 +477,12 @@ class RecurringJournalViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='run-due')
     def run_due(self, request):
+        # Manual trigger honours the active store; the cron command (no
+        # request) still runs every store's due templates.
+        location = get_active_location(request)
         result = generate_due_recurring_journals(
             user=request.user if request.user.is_authenticated else None,
+            location_id=location.id if location else None,
         )
         log_action('CREATE', 'JournalEntry', 'batch',
                    f"Recurring-journal run: created {result['created']}, errors {len(result['errors'])}",

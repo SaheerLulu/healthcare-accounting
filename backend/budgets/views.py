@@ -3,19 +3,20 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from audit.utils import log_action
+from core.mixins import LocationFilterMixin, get_active_location
 
 from .models import Budget
 from .serializers import BudgetSerializer
 from .services import variance_report
 
 
-class BudgetViewSet(viewsets.ModelViewSet):
+class BudgetViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     queryset = Budget.objects.select_related('account')
     serializer_class = BudgetSerializer
     pagination_class = None
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset()  # LocationFilterMixin scopes to the active store
         if (p := self.request.query_params.get('period')):
             qs = qs.filter(period=p)
         if (loc := self.request.query_params.get('location_id')):
@@ -25,9 +26,15 @@ class BudgetViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        instance = serializer.save(
-            created_by=self.request.user if self.request.user.is_authenticated else None,
-        )
+        extra = {
+            'created_by': self.request.user if self.request.user.is_authenticated else None,
+        }
+        # .get() — not `in` — because the unique constraint makes DRF inject
+        # location_id=None into validated_data when the client omits it.
+        location = get_active_location(self.request)
+        if location and serializer.validated_data.get('location_id') is None:
+            extra['location_id'] = location.id
+        instance = serializer.save(**extra)
         log_action('CREATE', 'Budget', instance.pk, str(instance), request=self.request)
 
 
@@ -40,6 +47,9 @@ class BudgetVarianceView(viewsets.ViewSet):
             return Response({'detail': 'period required'}, status=status.HTTP_400_BAD_REQUEST)
         period_kind = request.query_params.get('period_kind', 'monthly')
         location_id = request.query_params.get('location_id')
+        if not location_id:
+            location = get_active_location(request)
+            location_id = location.id if location else None
         cost_center = request.query_params.get('cost_center')
         try:
             payload = variance_report(

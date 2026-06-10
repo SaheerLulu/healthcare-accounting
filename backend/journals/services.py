@@ -1663,13 +1663,16 @@ def generate_one_recurring_journal(rj: RecurringJournal, *, user=None) -> Journa
     return entry
 
 
-def generate_due_recurring_journals(*, today=None, user=None) -> dict:
+def generate_due_recurring_journals(*, today=None, user=None, location_id=None) -> dict:
     from datetime import date as date_cls
     from django.core.exceptions import ValidationError
     today = today or date_cls.today()
     created = []
     errors = []
-    profiles = list(RecurringJournal.objects.filter(status='active', next_run_date__lte=today))
+    due = RecurringJournal.objects.filter(status='active', next_run_date__lte=today)
+    if location_id:
+        due = due.filter(location_id=location_id)
+    profiles = list(due)
     for rj in profiles:
         guard = 0
         while rj.status == 'active' and rj.next_run_date <= today and guard < 60:

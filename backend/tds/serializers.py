@@ -38,8 +38,8 @@ class TDSChallanSerializer(serializers.ModelSerializer):
         model = TDSChallan
         fields = [
             'id', 'challan_no', 'bsr_code', 'deposit_date', 'period',
-            'section', 'total_tds_amount', 'deductions', 'deduction_ids',
-            'created_at',
+            'section', 'total_tds_amount', 'location_id', 'deductions',
+            'deduction_ids', 'created_at',
         ]
         read_only_fields = ['created_at']
 

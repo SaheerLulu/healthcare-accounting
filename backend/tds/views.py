@@ -11,7 +11,7 @@ from .serializers import (
     TCSCollectionSerializer, Form26ASEntrySerializer,
 )
 from .services import TDSService
-from core.mixins import LocationFilterMixin
+from core.mixins import LocationFilterMixin, get_active_location
 from audit.utils import log_action
 
 
@@ -214,7 +214,7 @@ class TDSDeductionViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         return response
 
 
-class TDSChallanViewSet(viewsets.ModelViewSet):
+class TDSChallanViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     queryset = TDSChallan.objects.all()
     serializer_class = TDSChallanSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -231,8 +231,16 @@ class TDSChallanViewSet(viewsets.ModelViewSet):
         if not section or not period:
             return Response({'error': 'section and period are required'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Challans are store-scoped: explicit location_id in the body wins,
+        # else the active store. Admin in All-Stores mode (no header) keeps
+        # the company-wide sweep.
+        location_id = request.data.get('location_id')
+        if not location_id:
+            location = get_active_location(request)
+            location_id = location.id if location else None
+
         service = TDSService()
-        challan = service.auto_generate_challan(section, period)
+        challan = service.auto_generate_challan(section, period, location_id=location_id)
         if not challan:
             return Response({'detail': 'No pending deductions found for this section/period.'}, status=status.HTTP_404_NOT_FOUND)
 

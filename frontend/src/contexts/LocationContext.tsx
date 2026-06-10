@@ -18,9 +18,19 @@ function persistLocation(id: number | null) {
   localStorage.setItem(STORAGE_KEY, id === null ? 'all' : String(id))
 }
 
+function initialLocationId(): number | null {
+  // Seed synchronously from localStorage so the first render already carries
+  // the persisted store (pages are keyed by it in Layout); the async load
+  // below only corrects selections that turn out to be invalid.
+  const stored = localStorage.getItem(STORAGE_KEY)
+  if (!stored || stored === 'all') return null
+  const id = parseInt(stored, 10)
+  return Number.isNaN(id) ? null : id
+}
+
 export function LocationProvider({ children }: { children: ReactNode }) {
   const [locations, setLocations] = useState<UserLocation[]>([])
-  const [activeLocationId, setActiveLocationId] = useState<number | null>(null)
+  const [activeLocationId, setActiveLocationId] = useState<number | null>(initialLocationId)
   const [canSeeAll, setCanSeeAll] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
 

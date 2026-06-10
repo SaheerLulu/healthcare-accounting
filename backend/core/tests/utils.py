@@ -1,6 +1,9 @@
 """Shared test fixtures and helpers."""
+from contextlib import ExitStack, contextmanager
 from datetime import date
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest import mock
 
 from django.contrib.auth.models import User
 
@@ -150,3 +153,31 @@ def make_journal_entry(d=None, lines=None, post=True, **kw):
     if post:
         entry.post()
     return entry
+
+
+@contextmanager
+def fake_active_location(all_access=None):
+    """Make X-Location-Id headers work in API tests.
+
+    The real resolver reads unmanaged inventory tables (LocationRO,
+    UserProfileRO) that don't exist in the SQLite test DB, so this patches
+    core.mixins to treat the header value as the active location verbatim.
+    all_access=True/False forces the admin/all-stores check instead of
+    querying UserProfileRO (superusers short-circuit it without the DB);
+    None leaves the real check in place.
+    """
+    def _resolve(request):
+        raw = request.META.get('HTTP_X_LOCATION_ID')
+        try:
+            return SimpleNamespace(id=int(raw)) if raw else None
+        except (TypeError, ValueError):
+            return None
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            mock.patch('core.mixins.resolve_active_location', _resolve))
+        if all_access is not None:
+            stack.enter_context(
+                mock.patch('core.mixins._has_all_location_access',
+                           lambda user: all_access))
+        yield

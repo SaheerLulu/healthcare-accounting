@@ -58,12 +58,12 @@ class SalaryStructureViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         log_action('UPDATE', 'SalaryStructure', instance.pk, str(instance), request=self.request)
 
 
-class PayrollRunViewSet(viewsets.ReadOnlyModelViewSet):
+class PayrollRunViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
     queryset = PayrollRun.objects.select_related('employee', 'journal_entry').all()
     serializer_class = PayrollRunSerializer
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset()  # LocationFilterMixin scopes to the active store
         period = self.request.query_params.get('period')
         if period:
             qs = qs.filter(period=period)
@@ -72,9 +72,16 @@ class PayrollRunViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['post'], url_path='process')
     def process_payroll(self, request):
         period = request.data.get('period')
-        location_id = request.data.get('location_id')
         if not period:
             return Response({'detail': 'period is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Default to the active store so processing from Store A can't post
+        # salary JEs for every store. Admin All-Stores mode (no header) still
+        # processes company-wide.
+        location_id = request.data.get('location_id')
+        if not location_id:
+            location = get_active_location(request)
+            location_id = location.id if location else None
 
         try:
             svc = PayrollService()
@@ -90,9 +97,10 @@ class PayrollRunViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='mark-paid')
     def mark_paid(self, request, pk=None):
+        run = self.get_object()  # 404s on another store's run
         try:
             svc = PayrollService()
-            run = svc.mark_paid(pk)
+            run = svc.mark_paid(run.pk)
             log_action('UPDATE', 'PayrollRun', run.pk, f'Marked paid: {run}', request=request)
             return Response(PayrollRunSerializer(run).data)
         except Exception as exc:
@@ -100,10 +108,7 @@ class PayrollRunViewSet(viewsets.ReadOnlyModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='payslip')
     def payslip(self, request, pk=None):
-        try:
-            run = PayrollRun.objects.select_related('employee').get(pk=pk)
-        except PayrollRun.DoesNotExist:
-            return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        run = self.get_object()  # 404s on another store's run
         pdf = generate_payslip_pdf(run)
         response = HttpResponse(pdf, content_type='application/pdf')
         response['Content-Disposition'] = (
@@ -117,8 +122,7 @@ class PayrollRunViewSet(viewsets.ReadOnlyModelViewSet):
         period = request.query_params.get('period')
         if not period:
             return Response({'detail': 'period required'}, status=status.HTTP_400_BAD_REQUEST)
-        location_id = request.query_params.get('location_id')
-        text = generate_epfo_ecr_file(period, int(location_id) if location_id else None)
+        text = generate_epfo_ecr_file(period, self._resolve_location_id(request))
         response = HttpResponse(text, content_type='text/plain')
         response['Content-Disposition'] = (
             f'attachment; filename="ecr_{period}.txt"'
@@ -131,24 +135,31 @@ class PayrollRunViewSet(viewsets.ReadOnlyModelViewSet):
         period = request.query_params.get('period')
         if not period:
             return Response({'detail': 'period required'}, status=status.HTTP_400_BAD_REQUEST)
-        location_id = request.query_params.get('location_id')
-        text = generate_esi_contribution_file(period, int(location_id) if location_id else None)
+        text = generate_esi_contribution_file(period, self._resolve_location_id(request))
         response = HttpResponse(text, content_type='text/csv')
         response['Content-Disposition'] = (
             f'attachment; filename="esi_{period}.csv"'
         )
         return response
 
+    @staticmethod
+    def _resolve_location_id(request):
+        """Explicit ?location_id wins; else the active store; None = all."""
+        location_id = request.query_params.get('location_id')
+        if location_id:
+            return int(location_id)
+        location = get_active_location(request)
+        return location.id if location else None
+
     @action(detail=False, methods=['get'], url_path='bank-disbursement')
     def bank_disbursement(self, request):
         period = request.query_params.get('period')
-        location_id = request.query_params.get('location_id')
         fmt = request.query_params.get('format', 'csv')
         if not period:
             return Response({'detail': 'period is required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             payload = generate_bank_disbursement_file(
-                period, int(location_id) if location_id else None, fmt
+                period, self._resolve_location_id(request), fmt
             )
         except ValueError as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
