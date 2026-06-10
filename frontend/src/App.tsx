@@ -42,6 +42,7 @@ import GSTR2BPage from './pages/gst/GSTR2BPage'
 import GSTR3BPage from './pages/gst/GSTR3BPage'
 import GstGrandSummaryPage from './pages/gst/GstGrandSummaryPage'
 import ITCReconciliationPage from './pages/gst/ITCReconciliationPage'
+import GSTFilingHealthPage from './pages/gst/GSTFilingHealthPage'
 import TDSPage from './pages/TDSPage'
 import TrialBalancePage from './pages/reports/TrialBalancePage'
 import ProfitLossPage from './pages/reports/ProfitLossPage'
@@ -142,6 +143,7 @@ export default function App() {
           <Route path="gst/gstr3b" element={<GSTR3BPage />} />
           <Route path="gst/grand-summary" element={<GstGrandSummaryPage />} />
           <Route path="gst/itc-reconciliation" element={<ITCReconciliationPage />} />
+          <Route path="gst/filing-health" element={<GSTFilingHealthPage />} />
           <Route path="tds" element={<TDSPage />} />
           <Route path="reports/trial-balance" element={<TrialBalancePage />} />
           <Route path="reports/profit-loss" element={<ProfitLossPage />} />

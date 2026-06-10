@@ -145,3 +145,74 @@ class LedgerSourceReferenceTests(TestCase):
         txn = data['transactions'][0]
         self.assertEqual(txn['reference_type'], 'POSOrder')
         self.assertEqual(txn['reference_id'], 4321)
+
+
+class GSTFilingHealthTests(TestCase):
+    """Pre-filing health check: GSTR-backed sections detect real issues; the
+    inventory-backed sections degrade to status='unavailable' when the
+    inventory DB can't be read (as in this SQLite test environment)."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        make_settings()
+        self.admin = make_admin()
+        self.factory = APIRequestFactory()
+
+    def _get(self, period='2026-05'):
+        from reports.views import GSTFilingHealthView
+        request = self.factory.get('/api/reports/gst-filing-health/', {'period': period})
+        force_authenticate(request, user=self.admin)
+        return GSTFilingHealthView.as_view()(request).data
+
+    def test_detects_invalid_b2b_gstin_and_zero_rate(self):
+        _gstr1_entry(invoice_no='INV-OK')                      # valid GSTIN, 12%
+        _gstr1_entry(source_id=2, invoice_no='INV-BAD',
+                     customer_gstin='BADGSTIN123')             # malformed
+        _gstr1_entry(source_id=3, invoice_no='INV-ZERO',
+                     invoice_type='B2C_SMALL', customer_gstin='',
+                     rate=Decimal('0'), cgst=Decimal('0'), sgst=Decimal('0'))
+
+        data = self._get()
+        bad = data['sections']['invalid_customer_gstin']
+        self.assertEqual(bad['count'], 1)
+        self.assertEqual(bad['rows'][0]['invoice_no'], 'INV-BAD')
+
+        zero = data['sections']['zero_rate_supplies']
+        self.assertEqual(zero['count'], 1)
+        self.assertEqual(zero['rows'][0]['invoice_no'], 'INV-ZERO')
+
+        self.assertGreaterEqual(data['total_issues'], 2)
+
+    def test_time_barred_section_and_unavailable_degradation(self):
+        _gstr1_entry(source_type='return', source_id=9, invoice_no='RET-9',
+                     invoice_type='CDNR', is_time_barred=True,
+                     taxable_value=Decimal('-100'), cgst=Decimal('-6'),
+                     sgst=Decimal('-6'))
+        data = self._get()
+        self.assertEqual(data['sections']['time_barred_credit_notes']['count'], 1)
+        # Inventory-backed sections must exist but be marked unavailable here
+        # (no inventory tables in the SQLite test DB) — never crash the view.
+        for key in ('missing_hsn', 'writeoff_itc_reversal', 'tds_194q'):
+            self.assertIn(key, data['sections'])
+            self.assertEqual(data['sections'][key]['status'], 'unavailable')
+
+    def test_invalid_supplier_gstin_flags_itc_at_risk(self):
+        from gst_returns.models import GSTR2BEntry
+        GSTR2BEntry.objects.create(
+            period='2026-05', location_id=1, supplier_gstin='',
+            supplier_name='No-GSTIN Traders', invoice_no='PB-1',
+            invoice_date=date(2026, 5, 5), place_of_supply='27',
+            taxable_value=Decimal('1000'), cgst=Decimal('60'),
+            sgst=Decimal('60'), igst=Decimal('0'), itc_eligible=True,
+        )
+        data = self._get()
+        sec = data['sections']['invalid_supplier_gstin']
+        self.assertEqual(sec['count'], 1)
+        self.assertEqual(Decimal(sec['rows'][0]['itc_at_risk']), Decimal('120'))
+
+    def test_requires_period(self):
+        from reports.views import GSTFilingHealthView
+        request = self.factory.get('/api/reports/gst-filing-health/')
+        force_authenticate(request, user=self.admin)
+        response = GSTFilingHealthView.as_view()(request)
+        self.assertEqual(response.status_code, 400)

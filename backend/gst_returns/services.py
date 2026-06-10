@@ -439,6 +439,101 @@ class GSTR1Generator:
         }
 
 
+def build_doc_summary(period: str, location_id=None):
+    """GSTR-1 Table 13 rows — Documents Issued for the period.
+
+    Groups every document number issued in the month by nature (tax invoice /
+    credit note) and series prefix, reporting serial from/to, total issued,
+    cancelled count and net issued. Internal inter-store transfer invoices
+    consume serials in the same series, so they are counted in the series (a
+    gap would look like a missing document) but surfaced separately in
+    `internal` — they are not supplies. Shared by the GSTR-1 doc-summary API
+    and the portal JSON export (doc_issue section).
+    """
+    import re
+    from inventory_reader.models import POSOrderRO, B2BSalesOrderRO, SalesReturnRO
+
+    year, month = map(int, period.split('-'))
+
+    def _series(num):
+        m = re.match(r'^(.*?)(\d+)$', (num or '').strip())
+        if not m:
+            return ((num or '').strip(), None)
+        return (m.group(1), m.group(2))
+
+    buckets = {}
+
+    def _add(nature, doc_no, *, cancelled=False, internal=False):
+        prefix, serial = _series(doc_no)
+        key = (nature, prefix)
+        b = buckets.setdefault(key, {
+            'nature': nature, 'series': prefix,
+            'sr_from': None, 'sr_to': None,
+            '_lo': None, '_hi': None,
+            'total_issued': 0, 'cancelled': 0, 'internal': 0,
+        })
+        b['total_issued'] += 1
+        if cancelled:
+            b['cancelled'] += 1
+        if internal:
+            b['internal'] += 1
+        if serial is not None:
+            val = int(serial)
+            if b['_lo'] is None or val < b['_lo']:
+                b['_lo'] = val
+                b['sr_from'] = doc_no
+            if b['_hi'] is None or val > b['_hi']:
+                b['_hi'] = val
+                b['sr_to'] = doc_no
+        else:
+            b['sr_from'] = b['sr_from'] or doc_no
+            b['sr_to'] = doc_no
+
+    pos_qs = POSOrderRO.objects.filter(
+        sale_date__year=year, sale_date__month=month,
+        status__in=['confirmed', 'completed', 'cancelled'],
+    )
+    if location_id:
+        pos_qs = pos_qs.filter(location_id=location_id)
+    for inv_no, st in pos_qs.values_list('invoice_no', 'status'):
+        _add('Invoices for outward supply', inv_no, cancelled=(st == 'cancelled'))
+
+    b2b_qs = B2BSalesOrderRO.objects.filter(
+        sale_date__year=year, sale_date__month=month,
+        status__in=['confirmed', 'delivered', 'invoiced', 'cancelled'],
+    )
+    if location_id:
+        b2b_qs = b2b_qs.filter(location_id=location_id)
+    for inv_no, st, indent_id in b2b_qs.values_list(
+            'invoice_no', 'status', 'source_indent_id'):
+        _add('Invoices for outward supply', inv_no,
+             cancelled=(st == 'cancelled'), internal=indent_id is not None)
+
+    ret_qs = SalesReturnRO.objects.filter(
+        return_date__year=year, return_date__month=month,
+        status__in=['confirmed', 'completed', 'cancelled'],
+    )
+    if location_id:
+        ret_qs = ret_qs.filter(location_id=location_id)
+    for ret_no, st in ret_qs.values_list('return_no', 'status'):
+        _add('Credit Note', ret_no, cancelled=(st == 'cancelled'))
+
+    rows = []
+    for b in buckets.values():
+        rows.append({
+            'nature': b['nature'],
+            'series': b['series'],
+            'sr_from': b['sr_from'] or '',
+            'sr_to': b['sr_to'] or '',
+            'total_issued': b['total_issued'],
+            'cancelled': b['cancelled'],
+            'internal': b['internal'],
+            'net_issued': b['total_issued'] - b['cancelled'],
+        })
+    rows.sort(key=lambda r: (r['nature'], r['series']))
+    return rows
+
+
 class GSTR2BGenerator:
     """Generate GSTR-2B (purchase register) from confirmed purchases (Phase 2C)."""
 

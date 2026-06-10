@@ -2124,3 +2124,324 @@ class CashFlowStatementView(APIView):
                 (operating_cf + investing_cf + financing_cf)
             ),
         })
+
+
+# ─── GST Filing Health Check ─────────────────────────────────────────────────
+
+import re as _re
+
+# 2-digit state code + PAN (5 alpha, 4 digits, 1 alpha) + entity code + 'Z' + checksum
+_GSTIN_RE = _re.compile(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$')
+
+
+def _valid_gstin(gstin):
+    return bool(_GSTIN_RE.match((gstin or '').strip().upper()))
+
+
+def _valid_hsn(hsn):
+    digits = (hsn or '').strip()
+    return digits.isdigit() and len(digits) in (4, 6, 8)
+
+
+class GSTFilingHealthView(APIView):
+    """Pre-filing scan for the period: everything that will get a GSTR-1/3B
+    rejected, an ITC claim questioned, or a notice raised later. Each section
+    is independent and degrades to status='unavailable' if its data source
+    can't be read (e.g. the inventory DB is unreachable), so one failure never
+    hides the rest.
+    """
+
+    MAX_ROWS = 200
+
+    def get(self, request):
+        period = request.query_params.get('period')
+        if not period:
+            return Response({'error': 'period is required'}, status=400)
+        try:
+            year, month = map(int, period.split('-'))
+            if not (1 <= month <= 12):
+                raise ValueError
+        except (ValueError, AttributeError):
+            return Response({'error': 'period must be YYYY-MM'}, status=400)
+
+        location = get_active_location(request)
+        loc_id = location.id if location else None
+
+        from gst_returns.models import GSTR1Entry, GSTR2BEntry
+
+        sections = {}
+
+        def add_section(key, title, severity, rows, note='', total=None):
+            sections[key] = {
+                'title': title,
+                'severity': severity,          # 'error' | 'warning' | 'info'
+                'status': 'ok',
+                'count': len(rows) if total is None else total,
+                'rows': rows[:self.MAX_ROWS],
+                'note': note,
+            }
+
+        def unavailable(key, title, reason):
+            sections[key] = {
+                'title': title, 'severity': 'info', 'status': 'unavailable',
+                'count': 0, 'rows': [], 'note': f'Could not read source data: {reason}',
+            }
+
+        gstr1_filters = {'period': period, 'is_active': True}
+        if loc_id:
+            gstr1_filters['location_id'] = loc_id
+
+        # 1. B2B invoices with an invalid customer GSTIN — portal rejects the
+        # b2b section and the buyer loses ITC visibility.
+        rows = []
+        for e in GSTR1Entry.objects.filter(**gstr1_filters, invoice_type='B2B'):
+            if not _valid_gstin(e.customer_gstin):
+                rows.append({
+                    'invoice_no': e.invoice_no,
+                    'invoice_date': e.invoice_date,
+                    'customer_gstin': e.customer_gstin,
+                    'taxable_value': str(e.taxable_value),
+                })
+        add_section(
+            'invalid_customer_gstin', 'B2B invoices with invalid customer GSTIN',
+            'error', rows,
+            'GSTR-1 B2B section rejects malformed GSTINs; fix the customer master '
+            'in the pharmacy app and regenerate GSTR-1.',
+        )
+
+        # 2. ITC-eligible purchase rows with missing/invalid supplier GSTIN —
+        # that ITC will never appear in the real GSTR-2B and is at risk.
+        gstr2b_filters = {'period': period, 'itc_eligible': True}
+        if loc_id:
+            gstr2b_filters['location_id'] = loc_id
+        rows = []
+        for e in GSTR2BEntry.objects.filter(**gstr2b_filters):
+            if not _valid_gstin(e.supplier_gstin):
+                rows.append({
+                    'supplier_name': e.supplier_name,
+                    'supplier_gstin': e.supplier_gstin,
+                    'invoice_no': e.invoice_no,
+                    'invoice_date': e.invoice_date,
+                    'itc_at_risk': str(e.cgst + e.sgst + e.igst),
+                })
+        add_section(
+            'invalid_supplier_gstin', 'ITC claimed against missing/invalid supplier GSTIN',
+            'error', rows,
+            'Without a valid supplier GSTIN this credit will never match the '
+            'government GSTR-2B — fix the supplier master before claiming.',
+        )
+
+        # 3. Zero-rate anomalies: taxable value with 0% rate on forward supplies.
+        rows = []
+        for e in GSTR1Entry.objects.filter(**gstr1_filters).exclude(
+                invoice_type__in=['CREDIT_NOTE', 'CDNR', 'CDNUR']):
+            if e.rate == 0 and e.taxable_value > 0:
+                rows.append({
+                    'invoice_no': e.invoice_no,
+                    'invoice_date': e.invoice_date,
+                    'invoice_type': e.invoice_type,
+                    'taxable_value': str(e.taxable_value),
+                })
+        add_section(
+            'zero_rate_supplies', 'Taxable supplies reported at 0% GST',
+            'warning', rows,
+            'Medicines are taxable (5/12/18%). A 0% line usually means the '
+            'product tax rate is blank in the pharmacy app.',
+        )
+
+        # 4. Time-barred credit notes (CGST §34(2) — 30-Nov deadline passed).
+        rows = [{
+            'return_no': e.invoice_no,
+            'return_date': e.invoice_date,
+            'original_invoice_no': e.original_invoice_no,
+            'taxable_value': str(-e.taxable_value),
+        } for e in GSTR1Entry.objects.filter(**gstr1_filters, is_time_barred=True)]
+        add_section(
+            'time_barred_credit_notes', 'Credit notes past the §34(2) deadline',
+            'warning', rows,
+            'These cannot reduce output tax in GSTR-1/3B any more; the GST on '
+            'them is a cost. Already excluded from the computed liability.',
+        )
+
+        # 5. Products sold this period with missing/invalid HSN — Table 12 is
+        # mandatory and validates HSN length (4/6/8 digits).
+        try:
+            from inventory_reader.models import (
+                POSOrderLineRO, B2BSalesOrderLineRO,
+            )
+            bad = {}
+            pos_lines = POSOrderLineRO.objects.filter(
+                pos_order__sale_date__year=year,
+                pos_order__sale_date__month=month,
+                pos_order__status__in=['confirmed', 'completed'],
+            ).select_related('product')
+            b2b_lines = B2BSalesOrderLineRO.objects.filter(
+                sales_order__sale_date__year=year,
+                sales_order__sale_date__month=month,
+                sales_order__status__in=['confirmed', 'delivered', 'invoiced'],
+                sales_order__source_indent_id__isnull=True,
+            ).select_related('product')
+            if loc_id:
+                pos_lines = pos_lines.filter(pos_order__location_id=loc_id)
+                b2b_lines = b2b_lines.filter(sales_order__location_id=loc_id)
+            for line in list(pos_lines) + list(b2b_lines):
+                p = line.product
+                if p is None:
+                    continue
+                if not _valid_hsn(p.pharma_hsn_code):
+                    entry = bad.setdefault(p.id, {
+                        'product_id': p.id, 'product_name': p.name,
+                        'hsn_code': p.pharma_hsn_code or '', 'lines': 0,
+                    })
+                    entry['lines'] += 1
+            add_section(
+                'missing_hsn', 'Products sold with missing/invalid HSN code',
+                'error', list(bad.values()),
+                'GSTR-1 Table 12 requires a 4/6/8-digit HSN per item. Fix the '
+                'product master (pharma HSN code) and regenerate GSTR-1.',
+            )
+        except Exception as exc:
+            unavailable('missing_hsn', 'Products sold with missing/invalid HSN code', exc)
+
+        # 6. Write-offs without ITC reversal — §17(5)(h): goods destroyed /
+        # written off require reversal of the credit taken, reported in
+        # GSTR-3B 4(B)(1). The sync books the stock loss but not the reversal.
+        try:
+            from inventory_reader.models import StockMovementRO
+            from journals.services import JournalAutoGenerationService
+            svc = JournalAutoGenerationService()
+            mv_qs = StockMovementRO.objects.filter(
+                movement_type__in=JournalAutoGenerationService.WRITEOFF_MOVEMENT_TYPES,
+                created_at__year=year, created_at__month=month,
+            ).select_related('product')
+            if loc_id:
+                mv_qs = mv_qs.filter(location_id=loc_id)
+            rows = []
+            total_reversal = Decimal('0')
+            for mv in mv_qs:
+                qty = abs(int(mv.quantity or 0))
+                if qty == 0 or mv.product is None:
+                    continue
+                cost = svc._product_avg_cost(mv.product_id, mv.location_id)
+                value = (Decimal(qty) * cost).quantize(Decimal('0.01'))
+                rate = Decimal(str(mv.product.pharma_gst_percent or 0))
+                reversal = (value * rate / Decimal('100')).quantize(Decimal('0.01'))
+                total_reversal += reversal
+                rows.append({
+                    'movement_id': mv.id,
+                    'date': mv.created_at.date(),
+                    'movement_type': mv.movement_type,
+                    'product_name': mv.product.name,
+                    'qty': qty,
+                    'cost_value': str(value),
+                    'gst_rate': str(rate),
+                    'suggested_itc_reversal': str(reversal),
+                })
+            add_section(
+                'writeoff_itc_reversal', 'Write-offs needing ITC reversal — §17(5)(h)',
+                'warning', rows,
+                f'Suggested total reversal for GSTR-3B 4(B)(1): ₹{total_reversal}. '
+                'Post it as a journal (Cr Input CGST/SGST, Dr the loss account); '
+                'the sync intentionally does not auto-post it because the original '
+                'purchase tax head (intra vs inter) varies per batch.',
+            )
+        except Exception as exc:
+            unavailable('writeoff_itc_reversal', 'Write-offs needing ITC reversal — §17(5)(h)', exc)
+
+        # 7. §194Q TDS applicability — purchases from a supplier crossing
+        # ₹50,00,000 in the FY require 0.1% TDS on the excess (buyer turnover
+        # > ₹10 Cr precondition). Entity-wide, not per store.
+        try:
+            from django.db.models import DecimalField, ExpressionWrapper
+            from inventory_reader.models import PurchaseOrderLineRO, SupplierRO
+            from tds.models import TDSDeduction
+
+            fy_start = date(year if month >= 4 else year - 1, 4, 1)
+            # End of the selected period (first of the next month).
+            period_end = date(year + (1 if month == 12 else 0),
+                              1 if month == 12 else month + 1, 1)
+            money = DecimalField(max_digits=20, decimal_places=2)
+            value_expr = ExpressionWrapper(
+                (F('quantity') + F('free_qty')) * F('purchase_rate')
+                * (Decimal('100') - F('discount_percent')) / Decimal('100'),
+                output_field=money,
+            )
+            sums = (
+                PurchaseOrderLineRO.objects.filter(
+                    purchase_order__state__in=['confirmed', 'done', 'approved'],
+                    purchase_order__bill_date__gte=fy_start,
+                    purchase_order__bill_date__lt=period_end,
+                )
+                .exclude(purchase_order__transfer_kind__in=['inter_store', 'intra_store'])
+                .values('purchase_order__supplier_id')
+                .annotate(total=Sum(value_expr))
+            )
+            THRESHOLD = Decimal('5000000')
+            crossing = {r['purchase_order__supplier_id']: r['total']
+                        for r in sums if (r['total'] or 0) > THRESHOLD}
+            supplier_names = dict(
+                SupplierRO.objects.filter(id__in=list(crossing.keys()))
+                .values_list('id', 'company_name')
+            )
+            supplier_gstins = dict(
+                SupplierRO.objects.filter(id__in=list(crossing.keys()))
+                .values_list('id', 'gst_no')
+            )
+            deducted_194q = (
+                TDSDeduction.objects.filter(
+                    section='194Q',
+                    transaction_date__gte=fy_start,
+                    transaction_date__lt=period_end,
+                ).aggregate(t=Sum('tds_amount'))['t'] or Decimal('0')
+            )
+            rows = []
+            for sid, total in sorted(crossing.items(), key=lambda kv: -kv[1]):
+                excess = total - THRESHOLD
+                rows.append({
+                    'supplier_id': sid,
+                    'supplier_name': supplier_names.get(sid, f'Supplier #{sid}'),
+                    'supplier_gstin': supplier_gstins.get(sid, ''),
+                    'fy_purchases': str(total.quantize(Decimal('0.01'))),
+                    'excess_over_50L': str(excess.quantize(Decimal('0.01'))),
+                    'suggested_tds_0_1pct': str((excess * Decimal('0.001')).quantize(Decimal('0.01'))),
+                })
+            add_section(
+                'tds_194q', 'Suppliers crossing ₹50L FY purchases — §194Q TDS',
+                'warning', rows,
+                f'Applies only if your turnover exceeded ₹10 Cr last FY. TDS @0.1% '
+                f'on the excess over ₹50L, deducted at credit/payment. 194Q already '
+                f'recorded this FY (all suppliers): ₹{deducted_194q}. Record '
+                f'deductions under TDS → Deductions.',
+            )
+        except Exception as exc:
+            unavailable('tds_194q', 'Suppliers crossing ₹50L FY purchases — §194Q TDS', exc)
+
+        # 8. Internal transfer invoices consuming the tax-invoice series.
+        try:
+            from inventory_reader.models import B2BSalesOrderRO
+            qs = B2BSalesOrderRO.objects.filter(
+                sale_date__year=year, sale_date__month=month,
+                source_indent_id__isnull=False,
+            )
+            if loc_id:
+                qs = qs.filter(location_id=loc_id)
+            rows = [{'invoice_no': n} for n in qs.values_list('invoice_no', flat=True)]
+            add_section(
+                'internal_in_tax_series', 'Inter-store transfers using tax-invoice serials',
+                'info', rows,
+                'Branch transfers within the same GSTIN should ideally move on '
+                'delivery challans, not the tax-invoice series. They are excluded '
+                'from GSTR-1 values and flagged in Table 13 as internal.',
+            )
+        except Exception as exc:
+            unavailable('internal_in_tax_series', 'Inter-store transfers using tax-invoice serials', exc)
+
+        actionable = sum(
+            s['count'] for s in sections.values()
+            if s['severity'] in ('error', 'warning') and s['status'] == 'ok'
+        )
+        return Response({
+            'period': period,
+            'sections': sections,
+            'total_issues': actionable,
+        })

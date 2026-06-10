@@ -165,6 +165,7 @@ const menuGroups: MenuGroup[] = [
           { id: 'itc', label: 'ITC Reconciliation', to: '/gst/itc-reconciliation' },
           { id: 'gst-comp', label: 'GST Computation', to: '/reports/gst-computation' },
           { id: 'hsn', label: 'HSN Summary', to: '/reports/hsn-summary' },
+          { id: 'filing-health', label: 'Filing Health Check', to: '/gst/filing-health' },
         ],
       },
       {

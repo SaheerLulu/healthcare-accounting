@@ -1503,6 +1503,26 @@ export async function getGSTR1DocSummary(period: string) {
   return res.data as { period: string; rows: GSTR1DocSummaryRow[] }
 }
 
+export interface FilingHealthSection {
+  title: string
+  severity: 'error' | 'warning' | 'info'
+  status: 'ok' | 'unavailable'
+  count: number
+  rows: Record<string, string | number | null>[]
+  note: string
+}
+
+export interface FilingHealthReport {
+  period: string
+  sections: Record<string, FilingHealthSection>
+  total_issues: number
+}
+
+export async function getGSTFilingHealth(period: string) {
+  const res = await api.get('/reports/gst-filing-health/', { params: { period } })
+  return res.data as FilingHealthReport
+}
+
 export async function getPartyOutstanding(params?: Record<string, string>) {
   const res = await api.get('/reports/party-outstanding/', { params })
   return res.data as { party_type: string; as_of_date: string; rows: PartyOutstandingRow[]; total_outstanding: string }

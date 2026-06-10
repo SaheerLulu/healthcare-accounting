@@ -20,6 +20,7 @@ urlpatterns = [
     path('stock-movement/', views.StockMovementSummaryView.as_view(), name='stock-movement'),
     path('stock-valuation/', views.StockValuationView.as_view(), name='stock-valuation'),
     path('msme-compliance/', views.MSMEComplianceReportView.as_view(), name='msme-compliance'),
+    path('gst-filing-health/', views.GSTFilingHealthView.as_view(), name='gst-filing-health'),
     path('cash-flow/', views.CashFlowStatementView.as_view(), name='cash-flow'),
     path('aged-stock/', views.AgedStockReportView.as_view(), name='aged-stock'),
     path('departmental-pl/', views.DepartmentalPLView.as_view(), name='departmental-pl'),

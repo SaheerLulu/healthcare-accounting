@@ -101,19 +101,9 @@ class GSTR1EntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='doc-summary')
     def doc_summary(self, request):
-        """GSTR-1 Table 13 — Documents Issued for the period.
-
-        Groups every document number issued in the month by nature (tax
-        invoice / credit note) and series prefix, reporting serial from/to,
-        total issued, cancelled count and net issued. Internal inter-store
-        transfer invoices consume serials in the same series, so they are
-        counted in the series (a gap would look like a missing document) but
-        surfaced separately in `internal` — they are not supplies.
-        """
-        import re
-        from inventory_reader.models import (
-            POSOrderRO, B2BSalesOrderRO, SalesReturnRO,
-        )
+        """GSTR-1 Table 13 — Documents Issued for the period (see
+        services.build_doc_summary for the grouping rules)."""
+        from .services import build_doc_summary
 
         period = request.query_params.get('period')
         if not period:
@@ -121,90 +111,13 @@ class GSTR1EntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST)
         try:
             year, month = map(int, period.split('-'))
-        except ValueError:
+            if not (1 <= month <= 12):
+                raise ValueError
+        except (ValueError, AttributeError):
             return Response({'detail': 'period must be YYYY-MM.'},
                             status=status.HTTP_400_BAD_REQUEST)
         location = get_active_location(request)
-
-        def _series(num):
-            m = re.match(r'^(.*?)(\d+)$', (num or '').strip())
-            if not m:
-                return ((num or '').strip(), None)
-            return (m.group(1), m.group(2))
-
-        buckets = {}  # (nature, prefix) -> stats
-
-        def _add(nature, doc_no, *, cancelled=False, internal=False):
-            prefix, serial = _series(doc_no)
-            key = (nature, prefix)
-            b = buckets.setdefault(key, {
-                'nature': nature, 'series': prefix,
-                'sr_from': None, 'sr_to': None,
-                '_lo': None, '_hi': None,
-                'total_issued': 0, 'cancelled': 0, 'internal': 0,
-            })
-            b['total_issued'] += 1
-            if cancelled:
-                b['cancelled'] += 1
-            if internal:
-                b['internal'] += 1
-            if serial is not None:
-                val = int(serial)
-                if b['_lo'] is None or val < b['_lo']:
-                    b['_lo'] = val
-                    b['sr_from'] = doc_no
-                if b['_hi'] is None or val > b['_hi']:
-                    b['_hi'] = val
-                    b['sr_to'] = doc_no
-            else:
-                b['sr_from'] = b['sr_from'] or doc_no
-                b['sr_to'] = doc_no
-
-        pos_qs = POSOrderRO.objects.filter(
-            sale_date__year=year, sale_date__month=month,
-            status__in=['confirmed', 'completed', 'cancelled'],
-        )
-        if location:
-            pos_qs = pos_qs.filter(location_id=location.id)
-        for inv_no, st in pos_qs.values_list('invoice_no', 'status'):
-            _add('Invoices for outward supply', inv_no,
-                 cancelled=(st == 'cancelled'))
-
-        b2b_qs = B2BSalesOrderRO.objects.filter(
-            sale_date__year=year, sale_date__month=month,
-            status__in=['confirmed', 'delivered', 'invoiced', 'cancelled'],
-        )
-        if location:
-            b2b_qs = b2b_qs.filter(location_id=location.id)
-        for inv_no, st, indent_id in b2b_qs.values_list(
-                'invoice_no', 'status', 'source_indent_id'):
-            _add('Invoices for outward supply', inv_no,
-                 cancelled=(st == 'cancelled'),
-                 internal=indent_id is not None)
-
-        ret_qs = SalesReturnRO.objects.filter(
-            return_date__year=year, return_date__month=month,
-            status__in=['confirmed', 'completed', 'cancelled'],
-        )
-        if location:
-            ret_qs = ret_qs.filter(location_id=location.id)
-        for ret_no, st in ret_qs.values_list('return_no', 'status'):
-            _add('Credit Note', ret_no, cancelled=(st == 'cancelled'))
-
-        rows = []
-        for b in buckets.values():
-            rows.append({
-                'nature': b['nature'],
-                'series': b['series'],
-                'sr_from': b['sr_from'] or '',
-                'sr_to': b['sr_to'] or '',
-                'total_issued': b['total_issued'],
-                'cancelled': b['cancelled'],
-                'internal': b['internal'],
-                'net_issued': b['total_issued'] - b['cancelled'],
-            })
-        rows.sort(key=lambda r: (r['nature'], r['series']))
-
+        rows = build_doc_summary(period, location.id if location else None)
         return Response({'period': period, 'rows': rows})
 
     @action(detail=True, methods=['post'], url_path='generate-irn')
@@ -333,6 +246,47 @@ class GSTR1EntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
                     'itms': [itm],
                 })
 
+        # Table 12 — HSN summary, Phase-3 bifurcated into B2B / B2C tabs
+        # (offline-tool schema: hsn.hsn_b2b / hsn.hsn_b2c).
+        hsn_qs = GSTR1HSNSummary.objects.filter(period=period, is_active=True)
+        if location:
+            hsn_qs = hsn_qs.filter(location_id=location.id)
+        hsn_b2b, hsn_b2c = [], []
+        for i, h in enumerate(hsn_qs.order_by('segment', 'hsn_code', 'rate'), start=1):
+            row = {
+                'num': i,
+                'hsn_sc': h.hsn_code,
+                'desc': (h.description or '')[:30],
+                'uqc': h.uqc or 'NOS',
+                'qty': float(h.quantity),
+                'rt': float(h.rate),
+                'txval': float(h.taxable_value),
+                'iamt': float(h.igst),
+                'camt': float(h.cgst),
+                'samt': float(h.sgst),
+                'csamt': 0,
+            }
+            (hsn_b2b if h.segment == 'B2B' else hsn_b2c).append(row)
+
+        # Table 13 — Documents Issued. Portal doc_num codes: 1 = Invoices for
+        # outward supply, 5 = Credit Note.
+        from .services import build_doc_summary
+        DOC_NUM = {'Invoices for outward supply': 1, 'Credit Note': 5}
+        doc_groups = {}
+        for r in build_doc_summary(period, location.id if location else None):
+            doc_num = DOC_NUM.get(r['nature'])
+            if doc_num is None:
+                continue
+            grp = doc_groups.setdefault(doc_num, {'doc_num': doc_num, 'docs': []})
+            grp['docs'].append({
+                'num': len(grp['docs']) + 1,
+                'from': r['sr_from'],
+                'to': r['sr_to'],
+                'totnum': r['total_issued'],
+                'cancel': r['cancelled'],
+                'net_issue': r['net_issued'],
+            })
+
         # Convert dict groupings to portal-style list shape
         payload = {
             'gstin': '',  # filled by caller from settings if desired
@@ -344,6 +298,8 @@ class GSTR1EntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
             'b2cs': sections['b2cs'],
             'cdnr': list(sections['cdnr'].values()),
             'cdnur': sections['cdnur'],
+            'hsn': {'hsn_b2b': hsn_b2b, 'hsn_b2c': hsn_b2c},
+            'doc_issue': {'doc_det': sorted(doc_groups.values(), key=lambda g: g['doc_num'])},
         }
 
         response = HttpResponse(json.dumps(payload, indent=2),
