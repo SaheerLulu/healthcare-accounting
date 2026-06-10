@@ -390,6 +390,22 @@ class DashboardView(APIView):
         last_day = calendar.monthrange(today.year, today.month)[1]
         month_end = date(today.year, today.month, last_day)
 
+        # Optional custom window (?start_date&end_date, YYYY-MM-DD) — the
+        # default stays the current financial year, but the user can point
+        # the dashboard at ANY range (a past FY, a quarter, one month …).
+        def _parse_date(name, default):
+            raw = request.query_params.get(name)
+            if not raw:
+                return default
+            try:
+                return date.fromisoformat(raw)
+            except ValueError:
+                return default
+        range_start = _parse_date('start_date', fy_start)
+        range_end = _parse_date('end_date', fy_end)
+        if range_start > range_end:
+            range_start, range_end = range_end, range_start
+
         location = get_active_location(request)
 
         # Phase 5A: Single aggregate query instead of N+1 loops.
@@ -399,7 +415,7 @@ class DashboardView(APIView):
             entry__is_posted=True,
             entry__is_optional=False,
             entry__is_memorandum=False,
-            entry__date__range=[fy_start, fy_end],
+            entry__date__range=[range_start, range_end],
         )
         if location:
             fy_lines = fy_lines.filter(entry__location_id=location.id)
@@ -428,6 +444,7 @@ class DashboardView(APIView):
             entry__is_posted=True,
             entry__is_optional=False,
             entry__is_memorandum=False,
+            entry__date__lte=range_end,
         )
         if location:
             subtype_qs = subtype_qs.filter(entry__location_id=location.id)
@@ -479,13 +496,14 @@ class DashboardView(APIView):
                 monthly_map[key]['expenses'] += (row['total_debit'] or Decimal('0')) - (row['total_credit'] or Decimal('0'))
 
         monthly_data = []
-        fy_month = fy_start.month
-        fy_year = fy_start.year
-        for i in range(12):
+        fy_month = range_start.month
+        fy_year = range_start.year
+        # Bounded at 36 buckets so an extreme range can't bloat the payload.
+        for i in range(36):
             m = (fy_month - 1 + i) % 12 + 1
             y = fy_year + (fy_month - 1 + i) // 12
             m_start = date(y, m, 1)
-            if m_start > today:
+            if m_start > range_end or m_start > today:
                 break
             data = monthly_map.get((y, m), {'revenue': Decimal('0'), 'expenses': Decimal('0')})
             monthly_data.append({
@@ -505,6 +523,8 @@ class DashboardView(APIView):
             'current_month_expenses': float(current_month_expenses),
             'financial_year_start': str(fy_start),
             'financial_year_end': str(fy_end),
+            'range_start': str(range_start),
+            'range_end': str(range_end),
             'monthly_data': monthly_data,
         })
 

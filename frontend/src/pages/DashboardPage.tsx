@@ -21,7 +21,8 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import { getDashboard, type DashboardData } from '../lib/api'
-import { formatCurrency } from '../lib/utils'
+import { formatCurrency, getCurrentFY } from '../lib/utils'
+import { Input } from '../components/ui/input'
 import { KpiCard } from '../components/ui/KpiCard'
 import { EmptyState } from '../components/ui/EmptyState'
 import { SkeletonCard, SkeletonTable } from '../components/ui/Skeletons'
@@ -50,14 +51,20 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData>(EMPTY)
   const [loading, setLoading] = useState(true)
   const { activeLocationId } = useAppLocation()
+  // Default window = current financial year; any custom range is allowed.
+  const fy = getCurrentFY()
+  const [dateFrom, setDateFrom] = useState(fy.start)
+  const [dateTo, setDateTo] = useState(fy.end)
+  const isDefaultFY = dateFrom === fy.start && dateTo === fy.end
 
   useEffect(() => {
+    if (!dateFrom || !dateTo) return
     setLoading(true)
-    getDashboard()
+    getDashboard({ start_date: dateFrom, end_date: dateTo })
       .then(setData)
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [activeLocationId])
+  }, [activeLocationId, dateFrom, dateTo])
 
   const monthly = data.monthly_data ?? []
 
@@ -102,19 +109,37 @@ export default function DashboardPage() {
         <div>
           <h1 style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Dashboard</h1>
           <p className="mt-0.5" style={{ color: 'var(--ink-2)' }}>
-            Current financial year — at a glance
+            {isDefaultFY ? 'Current financial year — at a glance' : `${dateFrom} → ${dateTo}`}
           </p>
         </div>
-        <div
-          className="mono uppercase"
-          style={{
-            fontSize: 10,
-            color: 'var(--ink-3)',
-            letterSpacing: '0.12em',
-            fontWeight: 600,
-          }}
-        >
-          Live · {monthly.length} mo of data
+        <div className="flex items-end gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>From</label>
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-auto" />
+            <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>To</label>
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-auto" />
+            {!isDefaultFY && (
+              <button
+                onClick={() => { setDateFrom(fy.start); setDateTo(fy.end) }}
+                className="text-xs px-2 py-1.5 rounded-lg border hover:bg-slate-50"
+                style={{ borderColor: 'var(--line)', color: 'var(--ink-2)' }}
+                title="Reset to the current financial year"
+              >
+                This FY
+              </button>
+            )}
+          </div>
+          <div
+            className="mono uppercase pb-1.5"
+            style={{
+              fontSize: 10,
+              color: 'var(--ink-3)',
+              letterSpacing: '0.12em',
+              fontWeight: 600,
+            }}
+          >
+            Live · {monthly.length} mo of data
+          </div>
         </div>
       </div>
 
@@ -123,7 +148,7 @@ export default function DashboardPage() {
         <KpiCard
           title="Revenue"
           value={formatCurrency(data.total_revenue)}
-          subtitle="FY-to-date"
+          subtitle={isDefaultFY ? 'FY-to-date' : 'Selected period'}
           icon={TrendingUp}
           color="var(--success)"
           bgColor="rgba(31,138,76,0.10)"
@@ -138,7 +163,7 @@ export default function DashboardPage() {
         <KpiCard
           title="Expenses"
           value={formatCurrency(data.total_expenses)}
-          subtitle="FY-to-date"
+          subtitle={isDefaultFY ? 'FY-to-date' : 'Selected period'}
           icon={TrendingDown}
           color="var(--danger)"
           bgColor="rgba(192,57,43,0.10)"
@@ -168,7 +193,7 @@ export default function DashboardPage() {
         <KpiCard
           title="Receivables"
           value={formatCurrency(receivables)}
-          subtitle="Outstanding from customers"
+          subtitle={`Outstanding as of ${dateTo}`}
           icon={Users}
           color="var(--info)"
           bgColor="rgba(37,99,235,0.10)"
@@ -177,7 +202,7 @@ export default function DashboardPage() {
         <KpiCard
           title="Payables"
           value={formatCurrency(payables)}
-          subtitle="Owed to suppliers"
+          subtitle={`Owed as of ${dateTo}`}
           icon={Building}
           color="var(--warning)"
           bgColor="rgba(199,122,17,0.10)"

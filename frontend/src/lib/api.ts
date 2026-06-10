@@ -196,6 +196,8 @@ export interface DashboardData {
   total_receivables: number | string
   total_payables: number | string
   gst_payable: number | string
+  range_start?: string
+  range_end?: string
   monthly_data?: {
     month: string
     revenue: number
@@ -203,8 +205,8 @@ export interface DashboardData {
   }[]
 }
 
-export async function getDashboard() {
-  const res = await api.get('/accounts/dashboard/')
+export async function getDashboard(params?: { start_date?: string; end_date?: string }) {
+  const res = await api.get('/accounts/dashboard/', { params })
   return res.data as DashboardData
 }
 
