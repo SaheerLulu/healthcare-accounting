@@ -192,7 +192,7 @@ class GSTFilingHealthTests(TestCase):
         self.assertEqual(data['sections']['time_barred_credit_notes']['count'], 1)
         # Inventory-backed sections must exist but be marked unavailable here
         # (no inventory tables in the SQLite test DB) — never crash the view.
-        for key in ('missing_hsn', 'writeoff_itc_reversal', 'tds_194q'):
+        for key in ('missing_hsn', 'writeoff_itc_reversal', 'tds_194q', 'missing_eway_bill'):
             self.assertIn(key, data['sections'])
             self.assertEqual(data['sections'][key]['status'], 'unavailable')
 

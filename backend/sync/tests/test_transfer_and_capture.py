@@ -425,3 +425,104 @@ class FeeCollectionPostingTests(TestCase):
     def test_unpaid_fee_is_skipped(self):
         self.assertIsNone(self._generate(self._fee(fee_id=933, status='Pending')))
         self.assertIsNone(self._generate(self._fee(fee_id=934, status='Waived')))
+
+
+class LooseSaleCOGSTests(TestCase):
+    """Loose (tablet-level) sale lines carry the TABLET count in `quantity`;
+    COGS must relieve stock in PACK equivalents (qty / qty_per_pack), not at
+    the raw tablet count — that overstated COGS by the pack factor."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        _seed_extra_accounts()
+        make_settings()
+        self.svc = JournalAutoGenerationService()
+
+    def test_loose_line_relieves_pack_equivalent(self):
+        from journals.models import JournalEntry
+
+        entry = JournalEntry.objects.create(
+            date=date(2026, 5, 20), voucher_type='SALE',
+            reference_type='POSOrder', reference_id=961, location_id=1,
+        )
+        loose_line = SimpleNamespace(
+            product_id=11, quantity=10, is_loose=True, qty_per_pack=15)
+
+        # Pack cost ₹150 → 10 tablets = 2/3 pack → COGS ₹100 (not ₹1500).
+        with patch.object(self.svc, '_product_avg_cost', return_value=Decimal('150.00')):
+            total = self.svc._post_cogs(entry=entry, lines=[loose_line])
+        self.assertEqual(total, Decimal('100.00'))
+
+    def test_pack_line_unchanged(self):
+        from journals.models import JournalEntry
+
+        entry = JournalEntry.objects.create(
+            date=date(2026, 5, 20), voucher_type='SALE',
+            reference_type='POSOrder', reference_id=962, location_id=1,
+        )
+        pack_line = SimpleNamespace(
+            product_id=11, quantity=10, is_loose=False, qty_per_pack=15)
+        with patch.object(self.svc, '_product_avg_cost', return_value=Decimal('150.00')):
+            total = self.svc._post_cogs(entry=entry, lines=[pack_line])
+        self.assertEqual(total, Decimal('1500.00'))
+
+    def test_line_without_loose_fields_unchanged(self):
+        from journals.models import JournalEntry
+
+        entry = JournalEntry.objects.create(
+            date=date(2026, 5, 20), voucher_type='SALE',
+            reference_type='SalesReturn', reference_id=963, location_id=1,
+        )
+        bare_line = SimpleNamespace(product_id=11, quantity=3)
+        with patch.object(self.svc, '_product_avg_cost', return_value=Decimal('10.00')):
+            total = self.svc._post_cogs(entry=entry, lines=[bare_line])
+        self.assertEqual(total, Decimal('30.00'))
+
+
+class WaivedFeeReversalTests(TestCase):
+    """A Paid consultation fee that is later Waived must auto-reverse its
+    income JE through reverse_cancelled()."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        _seed_extra_accounts()
+        make_settings()
+
+    def test_waived_fee_is_reversed(self):
+        from journals.models import JournalEntry
+        from sync.services import InventorySyncService
+
+        svc = JournalAutoGenerationService()
+        fee = SimpleNamespace(
+            id=971, fee_id='FEE-971', amount=Decimal('300.00'),
+            payment_mode='Cash', payment_status='Paid',
+            receipt_number='', location_id=1,
+            collected_at=datetime(2026, 5, 21, 10, 0),
+            created_at=datetime(2026, 5, 21, 10, 0),
+        )
+        with patch('journals.services.FeeCollectionRO') as MockRO:
+            MockRO.objects.get.return_value = fee
+            original = svc.generate_fee_collection(fee.id)
+        self.assertIsNotNone(original)
+
+        sync = InventorySyncService()
+        with patch('sync.services.PurchaseOrderRO') as MockPO, \
+             patch('sync.services.POSOrderRO') as MockPOS, \
+             patch('sync.services.B2BSalesOrderRO') as MockB2B, \
+             patch('sync.services.SalesReturnRO') as MockRet, \
+             patch('sync.services.PurchaseReturnRO') as MockPRet, \
+             patch('sync.services.FeeCollectionRO') as MockFee:
+            for m in (MockPO, MockPOS, MockB2B, MockRet, MockPRet):
+                m.objects.filter.return_value.values_list.return_value = []
+            MockFee.objects.filter.return_value.values_list.return_value = [971]
+            reversed_count = sync.reverse_cancelled()
+
+        self.assertEqual(reversed_count, 1)
+        reversal = JournalEntry.objects.get(
+            reference_type='FeeCollection', reference_id=971,
+            reversal_of__isnull=False,
+        )
+        codes = {l.account.account_code: (l.debit, l.credit)
+                 for l in reversal.lines.all()}
+        self.assertEqual(codes['4320'], (Decimal('300.00'), Decimal('0')))
+        self.assertEqual(codes['1110'], (Decimal('0'), Decimal('300.00')))

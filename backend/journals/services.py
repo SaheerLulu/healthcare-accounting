@@ -219,10 +219,33 @@ class JournalAutoGenerationService:
             return Decimal('0')
         return (total_cost / total_qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
 
+    @staticmethod
+    def _pack_equivalent_qty(line):
+        """Sale quantity in PACK units — the unit purchases (and therefore the
+        weighted-average cost) are denominated in.
+
+        Loose lines carry the TABLET count in `quantity` with `qty_per_pack`
+        tablets per pack; relieving stock at the raw tablet count multiplied
+        the COGS by the pack factor (e.g. 10 loose tablets from a 15/strip
+        product drained 10 strips of stock). Lines without the loose fields
+        (sales returns, older mocks) fall through to the raw quantity.
+        """
+        qty = Decimal(str(getattr(line, 'quantity', 0) or 0))
+        if qty <= 0:
+            return qty
+        if getattr(line, 'is_loose', False):
+            per_pack = Decimal(str(getattr(line, 'qty_per_pack', 1) or 1))
+            if per_pack > 1:
+                # Unquantized — the caller rounds the final ₹ value once, so
+                # 10/15 of a ₹150 pack costs exactly ₹100.00, not ₹100.01.
+                return qty / per_pack
+        return qty
+
     def _post_cogs(self, *, entry, lines):
         """Post Dr COGS / Cr Closing Stock for every line in a sale at avg cost.
 
-        `lines` is an iterable of objects exposing `.product_id` and `.quantity`.
+        `lines` is an iterable of objects exposing `.product_id` and `.quantity`
+        (plus optional `is_loose`/`qty_per_pack` for tablet-level sales).
         Resolves COGS and Closing Stock at the entry's location so a sale at
         store A relieves store A's stock account, not a shared one.
         Returns the total COGS posted (or zero when no costed lines exist).
@@ -234,7 +257,7 @@ class JournalAutoGenerationService:
             return Decimal('0')
         total = Decimal('0')
         for line in lines:
-            qty = Decimal(str(getattr(line, 'quantity', 0) or 0))
+            qty = self._pack_equivalent_qty(line)
             if qty <= 0:
                 continue
             cost = self._product_avg_cost(line.product_id, loc)
@@ -809,7 +832,7 @@ class JournalAutoGenerationService:
         if cogs_acct and stock_acct:
             cogs_total = Decimal('0')
             for line in ret.lines.all():
-                qty = Decimal(str(getattr(line, 'quantity', 0) or 0))
+                qty = self._pack_equivalent_qty(line)
                 if qty <= 0:
                     continue
                 cost = self._product_avg_cost(line.product_id, loc)

@@ -2416,7 +2416,50 @@ class GSTFilingHealthView(APIView):
         except Exception as exc:
             unavailable('tds_194q', 'Suppliers crossing ₹50L FY purchases — §194Q TDS', exc)
 
-        # 8. Internal transfer invoices consuming the tax-invoice series.
+        # 8. E-way bill coverage — movement of goods worth over Rs 50,000
+        # requires an e-way bill (Rule 138; intra-state thresholds vary by
+        # state). Match B2B invoices against the dispatch register.
+        try:
+            from inventory_reader.models import B2BSalesOrderRO, DispatchEntryRO
+            EWAY_THRESHOLD = Decimal('50000')
+            b2b_qs = B2BSalesOrderRO.objects.filter(
+                sale_date__year=year, sale_date__month=month,
+                status__in=['confirmed', 'delivered', 'invoiced'],
+                source_indent_id__isnull=True,
+                total_amount__gt=EWAY_THRESHOLD,
+            )
+            if loc_id:
+                b2b_qs = b2b_qs.filter(location_id=loc_id)
+            orders = list(b2b_qs.values('id', 'invoice_no', 'sale_date', 'total_amount'))
+            order_ids = [o['id'] for o in orders]
+            inv_nos = [o['invoice_no'] for o in orders if o['invoice_no']]
+            covered_ids = set()
+            covered_invs = set()
+            for d in DispatchEntryRO.objects.filter(
+                    source_type='b2b', source_order_id__in=order_ids,
+            ).exclude(eway_bill_no=''):
+                covered_ids.add(d.source_order_id)
+            for d in DispatchEntryRO.objects.filter(
+                    invoice_no__in=inv_nos).exclude(eway_bill_no=''):
+                covered_invs.add(d.invoice_no)
+            rows = [{
+                'invoice_no': o['invoice_no'],
+                'invoice_date': o['sale_date'],
+                'invoice_value': str(o['total_amount']),
+            } for o in orders
+                if o['id'] not in covered_ids
+                and o['invoice_no'] not in covered_invs]
+            add_section(
+                'missing_eway_bill', 'Invoices over Rs 50,000 with no e-way bill on dispatch',
+                'warning', rows,
+                'Rule 138 requires an e-way bill for goods movement above Rs 50,000 '
+                '(intra-state thresholds vary by state). Record the e-way bill '
+                'number on the dispatch entry in the pharmacy app.',
+            )
+        except Exception as exc:
+            unavailable('missing_eway_bill', 'Invoices over Rs 50,000 with no e-way bill on dispatch', exc)
+
+        # 9. Internal transfer invoices consuming the tax-invoice series.
         try:
             from inventory_reader.models import B2BSalesOrderRO
             qs = B2BSalesOrderRO.objects.filter(

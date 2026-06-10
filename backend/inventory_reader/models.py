@@ -215,6 +215,10 @@ class POSOrderLineRO(models.Model):
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2)
     tax_percent = models.DecimalField(max_digits=5, decimal_places=2)
     line_total = models.DecimalField(max_digits=10, decimal_places=2)
+    # Loose sale: `quantity` is the TABLET count; qty_per_pack converts it to
+    # pack-equivalents (the unit purchases and the weighted-avg cost use).
+    is_loose = models.BooleanField(default=False)
+    qty_per_pack = models.IntegerField(default=1)
 
     class Meta:
         managed = False
@@ -300,6 +304,9 @@ class B2BSalesOrderLineRO(models.Model):
     sgst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     igst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     line_total = models.DecimalField(max_digits=10, decimal_places=2)
+    # Same loose-vs-pack semantics as POS lines.
+    is_loose = models.BooleanField(default=False)
+    qty_per_pack = models.IntegerField(default=1)
 
     class Meta:
         managed = False
@@ -530,6 +537,27 @@ class UserLocationAssignmentRO(models.Model):
     class Meta:
         managed = False
         db_table = 'user_management_userlocationassignment'
+
+
+class DispatchEntryRO(models.Model):
+    """Read-only proxy for dispatch.DispatchEntry — goods-movement register
+    (courier/transport details, delivery challan, e-way bill number)."""
+    source_type = models.CharField(max_length=10)
+    source_order_id = models.PositiveIntegerField(null=True, blank=True)
+    invoice_no = models.CharField(max_length=100, blank=True)
+    invoice_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    eway_bill_no = models.CharField(max_length=50, blank=True)
+    challan_no = models.CharField(max_length=100, blank=True)
+    dispatch_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=20)
+    location = models.ForeignKey(
+        LocationRO, on_delete=models.DO_NOTHING, db_constraint=False
+    )
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'dispatch_dispatchentry'
 
 
 class FeeCollectionRO(models.Model):

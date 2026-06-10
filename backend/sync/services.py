@@ -45,8 +45,9 @@ def sync_advisory_lock():
 # Inventory statuses that mean an order was voided/cancelled AFTER we may have
 # already posted its JE. Conservative, explicit list — a status not in here is
 # left untouched, so an ordinary state transition can never trigger a wrong
-# reversal (worst case we miss a cancellation, which is safe).
-CANCELLED_STATES = ('cancelled', 'canceled', 'void', 'voided', 'returned')
+# reversal (worst case we miss a cancellation, which is safe). 'waived' only
+# occurs on FeeCollection (a Paid fee later waived must back its income out).
+CANCELLED_STATES = ('cancelled', 'canceled', 'void', 'voided', 'returned', 'Waived', 'waived')
 
 
 class InventorySyncService:
@@ -531,6 +532,8 @@ class InventorySyncService:
             # cancelled transfer reverses the OUT and IN JVs together.
             ('StockTransferIn', PurchaseOrderRO, 'state'),
             ('StockTransferOut', PurchaseOrderRO, 'state'),
+            # A Paid consultation fee later waived/cancelled backs out its income.
+            ('FeeCollection', FeeCollectionRO, 'payment_status'),
         )
         reversed_count = 0
         for ref_type, model, state_field in specs:
