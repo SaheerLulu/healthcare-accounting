@@ -21,11 +21,15 @@ def _seed_extra_accounts():
         '1191': ('Stock In Transit', 'ASSET', ''),
         '4520': ('Freight & Charges Recovered', 'REVENUE', 'Other_Income'),
         '4320': ('Sales - Consultation', 'REVENUE', 'Sales'),
+        '5210': ('Discount Allowed', 'REVENUE', 'Other_Expense'),
+        '5310': ('Discount Received', 'REVENUE', 'Other_Income'),
     }
     keys = {
         'STOCK_TRANSFER_TRANSIT': '1191',
         'OTHER_CHARGES_RECOVERED': '4520',
         'CONSULTATION_INCOME': '4320',
+        'DISCOUNT_ALLOWED': '5210',
+        'DISCOUNT_RECEIVED': '5310',
     }
     coa = {}
     for code, (name, atype, sub) in extras.items():
@@ -272,6 +276,113 @@ class POSSettlementRoutingTests(TestCase):
                   for l in entry.lines.all() if l.debit > 0}
         self.assertEqual(debits.get('1110'), Decimal('210.00'),
                          'partial tender rows must not be trusted')
+
+
+class POSLoyaltyRedemptionTests(TestCase):
+    """POS total = subtotal − discount − loyalty_redemption + round_off.
+    A bill with a loyalty redemption used to post unbalanced and silently
+    vanish from the books (entry.post() raised inside the sync loop)."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        _seed_extra_accounts()
+        make_settings()
+        self.svc = JournalAutoGenerationService()
+
+    def test_loyalty_redemption_posts_balanced(self):
+        line = SimpleNamespace(
+            product_id=11, quantity=2, unit_price=Decimal('105.00'),
+            discount_percent=Decimal('0'), discount_amount=Decimal('0'),
+            tax_percent=Decimal('0'), line_total=Decimal('210.00'),
+        )
+        pos = SimpleNamespace(
+            id=941, status='completed', invoice_no='POS-941',
+            customer_id=None, location_id=1,
+            sale_date=datetime(2026, 5, 15, 11, 0),
+            payment_type='Cash',
+            gst_percent=Decimal('0'), discount_amount=Decimal('10.00'),
+            loyalty_redemption_amount=Decimal('50.00'),
+            round_off=Decimal('0'), subtotal=Decimal('210.00'),
+            # 210 − 10 discount − 50 loyalty = 150 actually collected
+            total_amount=Decimal('150.00'),
+            lines=_Lines([line]),
+        )
+        with patch('journals.services.POSOrderRO') as MockRO, \
+             patch.object(self.svc, '_product_avg_cost', return_value=Decimal('0')):
+            MockRO.objects.prefetch_related.return_value.get.return_value = pos
+            entry = self.svc.generate_pos_sale(pos.id)
+
+        self.assertIsNotNone(entry, 'loyalty-redemption bill must post')
+        codes = {}
+        for l in entry.lines.all():
+            dr, cr = codes.get(l.account.account_code, (Decimal('0'), Decimal('0')))
+            codes[l.account.account_code] = (dr + l.debit, cr + l.credit)
+
+        self.assertEqual(codes['1110'][0], Decimal('150.00'))   # cash collected
+        self.assertEqual(codes['4100'][1], Decimal('210.00'))   # gross sales
+        self.assertEqual(codes['5210'][0], Decimal('60.00'))    # discount + loyalty
+        total_dr = sum(v[0] for v in codes.values())
+        total_cr = sum(v[1] for v in codes.values())
+        self.assertEqual(total_dr, total_cr)
+
+        loyalty_lines = [l for l in entry.lines.all()
+                         if l.narration == 'Loyalty points redemption']
+        self.assertEqual(len(loyalty_lines), 1)
+        self.assertEqual(loyalty_lines[0].debit, Decimal('50.00'))
+
+
+class PurchaseAdditionalDiscountTests(TestCase):
+    """Header-level post-tax bill discount must reduce the supplier payable
+    (booked to Discount Received) — previously AP was overstated by it."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        _seed_extra_accounts()
+        make_settings()
+        self.svc = JournalAutoGenerationService()
+
+    def _po(self, *, po_id=951, addl=Decimal('100.00')):
+        line = SimpleNamespace(
+            product_id=11, quantity=100, free_qty=0,
+            purchase_rate=Decimal('10.00'), discount_percent=Decimal('0'),
+            cgst_amount=Decimal('0'), sgst_amount=Decimal('0'),
+            igst_amount=Decimal('0'), tax_percent=Decimal('0'),
+        )
+        return SimpleNamespace(
+            id=po_id, state='confirmed', transfer_kind='',
+            supplier=SimpleNamespace(gst_no='27ABCDE1234A1Z5'),
+            supplier_id=9, location_id=1,
+            bill_date=date(2026, 5, 16), bill_no='PB-951',
+            transport_cost=Decimal('0'), other_charges=Decimal('0'),
+            additional_discount=addl,
+            round_off=Decimal('0'), supply_type='intra_state',
+            created_at=datetime(2026, 5, 16),
+            lines=_Lines([line]),
+        )
+
+    def _generate(self, po):
+        with patch('journals.services.PurchaseOrderRO') as MockPO:
+            (MockPO.objects.select_related.return_value
+             .prefetch_related.return_value.get.return_value) = po
+            return self.svc.generate_purchase(po.id)
+
+    def test_additional_discount_reduces_payable(self):
+        entry = self._generate(self._po())
+        codes = {l.account.account_code: (l.debit, l.credit)
+                 for l in entry.lines.all()}
+        self.assertEqual(codes['1190'][0], Decimal('1000.00'))  # stock at gross
+        self.assertEqual(codes['2110'][1], Decimal('900.00'))   # AP net of discount
+        self.assertEqual(codes['5310'][1], Decimal('100.00'))   # discount received
+        total_dr = sum(v[0] for v in codes.values())
+        total_cr = sum(v[1] for v in codes.values())
+        self.assertEqual(total_dr, total_cr)
+
+    def test_without_discount_unchanged(self):
+        entry = self._generate(self._po(po_id=952, addl=Decimal('0')))
+        codes = {l.account.account_code: (l.debit, l.credit)
+                 for l in entry.lines.all()}
+        self.assertEqual(codes['2110'][1], Decimal('1000.00'))
+        self.assertNotIn('5310', codes)
 
 
 class FeeCollectionPostingTests(TestCase):

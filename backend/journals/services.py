@@ -366,9 +366,23 @@ class JournalAutoGenerationService:
         other = po.other_charges or Decimal('0.00')
         total_purchases = taxable_amount + transport + other
         total_gst = cgst_amount + sgst_amount + igst_amount
-        total_payable = total_purchases + total_gst + (po.round_off or Decimal('0.00'))
-
         loc = po.location_id
+
+        # Header-level POST-tax bill discount: reduces what we owe the
+        # supplier but not the ITC (tax was charged pre-discount; no credit
+        # note involved). Booked as Discount Received income; when that
+        # mapping is absent it reduces the stock capitalisation instead so
+        # the entry still balances.
+        addl_discount = _dec(po, 'additional_discount')
+        discount_received_ac = (
+            self._acct_or_none('DISCOUNT_RECEIVED', loc) if addl_discount > 0 else None
+        )
+        if addl_discount > 0 and discount_received_ac is None:
+            total_purchases = max(total_purchases - addl_discount, Decimal('0.00'))
+
+        total_payable = (total_purchases + total_gst + (po.round_off or Decimal('0.00'))
+                         - (addl_discount if discount_received_ac else Decimal('0.00')))
+
         entry = JournalEntry.objects.create(
             date=po.bill_date or po.created_at.date(),
             narration=f"Purchase Invoice: {po.bill_no} from Supplier ID {po.supplier_id}",
@@ -396,6 +410,11 @@ class JournalAutoGenerationService:
                 credit=total_payable,
                 party_type='Supplier',
                 party_id=po.supplier_id,
+            )
+        if addl_discount > 0 and discount_received_ac is not None:
+            JournalEntryLine.objects.create(
+                entry=entry, account=discount_received_ac, credit=addl_discount,
+                narration='Bill-level discount received',
             )
         # Round-off: po.round_off was folded into total_payable; balance the JE
         # by debiting Round Off (or crediting if negative).
@@ -510,6 +529,22 @@ class JournalAutoGenerationService:
                     narration='Order-level discount',
                 )
                 discount_posted = order_discount
+
+        # Loyalty points redemption is the second reduction in the POS total
+        # equation (total = subtotal − discount − loyalty + round_off). It is
+        # economically a discount funded by the loyalty programme; without
+        # this leg any bill with a redemption over ₹1 posted unbalanced and
+        # the whole sale silently vanished from the books.
+        loyalty_redeemed = _dec(pos, 'loyalty_redemption_amount')
+        if loyalty_redeemed > 0:
+            loyalty_ac = (self._acct_or_none('DISCOUNT_ALLOWED', loc)
+                          or self._acct_or_none('ROUND_OFF', loc))
+            if loyalty_ac:
+                JournalEntryLine.objects.create(
+                    entry=entry, account=loyalty_ac, debit=loyalty_redeemed,
+                    narration='Loyalty points redemption',
+                )
+                discount_posted += loyalty_redeemed
 
         # Round-off absorbs the remaining sub-rupee drift.
         diff = (total + discount_posted) - (sales_amount + cgst + sgst + igst)

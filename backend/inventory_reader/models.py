@@ -107,6 +107,10 @@ class PurchaseOrderRO(models.Model):
     payment_type = models.CharField(max_length=50)
     transport_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     other_charges = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # Header-level POST-tax discount on the whole bill (pharmacy audit H11).
+    # Reduces what is payable to the supplier; does NOT reduce ITC (the
+    # supplier charged tax on the pre-discount value — no credit note).
+    additional_discount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     remarks = models.TextField(blank=True)
     round_off = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     state = models.CharField(max_length=50)
@@ -179,6 +183,10 @@ class POSOrderRO(models.Model):
     payment_type = models.CharField(max_length=50)
     gst_percent = models.DecimalField(max_digits=5, decimal_places=2)
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    # Loyalty points redeemed against this bill. Part of the total_amount
+    # equation (total = subtotal − discount − loyalty_redemption + round_off),
+    # so the JE must book it or the entry won't balance.
+    loyalty_redemption_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     round_off = models.DecimalField(max_digits=10, decimal_places=2)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
