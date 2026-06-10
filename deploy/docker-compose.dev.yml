@@ -33,6 +33,35 @@ services:
       - accounting-dev
     restart: unless-stopped
 
+  # ---- Inventory → journal sync scheduler (dev) ----
+  # Posts journal entries for new pharmacy transactions every 5 minutes.
+  # Safe alongside ad-hoc syncs: sync_all() holds a Postgres advisory
+  # lock, so concurrent runs skip instead of double-posting.
+  scheduler-sync:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: accounting-dev-scheduler-sync
+    depends_on:
+      - backend
+    command: >
+      sh -c "while true; do
+               python manage.py scheduled_sync || echo 'sync failed';
+               sleep $${SYNC_INTERVAL:-300};
+             done"
+    environment:
+      - DJANGO_ENV=${DJANGO_ENV:-development}
+      - DJANGO_SETTINGS_MODULE=accounting_project.settings
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key-change-me}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-*}
+      - DATABASE_URL=${DATABASE_URL:-}
+      - SYNC_INTERVAL=${SYNC_INTERVAL:-300}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - accounting-dev
+    restart: unless-stopped
+
   # ---- React frontend (dev) ----
   frontend:
     build:
