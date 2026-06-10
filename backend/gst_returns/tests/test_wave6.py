@@ -107,3 +107,53 @@ class EWayBillTests(TestCase):
         self.assertEqual(payload['fromStateCode'], 27)
         self.assertEqual(payload['toStateCode'], 29)
         self.assertEqual(len(payload['itemList']), 1)
+
+
+class GSTR3BCloneAccountITCTests(TestCase):
+    """Per-store COA bootstrap posts input GST to CLONE accounts
+    ('1140-MAIN' …). The 3B ITC aggregation must match the whole account
+    family by code prefix — the old exact-code filter reported ITC as 0 for
+    every bootstrapped store."""
+
+    def setUp(self):
+        from core.tests.utils import make_settings, seed_chart_and_mappings
+        seed_chart_and_mappings()
+        make_settings()
+
+    def test_itc_includes_per_location_clone_accounts(self):
+        from datetime import date
+        from decimal import Decimal
+        from core.models import ChartOfAccount
+        from journals.models import JournalEntry, JournalEntryLine
+        from gst_returns.services import GSTR3BGenerator
+        from gst_returns.models import GSTR3BSummary
+
+        template = ChartOfAccount.objects.get(account_code='1140')
+        clone = ChartOfAccount.objects.create(
+            account_code='1140-MAIN', account_name='Input CGST - Main',
+            account_type='ASSET', account_subtype='Input_GST',
+            parent=template, location_id=1, is_leaf=True, is_active=True,
+        )
+        stock = ChartOfAccount.objects.get(account_code='1190')
+
+        entry = JournalEntry.objects.create(
+            date=date(2026, 5, 10), narration='Purchase via clone accounts',
+            voucher_type='PURCHASE', reference_type='PurchaseOrder',
+            reference_id=991, location_id=1,
+        )
+        JournalEntryLine.objects.create(entry=entry, account=stock,
+                                        debit=Decimal('1000.00'))
+        JournalEntryLine.objects.create(entry=entry, account=clone,
+                                        debit=Decimal('60.00'))
+        ap = ChartOfAccount.objects.get(account_code='2110')
+        JournalEntryLine.objects.create(entry=entry, account=ap,
+                                        credit=Decimal('1060.00'))
+        entry.post()
+
+        from unittest.mock import patch
+        with patch('gst_returns.services.GSTR1Generator.generate'), \
+             patch('gst_returns.services.GSTR2BGenerator.generate'):
+            GSTR3BGenerator().generate('2026-05', 1)
+        summary = GSTR3BSummary.objects.get(period='2026-05', location_id=1)
+        self.assertEqual(summary.itc_cgst, Decimal('60.00'),
+                         'clone-account ITC must aggregate under the base head')

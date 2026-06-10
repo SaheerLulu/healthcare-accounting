@@ -682,23 +682,33 @@ class GSTR3BGenerator:
 
         # ITC from posted JE Input GST lines for the period+location.
         # Net debit = purchase debits − purchase-return credit reversals.
+        # Per-store COA bootstrap posts to CLONES of the input-GST heads
+        # ('1140-MAIN' …), so match the whole account family by code prefix —
+        # the old exact-code filter reported ITC as 0 for every bootstrapped
+        # store.
+        from django.db.models import Q as _Q
+        input_codes = ('1140', '1150', '1160')
+        code_q = _Q()
+        for c in input_codes:
+            code_q |= _Q(account__account_code=c) | _Q(
+                account__account_code__startswith=f'{c}-')
         itc_rows = JournalEntryLine.objects.filter(
+            code_q,
             entry__is_posted=True,
             entry__date__year=year,
             entry__date__month=month,
             entry__location_id=location_id,
-            account__account_code__in=['1140', '1150', '1160'],
         ).values('account__account_code').annotate(
             total_debit=Sum('debit'),
             total_credit=Sum('credit'),
         )
-        itc_by_code = {
-            row['account__account_code']: (
+        itc_by_code = {}
+        for row in itc_rows:
+            base = (row['account__account_code'] or '').split('-')[0]
+            itc_by_code[base] = itc_by_code.get(base, Decimal('0.00')) + (
                 (row['total_debit'] or Decimal('0.00'))
                 - (row['total_credit'] or Decimal('0.00'))
             )
-            for row in itc_rows
-        }
         total_itc_cgst = itc_by_code.get('1140', Decimal('0.00'))
         total_itc_sgst = itc_by_code.get('1150', Decimal('0.00'))
         total_itc_igst = itc_by_code.get('1160', Decimal('0.00'))
@@ -852,11 +862,13 @@ class ITCReconciliationService:
                 'sgst': Decimal('0.00'), 'igst': Decimal('0.00'),
             })
             for line in je.lines.all():
-                code = line.account.account_code
-                if code in TAXABLE_CODES:
+                # Per-store clones carry codes like '1190-MAIN' — classify by
+                # the base code so bootstrapped stores reconcile too.
+                base = (line.account.account_code or '').split('-')[0]
+                if base in TAXABLE_CODES:
                     bucket['taxable'] += sign * (line.debit - line.credit)
-                elif code in TAX_CODE_MAP:
-                    bucket[TAX_CODE_MAP[code]] += sign * (line.debit - line.credit)
+                elif base in TAX_CODE_MAP:
+                    bucket[TAX_CODE_MAP[base]] += sign * (line.debit - line.credit)
 
         results = []
         all_gstins = set(supplier_2b.keys()) | set(supplier_books.keys())

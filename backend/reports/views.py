@@ -1399,12 +1399,66 @@ class StockMovementSummaryView(APIView):
         })
 
 
+
+
+def _movement_pack_delta(m):
+    """Signed PACK-unit stock change for a movement. `quantity` mixes units —
+    loose sales log tablets — but quantity_before/after always snapshot the
+    quant's STRIP count, so their difference is the true pack delta (a strip
+    broken for a loose sale counts when broken; the loose remainder on hand
+    is the only — bounded — approximation)."""
+    qb, qa = m.quantity_before, m.quantity_after
+    if qb is None or qa is None:
+        return m.quantity
+    return qa - qb
+
+def _weighted_avg_rates(location_id=None):
+    """Per-product weighted-average cost, the SAME formula the journal
+    generators capitalise stock with and relieve COGS at —
+    ``(qty + free_qty) × rate × (1 − discount%)`` over ``(qty + free_qty)``
+    units, plus opening-stock lines at their own rate, optionally scoped to
+    one location. The previous inline version ignored free goods, trade
+    discounts and location, so Stock Valuation / Closing-Stock Recon drifted
+    several percent away from the books for no real reason.
+    """
+    from collections import defaultdict as _dd
+    from django.db.models import DecimalField, ExpressionWrapper
+    from inventory_reader.models import OpeningStockLineRO, PurchaseOrderLineRO
+
+    money = DecimalField(max_digits=20, decimal_places=6)
+    po_qs = PurchaseOrderLineRO.objects.filter(
+        purchase_order__state__in=['confirmed', 'done', 'approved'])
+    os_qs = OpeningStockLineRO.objects.all()
+    if location_id is not None:
+        po_qs = po_qs.filter(purchase_order__location_id=location_id)
+        os_qs = os_qs.filter(opening_stock__location_id=location_id)
+
+    value_expr = ExpressionWrapper(
+        (F('quantity') + F('free_qty')) * F('purchase_rate')
+        * (Decimal('100') - F('discount_percent')) / Decimal('100'),
+        output_field=money,
+    )
+    units_expr = ExpressionWrapper(F('quantity') + F('free_qty'), output_field=money)
+
+    totals = _dd(lambda: {'qty': Decimal('0'), 'value': Decimal('0')})
+    for row in po_qs.values('product_id').annotate(
+            total_qty=Sum(units_expr), total_value=Sum(value_expr)):
+        if row['total_qty'] and row['total_qty'] > 0:
+            totals[row['product_id']]['qty'] += Decimal(str(row['total_qty']))
+            totals[row['product_id']]['value'] += Decimal(str(row['total_value']))
+    for row in os_qs.values('product_id').annotate(
+            total_qty=Sum('quantity'),
+            total_value=Sum(F('quantity') * F('purchase_rate'))):
+        if row['total_qty'] and row['total_qty'] > 0:
+            totals[row['product_id']]['qty'] += Decimal(str(row['total_qty']))
+            totals[row['product_id']]['value'] += Decimal(str(row['total_value']))
+    return {pid: t['value'] / t['qty'] for pid, t in totals.items() if t['qty'] > 0}
+
+
 class StockValuationView(APIView):
     """Product-wise stock valuation using weighted average cost."""
     def get(self, request):
-        from inventory_reader.models import (
-            StockMovementRO, ProductRO, PurchaseOrderLineRO, OpeningStockLineRO,
-        )
+        from inventory_reader.models import StockMovementRO, ProductRO
 
         as_of_date = request.query_params.get('date', date.today().isoformat())
         location = get_active_location(request)
@@ -1419,37 +1473,9 @@ class StockValuationView(APIView):
 
         qty_data = defaultdict(int)
         for mv in movements:
-            qty_data[mv.product_id] += mv.quantity
+            qty_data[mv.product_id] += _movement_pack_delta(mv)
 
-        # Weighted-average cost per product. Aggregate both PO lines AND
-        # opening-stock lines so seeded inventory has a non-zero rate even
-        # before its first purchase order.
-        cost_totals = defaultdict(lambda: {'qty': Decimal('0'), 'value': Decimal('0')})
-
-        po_lines = PurchaseOrderLineRO.objects.filter(
-            purchase_order__state__in=['confirmed', 'done', 'approved']
-        ).values('product_id').annotate(
-            total_qty=Sum('quantity'),
-            total_value=Sum(F('quantity') * F('purchase_rate')),
-        )
-        for line in po_lines:
-            if line['total_qty'] and line['total_qty'] > 0:
-                cost_totals[line['product_id']]['qty'] += Decimal(str(line['total_qty']))
-                cost_totals[line['product_id']]['value'] += Decimal(str(line['total_value']))
-
-        os_lines = OpeningStockLineRO.objects.values('product_id').annotate(
-            total_qty=Sum('quantity'),
-            total_value=Sum(F('quantity') * F('purchase_rate')),
-        )
-        for line in os_lines:
-            if line['total_qty'] and line['total_qty'] > 0:
-                cost_totals[line['product_id']]['qty'] += Decimal(str(line['total_qty']))
-                cost_totals[line['product_id']]['value'] += Decimal(str(line['total_value']))
-
-        avg_rates = {}
-        for pid, totals in cost_totals.items():
-            if totals['qty'] > 0:
-                avg_rates[pid] = totals['value'] / totals['qty']
+        avg_rates = _weighted_avg_rates(location.id if location else None)
 
         all_pids = [pid for pid, qty in qty_data.items() if qty > 0]
         products = {p.id: p for p in ProductRO.objects.filter(id__in=all_pids)}
@@ -1810,14 +1836,19 @@ class ClosingStockReconciliationView(APIView):
         # 1. Books-side: Closing Stock GL balance up to as_of
         from core.models import AccountMapping
         try:
-            cs_acct = AccountMapping.get_account('CLOSING_STOCK')
+            cs_acct = AccountMapping.get_account(
+                'CLOSING_STOCK', location_id=location.id if location else None)
         except ValueError:
             return Response(
                 {'detail': 'CLOSING_STOCK account mapping is not configured.'},
                 status=400,
             )
+        # Per-store bootstrap posts to clones parented under the template —
+        # a location resolves to its own clone; the consolidated (no-location)
+        # view must sum the template plus every store clone beneath it.
+        family = Q(account=cs_acct) | Q(account__parent=cs_acct)
         bq = JournalEntryLine.objects.filter(
-            account=cs_acct, entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of,
+            family, entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of,
         )
         if location:
             bq = bq.filter(entry__location_id=location.id)
@@ -1828,38 +1859,18 @@ class ClosingStockReconciliationView(APIView):
         # avg purchase rate. StockMovementRO.quantity is signed, so summing
         # gives qty on hand directly. Cost = weighted avg across PO lines +
         # opening-stock lines (the same calc StockValuationView uses).
-        from inventory_reader.models import (
-            PurchaseOrderLineRO, StockMovementRO, OpeningStockLineRO,
-        )
+        from inventory_reader.models import StockMovementRO
         moves = StockMovementRO.objects.filter(created_at__date__lte=as_of)
         if location:
             moves = moves.filter(location_id=location.id)
         from collections import defaultdict
         qty_on_hand = defaultdict(int)
         for m in moves:
-            qty_on_hand[m.product_id] += m.quantity
+            qty_on_hand[m.product_id] += _movement_pack_delta(m)
 
-        cost_totals = defaultdict(lambda: {'qty': Decimal('0'), 'value': Decimal('0')})
-        for line in PurchaseOrderLineRO.objects.filter(
-            purchase_order__state__in=['confirmed', 'done', 'approved']
-        ).values('product_id').annotate(
-            total_qty=Sum('quantity'),
-            total_value=Sum(F('quantity') * F('purchase_rate')),
-        ):
-            if line['total_qty'] and line['total_qty'] > 0:
-                cost_totals[line['product_id']]['qty'] += Decimal(str(line['total_qty']))
-                cost_totals[line['product_id']]['value'] += Decimal(str(line['total_value']))
-        for line in OpeningStockLineRO.objects.values('product_id').annotate(
-            total_qty=Sum('quantity'),
-            total_value=Sum(F('quantity') * F('purchase_rate')),
-        ):
-            if line['total_qty'] and line['total_qty'] > 0:
-                cost_totals[line['product_id']]['qty'] += Decimal(str(line['total_qty']))
-                cost_totals[line['product_id']]['value'] += Decimal(str(line['total_value']))
-        avg_rate = {
-            pid: t['value'] / t['qty']
-            for pid, t in cost_totals.items() if t['qty'] > 0
-        }
+        # Same cost basis the journals capitalise/relieve at — anything else
+        # makes the recon report phantom variance.
+        avg_rate = _weighted_avg_rates(location.id if location else None)
 
         inventory_value = sum(
             (Decimal(str(qty_on_hand.get(pid, 0))) * avg_rate.get(pid, Decimal('0')))

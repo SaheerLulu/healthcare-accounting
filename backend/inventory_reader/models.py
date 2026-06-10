@@ -441,7 +441,12 @@ class StockMovementRO(models.Model):
     )
     movement_type = models.CharField(max_length=30)
     # Signed: +ve = stock in, -ve = stock out (e.g. write-off / shortage).
+    # CAUTION: loose (tablet-level) sales record the TABLET count here while
+    # pack movements record strips — use the quantity_before/after strip
+    # snapshots when you need pack-unit deltas (valuation, recon).
     quantity = models.IntegerField()
+    quantity_before = models.IntegerField(default=0)
+    quantity_after = models.IntegerField(default=0)
     lot_name = models.CharField(max_length=100, blank=True)
     notes = models.TextField(blank=True)
     reference_type = models.CharField(max_length=50, blank=True)
