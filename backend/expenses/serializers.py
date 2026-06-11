@@ -104,7 +104,9 @@ class ExpenseReadSerializer(serializers.ModelSerializer):
         return None
 
     def get_is_itemized(self, obj):
-        return obj.items.count() > 1
+        # len() over .all() reuses the viewset's prefetch cache instead of
+        # issuing one COUNT query per expense row in list responses.
+        return len(obj.items.all()) > 1
 
 
 class ExpenseWriteSerializer(serializers.ModelSerializer):

@@ -94,6 +94,11 @@ class JournalEntry(models.Model):
             models.Index(fields=['date']),
             models.Index(fields=['reference_type', 'reference_id']),
             models.Index(fields=['voucher_type']),
+            # Every store-scoped list/report filters on location_id (usually
+            # together with a date range) — without this the biggest table in
+            # the system is sequentially scanned on each request.
+            models.Index(fields=['location_id', 'date'],
+                         name='journals_je_loc_date_idx'),
         ]
 
     def save(self, *args, **kwargs):
@@ -260,6 +265,12 @@ class JournalEntryLine(models.Model):
 
     class Meta:
         ordering = ['id']
+        indexes = [
+            # Party ledgers, aging and outstanding reports all filter lines
+            # by (party_type, party_id).
+            models.Index(fields=['party_type', 'party_id'],
+                         name='journals_jel_party_idx'),
+        ]
 
     def clean(self):
         if self.debit < 0 or self.credit < 0:
