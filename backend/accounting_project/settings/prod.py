@@ -1,9 +1,19 @@
 import os
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from .base import *
 from corsheaders.defaults import default_headers
 
 DEBUG = False
+
+# Refuse to start in production with the publicly-known fallback SECRET_KEY —
+# anyone with the repo could otherwise forge JWTs and session cookies.
+# (deploy/docker-compose.prod.yml and the deploy workflow always supply it;
+# the Docker image build uses a placeholder env var for collectstatic only.)
+if not os.environ.get('DJANGO_SECRET_KEY'):
+    raise ImproperlyConfigured(
+        'DJANGO_SECRET_KEY environment variable must be set in production.'
+    )
 
 # ---------------------------------------------------------------------------
 # Hosts & CORS
@@ -39,6 +49,9 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'SAMEORIGIN'
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+# Session/CSRF cookies only ever travel over HTTPS (all prod origins are https).
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
 
 # ---------------------------------------------------------------------------
 # Static files
