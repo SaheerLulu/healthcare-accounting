@@ -57,8 +57,8 @@ class BankAccountViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='cash-in-hand')
     def cash_in_hand(self, request):
         """Cash-in-hand balance for the active location (Cash 1110 GL)."""
-        from core.mixins import get_active_location
-        location = get_active_location(request)
+        from core.mixins import require_location_or_all_access
+        location = require_location_or_all_access(request)
         location_id = location.id if location else None
         balance = services.cash_in_hand_balance(location_id)
         return Response({'location_id': location_id, 'cash_in_hand': str(balance)})

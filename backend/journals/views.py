@@ -22,7 +22,10 @@ from .services import (
     generate_one_recurring_journal, generate_due_recurring_journals,
 )
 from audit.utils import log_action
-from core.mixins import LocationFilterMixin, get_active_location
+from core.mixins import (
+    LocationFilterMixin, get_active_location, assert_location_access,
+)
+from core.middleware import _has_all_location_access
 
 
 class JournalEntryFilter(django_filters.FilterSet):
@@ -97,8 +100,15 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         return response
 
     def perform_create(self, serializer):
+        # The create serializer requires location_id in the body — make sure
+        # the caller is actually assigned to that store.
+        assert_location_access(self.request, serializer.validated_data.get('location_id'))
         instance = serializer.save()
         log_action('CREATE', 'JournalEntry', instance.pk, instance.entry_no, request=self.request)
+
+    def perform_update(self, serializer):
+        assert_location_access(self.request, serializer.validated_data.get('location_id'))
+        serializer.save()
 
     def update(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -117,6 +127,11 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         return response
 
     def perform_destroy(self, instance):
+        # Posted entries are immutable — they must be reversed, never deleted.
+        if instance.is_posted:
+            raise ValidationError(
+                'Cannot delete a posted journal entry. Reverse it instead.'
+            )
         log_action('DELETE', 'JournalEntry', instance.pk, instance.entry_no, request=self.request)
         instance.delete()
 
@@ -226,6 +241,7 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         """Create a payment voucher: Debit Payables, Credit Bank/Cash."""
         ser = PaymentVoucherSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        assert_location_access(request, ser.validated_data.get('location_id'))
         try:
             svc = JournalAutoGenerationService()
             entry = svc.generate_payment(ser.validated_data)
@@ -241,6 +257,7 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         """Create a receipt voucher: Debit Bank/Cash, Credit Receivables."""
         ser = ReceiptVoucherSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        assert_location_access(request, ser.validated_data.get('location_id'))
         try:
             svc = JournalAutoGenerationService()
             entry = svc.generate_receipt(ser.validated_data)
@@ -255,15 +272,20 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     def provision_bad_debts(self, request):
         """Post the provision-for-doubtful-debts adjustment for `as_of` date."""
         from datetime import date as _d
+        from rest_framework.exceptions import PermissionDenied
         from .bad_debts import post_provision_adjustment
         from core.mixins import get_active_location
+        loc = get_active_location(request)
+        target_loc = request.data.get('location_id') or (loc.id if loc else None)
+        assert_location_access(request, target_loc)
+        if target_loc is None and not _has_all_location_access(request.user):
+            raise PermissionDenied('A valid X-Location-Id header is required.')
         try:
             as_of = (_d.fromisoformat(request.data['as_of'])
                      if request.data.get('as_of') else _d.today())
-            loc = get_active_location(request)
             result = post_provision_adjustment(
                 as_of=as_of,
-                location_id=request.data.get('location_id') or (loc.id if loc else None),
+                location_id=target_loc,
                 narration=request.data.get('narration', ''),
                 user=request.user if request.user.is_authenticated else None,
             )
@@ -305,6 +327,7 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     def inventory_adjustment(self, request):
         """Post a shrinkage / damage / count-variance JV with §17(5)(h) ITC reversal."""
         from decimal import Decimal as _D
+        assert_location_access(request, request.data.get('location_id'))
         try:
             svc = JournalAutoGenerationService()
             entry = svc.post_inventory_adjustment(
@@ -327,6 +350,7 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     def drug_expiry(self, request):
         """Pharmacy-specific expired-stock write-off with ITC reversal."""
         from decimal import Decimal as _D
+        assert_location_access(request, request.data.get('location_id'))
         try:
             svc = JournalAutoGenerationService()
             entry = svc.post_drug_expiry_writeoff(
@@ -348,6 +372,9 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     def stock_transfer(self, request):
         """Inter-branch stock-in-transit JE pair."""
         from decimal import Decimal as _D
+        # The sending store's user must at least control the source store;
+        # the destination is validated as a real location by the service.
+        assert_location_access(request, request.data.get('from_location_id'))
         try:
             svc = JournalAutoGenerationService()
             res = svc.post_stock_transfer(
@@ -375,6 +402,7 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         """Create a contra voucher: Transfer between Bank and Cash."""
         ser = ContraVoucherSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        assert_location_access(request, ser.validated_data.get('location_id'))
         try:
             svc = JournalAutoGenerationService()
             entry = svc.generate_contra(ser.validated_data)
@@ -409,7 +437,9 @@ class RecurringJournalViewSet(LocationFilterMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         # Stamp the active store so the template (and every JE it generates)
-        # stays store-scoped. Explicit location_id in the payload wins.
+        # stays store-scoped. Explicit location_id in the payload wins — but
+        # only for a store the user actually has access to.
+        assert_location_access(self.request, serializer.validated_data.get('location_id'))
         location = get_active_location(self.request)
         extra = {}
         if location and serializer.validated_data.get('location_id') is None:
@@ -418,6 +448,7 @@ class RecurringJournalViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         log_action('CREATE', 'RecurringJournal', instance.pk, str(instance), request=self.request)
 
     def perform_update(self, serializer):
+        assert_location_access(self.request, serializer.validated_data.get('location_id'))
         instance = serializer.save()
         log_action('UPDATE', 'RecurringJournal', instance.pk, str(instance), request=self.request)
 
@@ -507,6 +538,10 @@ class BillReferenceViewSet(viewsets.ModelViewSet):
         loc = get_active_location(self.request)
         if loc:
             qs = qs.filter(line__entry__location_id=loc.id)
+        elif not _has_all_location_access(self.request.user):
+            # No valid store header and no all-stores access → see nothing
+            # (same fail-closed semantics as LocationFilterMixin).
+            return qs.none()
         if params.get('line'):
             qs = qs.filter(line_id=params.get('line'))
         if params.get('entry'):
@@ -518,6 +553,10 @@ class BillReferenceViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
+        # The allocation's line must belong to a store the user can act on.
+        line = serializer.validated_data.get('line')
+        if line is not None and line.entry_id and line.entry.location_id is not None:
+            assert_location_access(self.request, line.entry.location_id)
         instance = serializer.save()
         log_action('CREATE', 'BillReference', instance.pk, str(instance), request=self.request)
 

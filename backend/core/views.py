@@ -223,16 +223,23 @@ class AccountMappingViewSet(viewsets.ModelViewSet):
             qs = qs.filter(location_id__isnull=True)
         elif loc is not None and loc != '':
             try:
-                qs = qs.filter(location_id=int(loc))
+                loc = int(loc)
             except ValueError:
-                pass
+                return qs
+            from core.mixins import assert_location_access
+            assert_location_access(self.request, loc)
+            qs = qs.filter(location_id=loc)
         return qs
 
     def perform_create(self, serializer):
+        from core.mixins import assert_location_access
+        assert_location_access(self.request, serializer.validated_data.get('location_id'))
         instance = serializer.save()
         log_action('CREATE', 'AccountMapping', instance.pk, str(instance), request=self.request)
 
     def perform_update(self, serializer):
+        from core.mixins import assert_location_access
+        assert_location_access(self.request, serializer.validated_data.get('location_id'))
         instance = serializer.save()
         log_action('UPDATE', 'AccountMapping', instance.pk, str(instance), request=self.request)
 
@@ -421,7 +428,8 @@ class DashboardView(APIView):
         if range_start > range_end:
             range_start, range_end = range_end, range_start
 
-        location = get_active_location(request)
+        from core.mixins import require_location_or_all_access
+        location = require_location_or_all_access(request)
 
         # Phase 5A: Single aggregate query instead of N+1 loops.
         # Exclude optional/memorandum vouchers so the dashboard KPIs match the
@@ -580,12 +588,18 @@ class CloseFiscalYearView(APIView):
             return Response({'detail': 'fy_start_year must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
 
         from django.core.exceptions import ValidationError as DjangoValidationError
-        from core.mixins import get_active_location
+        from rest_framework.exceptions import PermissionDenied
+        from core.mixins import get_active_location, assert_location_access
+        from core.middleware import _has_all_location_access
         _loc = get_active_location(request)
+        target_loc = request.data.get('location_id') or (_loc.id if _loc else None)
+        assert_location_access(request, target_loc)
+        if target_loc is None and not _has_all_location_access(request.user):
+            raise PermissionDenied('A valid X-Location-Id header is required.')
         try:
             result = close_fiscal_year(
                 fy_start_year,
-                location_id=request.data.get('location_id') or (_loc.id if _loc else None),
+                location_id=target_loc,
                 generate_opening=bool(request.data.get('generate_opening', True)),
                 user=request.user if request.user.is_authenticated else None,
             )

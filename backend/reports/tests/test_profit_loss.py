@@ -37,7 +37,10 @@ class ProfitLossPerpetualTests(TestCase):
     def setUp(self):
         seed_chart_and_mappings()
         make_settings()
-        user = make_user()
+        # Reports now refuse non-admin users that send no X-Location-Id
+        # (fail-closed multi-tenancy); an all-stores admin keeps the old
+        # consolidated behaviour these assertions rely on.
+        user = make_user(username='pl-admin', is_superuser=True)
 
         self.client = APIClient()
         self.client.force_authenticate(user=user)

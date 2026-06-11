@@ -142,10 +142,11 @@ class ExpenseViewSet(LocationFilterMixin, viewsets.ModelViewSet):
                         status=status.HTTP_201_CREATED)
 
 
-class ExpenseAttachmentViewSet(viewsets.ModelViewSet):
+class ExpenseAttachmentViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     queryset = ExpenseAttachment.objects.all()
     serializer_class = ExpenseAttachmentSerializer
     http_method_names = ['delete']
+    location_field = 'expense__location_id'
 
     def perform_destroy(self, instance):
         log_action('DELETE', 'ExpenseAttachment', instance.pk,

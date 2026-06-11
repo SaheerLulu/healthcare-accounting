@@ -4,6 +4,7 @@ from rest_framework import serializers, status
 from .services import InventorySyncService, full_resync
 from .models import SyncLog, SyncError
 from audit.utils import log_action
+from core.mixins import HasAllLocationAccess
 
 
 class SyncLogSerializer(serializers.ModelSerializer):
@@ -86,7 +87,12 @@ class FullResyncView(APIView):
     GET  /api/sync/full-resync/  → dry-run count (safe, read-only).
     POST /api/sync/full-resync/  → wipe + regenerate. Requires `confirm=true`
                                    in the body to defeat accidental clicks.
+
+    Wipes and rebuilds EVERY store's synced journal entries — admin
+    (all-stores) access only.
     """
+
+    permission_classes = [HasAllLocationAccess]
 
     def get(self, request):
         return Response(full_resync(dry_run=True))

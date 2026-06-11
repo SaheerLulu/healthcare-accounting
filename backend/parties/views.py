@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 
-from core.mixins import get_active_location
+from core.mixins import get_active_location, require_location_or_all_access
 from inventory_reader.models import SupplierRO, CustomerRO
 from .models import PartyCommunication, PartyOpeningBalance
 from .opening_balance import post_opening_balance_je, void_opening_balance_je
@@ -70,7 +70,7 @@ def _customer_dict(c: CustomerRO) -> dict:
 
 class SuppliersListView(APIView):
     def get(self, request):
-        loc = get_active_location(request)
+        loc = require_location_or_all_access(request)
         rows = services.list_parties(
             'Supplier',
             location_id=loc.id if loc else None,
@@ -81,7 +81,7 @@ class SuppliersListView(APIView):
 
 class CustomersListView(APIView):
     def get(self, request):
-        loc = get_active_location(request)
+        loc = require_location_or_all_access(request)
         rows = services.list_parties(
             'Customer',
             location_id=loc.id if loc else None,
@@ -95,7 +95,7 @@ class CustomersListView(APIView):
 class SupplierDetailView(APIView):
     def get(self, request, pk: int):
         supplier = get_object_or_404(SupplierRO, pk=pk)
-        loc = get_active_location(request)
+        loc = require_location_or_all_access(request)
         data = _supplier_dict(supplier)
         data['summary'] = services.party_overview(
             'Supplier', supplier.id, location_id=loc.id if loc else None
@@ -106,7 +106,7 @@ class SupplierDetailView(APIView):
 class CustomerDetailView(APIView):
     def get(self, request, pk: int):
         customer = get_object_or_404(CustomerRO, pk=pk)
-        loc = get_active_location(request)
+        loc = require_location_or_all_access(request)
         data = _customer_dict(customer)
         data['summary'] = services.party_overview(
             'Customer', customer.id, location_id=loc.id if loc else None
@@ -120,7 +120,7 @@ class _PartyTransactionsView(APIView):
     party_type = ''  # set by subclass
 
     def get(self, request, pk: int):
-        loc = get_active_location(request)
+        loc = require_location_or_all_access(request)
         rows = services.transaction_list(
             self.party_type, pk,
             location_id=loc.id if loc else None,
@@ -144,7 +144,7 @@ class _PartyStatementView(APIView):
     party_type = ''
 
     def get(self, request, pk: int):
-        loc = get_active_location(request)
+        loc = require_location_or_all_access(request)
         data = services.statement_of_account(
             self.party_type, pk,
             location_id=loc.id if loc else None,
@@ -169,7 +169,7 @@ class _PartyStatementCSVView(APIView):
 
     def get(self, request, pk: int):
         get_object_or_404(self.party_model, pk=pk)
-        loc = get_active_location(request)
+        loc = require_location_or_all_access(request)
         data = services.statement_of_account(
             self.party_type, pk,
             location_id=loc.id if loc else None,
@@ -260,7 +260,7 @@ class _PartyOpeningBalanceView(APIView):
 
     def get(self, request, pk: int):
         self._ensure_party_exists(pk)
-        loc = get_active_location(request)
+        loc = require_location_or_all_access(request)
         ob = PartyOpeningBalance.objects.filter(
             party_type=self.party_type, party_id=pk,
             location_id=loc.id if loc else None,
@@ -272,7 +272,7 @@ class _PartyOpeningBalanceView(APIView):
     def put(self, request, pk: int):
         self._ensure_party_exists(pk)
         user = request.user if request.user.is_authenticated else None
-        loc = get_active_location(request)
+        loc = require_location_or_all_access(request)
         if loc is None:
             return Response(
                 {'detail': 'An active store (X-Location-Id) is required to set an opening balance.'},
@@ -303,7 +303,7 @@ class _PartyOpeningBalanceView(APIView):
     def delete(self, request, pk: int):
         self._ensure_party_exists(pk)
         user = request.user if request.user.is_authenticated else None
-        loc = get_active_location(request)
+        loc = require_location_or_all_access(request)
         with transaction.atomic():
             ob = PartyOpeningBalance.objects.filter(
                 party_type=self.party_type, party_id=pk,

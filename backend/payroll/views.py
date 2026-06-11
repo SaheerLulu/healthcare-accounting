@@ -10,7 +10,10 @@ from .services import (
     generate_epfo_ecr_file, generate_esi_contribution_file,
 )
 from audit.utils import log_action
-from core.mixins import LocationFilterMixin, get_active_location
+from core.mixins import (
+    LocationFilterMixin, get_active_location, assert_location_access,
+)
+from core.middleware import _has_all_location_access
 
 
 class EmployeeViewSet(LocationFilterMixin, viewsets.ModelViewSet):
@@ -82,6 +85,10 @@ class PayrollRunViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
         if not location_id:
             location = get_active_location(request)
             location_id = location.id if location else None
+        assert_location_access(request, location_id)
+        if location_id is None and not _has_all_location_access(request.user):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('A valid X-Location-Id header is required.')
 
         try:
             svc = PayrollService()
@@ -144,11 +151,16 @@ class PayrollRunViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
 
     @staticmethod
     def _resolve_location_id(request):
-        """Explicit ?location_id wins; else the active store; None = all."""
+        """Explicit ?location_id wins; else the active store; None = all
+        (admin only — regular users must name a store they're assigned to)."""
         location_id = request.query_params.get('location_id')
         if location_id:
+            assert_location_access(request, location_id)
             return int(location_id)
         location = get_active_location(request)
+        if location is None and not _has_all_location_access(request.user):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('A valid X-Location-Id header is required.')
         return location.id if location else None
 
     @action(detail=False, methods=['get'], url_path='bank-disbursement')

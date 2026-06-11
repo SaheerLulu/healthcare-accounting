@@ -9,7 +9,7 @@ from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
 from journals.models import JournalEntry, JournalEntryLine
 from core.models import ChartOfAccount
-from core.mixins import get_active_location
+from core.mixins import require_location_or_all_access
 
 
 def resolve_ledger_account(request):
@@ -24,7 +24,7 @@ def resolve_ledger_account(request):
     if not account_code:
         return None, Response({'error': 'account_code is required'}, status=400)
 
-    location = get_active_location(request)
+    location = require_location_or_all_access(request)
     qs = ChartOfAccount.objects.filter(account_code=account_code)
     acc = (qs.filter(location_id=location.id).first() if location else None) \
         or qs.filter(location_id__isnull=True).first() \
@@ -45,7 +45,7 @@ class TrialBalanceView(APIView):
     def get(self, request):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         if not start_date or not end_date:
             fy_start, fy_end = get_fy_dates()
@@ -64,12 +64,18 @@ class TrialBalanceView(APIView):
         total_debit = Decimal('0.00')
         total_credit = Decimal('0.00')
 
-        for account in accounts:
-            agg = lines_qs.filter(account=account).aggregate(
-                total_debit=Sum('debit'), total_credit=Sum('credit')
+        # One grouped query instead of one aggregate per account (N+1).
+        sums_by_account = {
+            r['account_id']: r
+            for r in lines_qs.values('account_id').annotate(
+                total_debit=Sum('debit'), total_credit=Sum('credit'),
             )
-            dr = agg['total_debit'] or Decimal('0.00')
-            cr = agg['total_credit'] or Decimal('0.00')
+        }
+
+        for account in accounts:
+            agg = sums_by_account.get(account.id, {})
+            dr = agg.get('total_debit') or Decimal('0.00')
+            cr = agg.get('total_credit') or Decimal('0.00')
             net = dr - cr
             if net == 0:
                 continue
@@ -122,7 +128,7 @@ class ProfitLossView(APIView):
     def get(self, request):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         if not start_date or not end_date:
             fy_start, fy_end = get_fy_dates()
@@ -152,15 +158,21 @@ class ProfitLossView(APIView):
                 cur = cur.parent
             return None
 
+        # One grouped query instead of one aggregate per account (N+1).
+        sums_by_account = {
+            r['account_id']: r
+            for r in lines_qs.values('account_id').annotate(
+                dr=Sum('debit'), cr=Sum('credit'),
+            )
+        }
+
         revenue_items = []
         total_revenue = Decimal('0.00')
         for acc in ChartOfAccount.objects.filter(
             account_type='REVENUE', is_leaf=True
         ).order_by('account_code'):
-            agg = lines_qs.filter(account=acc).aggregate(
-                dr=Sum('debit'), cr=Sum('credit'),
-            )
-            amount = (agg['cr'] or Decimal('0')) - (agg['dr'] or Decimal('0'))
+            agg = sums_by_account.get(acc.id, {})
+            amount = (agg.get('cr') or Decimal('0')) - (agg.get('dr') or Decimal('0'))
             if amount != 0:
                 revenue_items.append({
                     'account_code': acc.account_code,
@@ -174,10 +186,8 @@ class ProfitLossView(APIView):
         for acc in ChartOfAccount.objects.select_related('parent').filter(
             account_type='EXPENSE', is_leaf=True,
         ).order_by('account_code'):
-            agg = lines_qs.filter(account=acc).aggregate(
-                dr=Sum('debit'), cr=Sum('credit'),
-            )
-            amount = (agg['dr'] or Decimal('0')) - (agg['cr'] or Decimal('0'))
+            agg = sums_by_account.get(acc.id, {})
+            amount = (agg.get('dr') or Decimal('0')) - (agg.get('cr') or Decimal('0'))
             if amount == 0:
                 continue
             row = {
@@ -226,7 +236,7 @@ class ProfitLossView(APIView):
 class BalanceSheetView(APIView):
     def get(self, request):
         as_of_date = request.query_params.get('date', date.today().isoformat())
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         lines_qs = JournalEntryLine.objects.filter(
             entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
@@ -240,6 +250,14 @@ class BalanceSheetView(APIView):
         # both would double every balance. It is excluded above. (Windowed
         # reports like the Trial Balance keep it as their brought-forward
         # opening, so it is filtered here, not at the source.)
+        # One grouped query instead of one aggregate per account (N+1).
+        sums_by_account = {
+            r['account_id']: r
+            for r in lines_qs.values('account_id').annotate(
+                dr=Sum('debit'), cr=Sum('credit'),
+            )
+        }
+
         def get_section_balances(account_type):
             accounts = ChartOfAccount.objects.filter(
                 account_type=account_type, is_leaf=True
@@ -247,11 +265,9 @@ class BalanceSheetView(APIView):
             items = []
             total = Decimal('0.00')
             for acc in accounts:
-                agg = lines_qs.filter(account=acc).aggregate(
-                    dr=Sum('debit'), cr=Sum('credit')
-                )
-                dr = agg['dr'] or Decimal('0.00')
-                cr = agg['cr'] or Decimal('0.00')
+                agg = sums_by_account.get(acc.id, {})
+                dr = agg.get('dr') or Decimal('0.00')
+                cr = agg.get('cr') or Decimal('0.00')
                 if account_type == 'ASSET':
                     balance = dr - cr
                 else:
@@ -315,7 +331,7 @@ class LedgerView(APIView):
     def get(self, request):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
         page = request.query_params.get('page')
 
         account, error = resolve_ledger_account(request)
@@ -433,7 +449,7 @@ class LedgerExportView(APIView):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
         fmt = request.query_params.get('format', 'csv').lower()
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         account, error = resolve_ledger_account(request)
         if error is not None:
@@ -622,7 +638,7 @@ def _party_tax_details(party_type, party_ids):
 class ReceivablesAgingView(APIView):
     def get(self, request):
         as_of_date = request.query_params.get('date', date.today().isoformat())
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         as_of = date.fromisoformat(as_of_date)
 
@@ -705,7 +721,7 @@ def _open_party_invoices(request, *, party_type):
     from journals.models import BillReference
     as_of_date = request.query_params.get('date', date.today().isoformat())
     search = request.query_params.get('search', '').strip().lower()
-    location = get_active_location(request)
+    location = require_location_or_all_access(request)
     is_supplier = party_type == 'Supplier'
     subtype = 'Payable' if is_supplier else 'Receivable'
     net_key = 'supplier_outstanding' if is_supplier else 'customer_outstanding'
@@ -808,7 +824,7 @@ class OpenSupplierInvoicesView(APIView):
 class PayablesAgingView(APIView):
     def get(self, request):
         as_of_date = request.query_params.get('date', date.today().isoformat())
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         as_of = date.fromisoformat(as_of_date)
 
@@ -881,7 +897,7 @@ def _build_book_response(account_subtype, request):
     start_date = request.query_params.get('start_date')
     end_date = request.query_params.get('end_date')
     account_code = request.query_params.get('account_code')
-    location = get_active_location(request)
+    location = require_location_or_all_access(request)
 
     accounts = ChartOfAccount.objects.filter(account_subtype=account_subtype).order_by('account_code')
     if account_code:
@@ -966,7 +982,7 @@ class DaybookView(APIView):
         target_date = request.query_params.get('date')
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         if target_date:
             start_date = target_date
@@ -1029,7 +1045,7 @@ class GSTComputationView(APIView):
     """Phase 5C: GST computation worksheet with ITC utilization order."""
     def get(self, request):
         period = request.query_params.get('period')
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         if not period:
             return Response({'error': 'period is required'}, status=400)
@@ -1160,7 +1176,7 @@ class HSNSummaryView(APIView):
     """Phase 5C: HSN-code aggregation for sales/purchases."""
     def get(self, request):
         period = request.query_params.get('period')
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         if not period:
             return Response({'error': 'period is required'}, status=400)
@@ -1239,7 +1255,7 @@ class PartyOutstandingView(APIView):
     def get(self, request):
         party_type = request.query_params.get('party_type', 'Customer')
         as_of_date = request.query_params.get('date', date.today().isoformat())
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         as_of = date.fromisoformat(as_of_date)
 
@@ -1337,7 +1353,7 @@ class StockMovementSummaryView(APIView):
 
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         movements = StockMovementRO.objects.select_related('product').all()
         if location:
@@ -1461,7 +1477,7 @@ class StockValuationView(APIView):
         from inventory_reader.models import StockMovementRO, ProductRO
 
         as_of_date = request.query_params.get('date', date.today().isoformat())
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         # StockMovementRO.quantity is signed (positive = IN, negative = OUT)
         # per inventory_management's MovementType convention — so a simple
@@ -1544,7 +1560,7 @@ class MSMEComplianceReportView(APIView):
             })
 
         # Aged payables: outstanding per supplier with the bill's accounting date
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
         lines = (JournalEntryLine.objects
                  .filter(party_type='Supplier', party_id__in=msme_index.keys(),
                          entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of)
@@ -1567,7 +1583,7 @@ class MSMEComplianceReportView(APIView):
             })
 
         rows = []
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
         for party_id, info in per_supplier.items():
             net_outstanding = sum(Decimal(b['amount']) for b in info['open_bills'])
             if net_outstanding <= 0:
@@ -1641,7 +1657,7 @@ class FinancialRatiosView(APIView):
                                                             get_fy_dates()[0].isoformat()))
         end = date.fromisoformat(request.query_params.get('end_date',
                                                           get_fy_dates()[1].isoformat()))
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         period_lines = JournalEntryLine.objects.filter(
             entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__gte=start, entry__date__lte=end,
@@ -1753,7 +1769,7 @@ class BankReconciliationSummaryView(APIView):
             request.query_params.get('as_of', date.today().isoformat()))
         bank_account_id = request.query_params.get('bank_account_id')
 
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
         accounts = BankAccount.objects.all()
         if location:
             accounts = accounts.filter(location_id=location.id)
@@ -1831,7 +1847,7 @@ class ClosingStockReconciliationView(APIView):
     def get(self, request):
         as_of = date.fromisoformat(
             request.query_params.get('as_of', date.today().isoformat()))
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         # 1. Books-side: Closing Stock GL balance up to as_of
         from core.models import AccountMapping
@@ -1897,7 +1913,7 @@ class AgedStockReportView(APIView):
 
     def get(self, request):
         from inventory_reader.models import StockMovementRO
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
         as_of = date.fromisoformat(
             request.query_params.get('as_of', date.today().isoformat()))
         slow_days = int(request.query_params.get('slow_days', 90))
@@ -1959,7 +1975,7 @@ class DepartmentalPLView(APIView):
                                                             get_fy_dates()[0].isoformat()))
         end = date.fromisoformat(request.query_params.get('end_date',
                                                           get_fy_dates()[1].isoformat()))
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         lines = (JournalEntryLine.objects
                  .filter(entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
@@ -2036,7 +2052,7 @@ class CashFlowStatementView(APIView):
                                                             get_fy_dates()[0].isoformat()))
         end = date.fromisoformat(request.query_params.get('end_date',
                                                           get_fy_dates()[1].isoformat()))
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
 
         all_lines = JournalEntryLine.objects.filter(
             entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__gte=start, entry__date__lte=end,
@@ -2175,7 +2191,7 @@ class GSTFilingHealthView(APIView):
         except (ValueError, AttributeError):
             return Response({'error': 'period must be YYYY-MM'}, status=400)
 
-        location = get_active_location(request)
+        location = require_location_or_all_access(request)
         loc_id = location.id if location else None
 
         from gst_returns.models import GSTR1Entry, GSTR2BEntry

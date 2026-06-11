@@ -338,11 +338,12 @@ class BillViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         return Response(ser.data, status=status.HTTP_201_CREATED)
 
 
-class BillAttachmentDetailViewSet(viewsets.ModelViewSet):
-    """Delete a single attachment."""
+class BillAttachmentDetailViewSet(LocationFilterMixin, viewsets.ModelViewSet):
+    """Delete a single attachment (scoped to the parent bill's store)."""
     queryset = BillAttachment.objects.all()
     serializer_class = BillAttachmentSerializer
     http_method_names = ['delete']
+    location_field = 'bill__location_id'
 
     def perform_destroy(self, instance):
         log_action('DELETE', 'BillAttachment', instance.pk,
@@ -447,11 +448,13 @@ class RecurringBillViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         return Response(result)
 
 
-class BillPaymentDetailView(viewsets.ModelViewSet):
-    """Single-payment delete (reverses the payment JE and rolls back amount_paid)."""
+class BillPaymentDetailView(LocationFilterMixin, viewsets.ModelViewSet):
+    """Single-payment delete (reverses the payment JE and rolls back amount_paid).
+    Scoped to the parent bill's store so payments can't be voided cross-store."""
     queryset = BillPayment.objects.all()
     serializer_class = BillPaymentSerializer
     http_method_names = ['delete']
+    location_field = 'bill__location_id'
 
     def perform_destroy(self, instance):
         from django.db import transaction

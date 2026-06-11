@@ -11,7 +11,11 @@ from .serializers import (
     TCSCollectionSerializer, Form26ASEntrySerializer,
 )
 from .services import TDSService
-from core.mixins import LocationFilterMixin, get_active_location
+from core.mixins import (
+    LocationFilterMixin, get_active_location, assert_location_access,
+)
+from core.middleware import _has_all_location_access
+from rest_framework.exceptions import PermissionDenied
 from audit.utils import log_action
 
 
@@ -49,6 +53,7 @@ class TDSDeductionViewSet(LocationFilterMixin, viewsets.ModelViewSet):
 
         if not quarter or not location_id:
             return Response({'error': 'quarter and location_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+        assert_location_access(request, location_id)
 
         service = TDSService()
         try:
@@ -79,6 +84,7 @@ class TDSDeductionViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         if not quarter or not location_id:
             return Response({'error': 'quarter and location_id are required'},
                             status=status.HTTP_400_BAD_REQUEST)
+        assert_location_access(request, location_id)
         service = TDSService()
         try:
             payload = service.export_27q_fvu(quarter, int(location_id))
@@ -98,6 +104,7 @@ class TDSDeductionViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         if not quarter or not location_id:
             return Response({'error': 'quarter and location_id are required'},
                             status=status.HTTP_400_BAD_REQUEST)
+        assert_location_access(request, location_id)
 
         service = TDSService()
         try:
@@ -125,6 +132,7 @@ class TDSDeductionViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         if not deductee_pan and not deductee_name:
             return Response({'error': 'deductee_pan or deductee_name is required'},
                             status=status.HTTP_400_BAD_REQUEST)
+        assert_location_access(request, location_id)
 
         service = TDSService()
         data = service.form_16a_data(quarter, int(location_id),
@@ -238,6 +246,9 @@ class TDSChallanViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         if not location_id:
             location = get_active_location(request)
             location_id = location.id if location else None
+        assert_location_access(request, location_id)
+        if location_id is None and not _has_all_location_access(request.user):
+            raise PermissionDenied('A valid X-Location-Id header is required.')
 
         service = TDSService()
         challan = service.auto_generate_challan(section, period, location_id=location_id)

@@ -2,11 +2,26 @@ from inventory_reader.models import LocationRO, UserProfileRO, UserLocationAssig
 
 
 def _has_all_location_access(user):
+    # Cached per request-scoped user instance — this is called from the
+    # middleware, the location mixin and report views, often several times
+    # within a single request; without the cache each call is a DB query.
+    cached = getattr(user, '_all_location_access_cache', None)
+    if cached is not None:
+        return cached
+    result = _compute_all_location_access(user)
+    try:
+        user._all_location_access_cache = result
+    except AttributeError:  # e.g. SimpleLazyObject edge cases
+        pass
+    return result
+
+
+def _compute_all_location_access(user):
     if user.is_superuser:
         return True
     try:
         profile = UserProfileRO.objects.select_related('role').get(user=user)
-        return profile.role and profile.role.code == 'admin'
+        return bool(profile.role and profile.role.code == 'admin')
     except UserProfileRO.DoesNotExist:
         return False
 

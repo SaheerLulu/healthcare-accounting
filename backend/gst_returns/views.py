@@ -18,7 +18,9 @@ from .serializers import (
 )
 from .services import GSTR1Generator, GSTR3BGenerator, GSTR2BGenerator, ITCReconciliationService
 from audit.utils import log_action
-from core.mixins import LocationFilterMixin, get_active_location
+from core.mixins import (
+    LocationFilterMixin, get_active_location, assert_location_access,
+)
 
 
 class GSTR1EntryFilter(django_filters.FilterSet):
@@ -67,6 +69,7 @@ class GSTR1EntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
             location_id = int(location_id)
         except (TypeError, ValueError):
             return Response({'detail': 'location_id must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+        assert_location_access(request, location_id)
 
         generator = GSTR1Generator()
         try:
@@ -359,6 +362,7 @@ class GSTR3BSummaryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
             location_id = int(location_id)
         except (TypeError, ValueError):
             return Response({'detail': 'location_id must be an integer.'}, status=status.HTTP_400_BAD_REQUEST)
+        assert_location_access(request, location_id)
 
         existing = GSTR3BSummary.objects.filter(period=period, location_id=location_id).first()
         if existing and existing.status == 'filed':
@@ -386,6 +390,7 @@ class GSTR9View(viewsets.ViewSet):
         except (TypeError, ValueError):
             return Response({'detail': 'fy_start_year and location_id are required ints'},
                             status=400)
+        assert_location_access(request, loc)
         try:
             payload = generate_gstr9(fy_start_year=fy, location_id=loc)
         except Exception as exc:
@@ -445,6 +450,7 @@ class GSTR9CView(viewsets.ViewSet):
         except (TypeError, ValueError):
             return Response({'detail': 'fy_start_year and location_id required ints'},
                             status=400)
+        assert_location_access(request, loc)
         try:
             payload = generate_gstr9c(
                 fy_start_year=fy, location_id=loc,
@@ -528,6 +534,7 @@ class GSTR2BEntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
 
         if not period or not location_id:
             return Response({'detail': 'Both period and location_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        assert_location_access(request, location_id)
 
         generator = GSTR2BGenerator()
         try:
@@ -563,6 +570,7 @@ class GSTR2BEntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
             location_id = int(location_id)
         except (TypeError, ValueError):
             return Response({'detail': 'location_id must be an integer'}, status=400)
+        assert_location_access(request, location_id)
 
         # JSON payload may come as request.data['payload'] (string) or
         # as a multipart file upload at request.FILES['file'].
@@ -729,6 +737,7 @@ class ITCReconciliationViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSe
 
         if not period or not location_id:
             return Response({'detail': 'Both period and location_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        assert_location_access(request, location_id)
 
         service = ITCReconciliationService()
         try:
