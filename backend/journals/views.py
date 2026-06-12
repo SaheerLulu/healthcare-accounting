@@ -2,6 +2,7 @@ import django_filters
 from django.utils.dateparse import parse_date
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
@@ -26,6 +27,7 @@ from core.mixins import (
     LocationFilterMixin, get_active_location, assert_location_access,
 )
 from core.middleware import _has_all_location_access
+from core.permissions import require_capability
 
 
 class JournalEntryFilter(django_filters.FilterSet):
@@ -135,7 +137,9 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         log_action('DELETE', 'JournalEntry', instance.pk, instance.entry_no, request=self.request)
         instance.delete()
 
-    @action(detail=True, methods=['post'], url_path='post')
+    @action(detail=True, methods=['post'], url_path='post',
+            permission_classes=[IsAuthenticated,
+                                require_capability('can_post_journals')])
     def post_entry(self, request, pk=None):
         """Post the journal entry after validating that it is balanced."""
         entry = self.get_object()
@@ -153,7 +157,9 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         serializer = JournalEntrySerializer(entry, context={'request': request})
         return Response(serializer.data)
 
-    @action(detail=True, methods=['post'], url_path='reverse')
+    @action(detail=True, methods=['post'], url_path='reverse',
+            permission_classes=[IsAuthenticated,
+                                require_capability('can_reverse_journals')])
     def reverse_entry(self, request, pk=None):
         """
         Create a reversal journal entry: all debits and credits are swapped.

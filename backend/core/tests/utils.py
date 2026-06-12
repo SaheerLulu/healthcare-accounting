@@ -32,6 +32,24 @@ def make_admin() -> User:
     return user
 
 
+def grant_capabilities(user: User, *capabilities: str, code: str = 'SENIOR_ACCOUNTANT'):
+    """Put `user` in an AccountingRole granting the given capability flags.
+
+    Capability-gated endpoints (core.permissions.HasAccountingCapability)
+    let superusers through automatically; use this for tests that exercise
+    a non-superuser who legitimately holds e.g. can_post_journals.
+    """
+    from core.models import AccountingRole
+    role, _ = AccountingRole.objects.get_or_create(
+        code=code, defaults={'name': code.replace('_', ' ').title()},
+    )
+    for flag in capabilities:
+        setattr(role, flag, True)
+    role.save()
+    role.users.add(user)
+    return role
+
+
 def make_settings(**kw) -> AccountingSettings:
     defaults = dict(
         company_name='Test Co', gstin='27AABCT1234A1Z5', tan='ABCD12345E',
