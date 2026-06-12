@@ -883,8 +883,10 @@ export interface RecurringJournal {
   total_debit: string
   total_credit: string
   is_balanced: boolean
-  generated_count: number
-  generated_recent: GeneratedJournalStub[]
+  /** Present on retrieve/detail responses only — the list endpoint omits
+   *  both (each one is a journal-table scan per profile). */
+  generated_count?: number
+  generated_recent?: GeneratedJournalStub[]
   created_at: string
   updated_at: string
   created_by: number | null
@@ -1737,6 +1739,22 @@ export async function getBalanceSheet(params?: Record<string, string>) {
 export async function getLedger(params?: Record<string, string>) {
   const res = await api.get('/reports/ledger/', { params })
   return res.data as LedgerReport
+}
+
+/** DRF envelope returned by /reports/ledger/ when a `page` param is sent.
+ *  `results` carries the period opening balance and the page's rows with
+ *  running balances; `results.closing_balance` is the balance through the
+ *  END OF THE PAGE (== the true closing only on the last page). */
+export interface PaginatedLedgerReport {
+  count: number
+  next: string | null
+  previous: string | null
+  results: LedgerReport
+}
+
+export async function getLedgerPage(params?: Record<string, string>) {
+  const res = await api.get('/reports/ledger/', { params })
+  return res.data as PaginatedLedgerReport
 }
 
 export async function getReceivablesAging(params?: Record<string, string>) {

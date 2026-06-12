@@ -449,6 +449,12 @@ class RecurringJournalReadSerializer(serializers.ModelSerializer):
         ]
 
     def get_generated_count(self, obj):
+        # KNOWN-BROKEN HEURISTIC kept for shape compatibility: nothing ever
+        # writes a 'recurring-journal:<id>' token into JE narrations, so this
+        # icontains scan always returns 0. It is now computed only on
+        # retrieve (see RecurringJournalListSerializer) so the list page no
+        # longer runs one full-table scan per profile for a constant 0.
+        # The real fix is an FK from generated entries back to the profile.
         return JournalEntry.objects.filter(
             narration__icontains=f'recurring-journal:{obj.id}'
         ).count()
@@ -457,7 +463,8 @@ class RecurringJournalReadSerializer(serializers.ModelSerializer):
         # Lighter approach: find by voucher_type + date range + narration prefix.
         # Falls back to scanning recent entries created via this profile.
         # Since we don't currently embed a recurring_id token in narration,
-        # match by profile_name as a heuristic.
+        # match by profile_name as a heuristic. Retrieve-only (one profile →
+        # one scan); the list serializer omits it.
         qs = JournalEntry.objects.filter(narration__icontains=obj.profile_name) \
             .order_by('-date', '-id')[:5]
         return [{
@@ -480,6 +487,28 @@ class RecurringJournalReadSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return obj.created_by.get_full_name() or obj.created_by.username
         return None
+
+
+class RecurringJournalListSerializer(RecurringJournalReadSerializer):
+    """List rows without generated_count / generated_recent.
+
+    Both fields run a narration__icontains scan over the whole journal table
+    PER PROFILE — and generated_count matches a token that is never written,
+    so the list paid N full scans to render a column of zeros. The detail
+    (retrieve) response keeps both fields.
+    """
+    generated_count = None
+    generated_recent = None
+
+    class Meta(RecurringJournalReadSerializer.Meta):
+        fields = [
+            f for f in RecurringJournalReadSerializer.Meta.fields
+            if f not in ('generated_count', 'generated_recent')
+        ]
+        read_only_fields = [
+            f for f in RecurringJournalReadSerializer.Meta.read_only_fields
+            if f not in ('generated_count', 'generated_recent')
+        ]
 
 
 class RecurringJournalWriteSerializer(serializers.ModelSerializer):

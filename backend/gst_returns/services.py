@@ -67,7 +67,10 @@ class GSTR1Generator:
             period=period, location_id=location_id, is_active=True
         ).update(is_active=False)
 
-        entries_created = 0
+        # GSTR1Entry rows are accumulated and bulk_created in batches at the
+        # end (plain model, no custom save/signals) — a month of POS orders
+        # used to cost one INSERT round-trip per invoice.
+        new_entries = []
         # Table 12 Phase-3: HSN summary keyed by (hsn_code, rate, segment)
         # where segment is 'B2B' (registered buyer) or 'B2C'. Net of returns.
         hsn_data = {}
@@ -82,13 +85,26 @@ class GSTR1Generator:
                 }
             return hsn_data[key]
 
-        # POS Sales
-        pos_orders = POSOrderRO.objects.filter(
+        # POS Sales. lines__product: the HSN pass below reads
+        # line.product.pharma_hsn_code — without the nested prefetch that was
+        # one product query per sold line.
+        pos_orders = list(POSOrderRO.objects.filter(
             sale_date__year=year,
             sale_date__month=month,
             location_id=location_id,
             status__in=['confirmed', 'completed'],
-        ).prefetch_related('lines')
+        ).prefetch_related('lines__product'))
+
+        # One customer fetch for the whole run instead of a .get() per order.
+        from inventory_reader.models import CustomerRO
+        pos_customer_ids = {p.customer_id for p in pos_orders if p.customer_id}
+        try:
+            pos_customers = (CustomerRO.objects.in_bulk(list(pos_customer_ids))
+                             if pos_customer_ids else {})
+        except Exception:
+            # Inventory master unreachable — every order falls back to the
+            # company state code below, exactly like a failing .get() did.
+            pos_customers = {}
 
         for pos in pos_orders:
             # Resolve customer + supply_type *first* so per-line splits agree
@@ -99,8 +115,7 @@ class GSTR1Generator:
             pos_code = self._settings.state_code
             if pos.customer_id:
                 try:
-                    from inventory_reader.models import CustomerRO
-                    customer = CustomerRO.objects.get(id=pos.customer_id)
+                    customer = pos_customers[pos.customer_id]
                     customer_gstin = customer.gst_no or ''
                     customer_state_code = state_name_to_code(customer.state or '')
                     supply_type = self._get_supply_type(
@@ -159,7 +174,7 @@ class GSTR1Generator:
             else:
                 inv_type = 'B2C_SMALL'
 
-            GSTR1Entry.objects.create(
+            new_entries.append(GSTR1Entry(
                 source_type='pos',
                 source_id=pos.id,
                 period=period,
@@ -176,8 +191,7 @@ class GSTR1Generator:
                 sgst=split['sgst'],
                 igst=split['igst'],
                 rate=gst_rate,
-            )
-            entries_created += 1
+            ))
 
             # Collect HSN data from lines
             pos_segment = 'B2B' if customer_gstin else 'B2C'
@@ -204,7 +218,7 @@ class GSTR1Generator:
             location_id=location_id,
             status__in=['confirmed', 'delivered', 'invoiced'],
             source_indent_id__isnull=True,
-        ).select_related('customer').prefetch_related('lines')
+        ).select_related('customer').prefetch_related('lines__product')
 
         for order in b2b_orders:
             taxable = order.subtotal - order.discount_amount
@@ -247,7 +261,7 @@ class GSTR1Generator:
             else:
                 inv_type = 'B2C_SMALL'
 
-            GSTR1Entry.objects.create(
+            new_entries.append(GSTR1Entry(
                 source_type='b2b',
                 source_id=order.id,
                 period=period,
@@ -264,8 +278,7 @@ class GSTR1Generator:
                 sgst=sgst,
                 igst=igst,
                 rate=gst_rate,
-            )
-            entries_created += 1
+            ))
 
             b2b_segment = 'B2B' if customer_gstin else 'B2C'
             for line in order.lines.all():
@@ -288,7 +301,7 @@ class GSTR1Generator:
             status__in=['confirmed', 'completed'],
         ).select_related('customer')
 
-        for ret in returns.prefetch_related('lines'):
+        for ret in returns.prefetch_related('lines__product'):
             # Returns against internal transfer counterparties are unwinds of
             # stock relocations — never credit notes in GSTR-1.
             if ret.customer and getattr(ret.customer, 'is_internal', False):
@@ -368,7 +381,7 @@ class GSTR1Generator:
             deadline = date(fy_year + 1, 11, 30)
             is_time_barred = ret_date > deadline
 
-            GSTR1Entry.objects.create(
+            new_entries.append(GSTR1Entry(
                 source_type='return',
                 source_id=ret.id,
                 period=period,
@@ -388,8 +401,7 @@ class GSTR1Generator:
                 original_invoice_no=original_inv,
                 original_invoice_date=original_inv_date,
                 is_time_barred=is_time_barred,
-            )
-            entries_created += 1
+            ))
 
             # Table 12 is reported net of credit notes — subtract returned
             # quantities/values from the matching HSN+rate+segment bucket.
@@ -408,9 +420,11 @@ class GSTR1Generator:
                 bucket['sgst'] -= line_split['sgst']
                 bucket['igst'] -= line_split['igst']
 
+        GSTR1Entry.objects.bulk_create(new_entries, batch_size=500)
+
         # Generate HSN summary (Table 12 — separate B2B / B2C tabs, net of CN)
-        for (hsn_code, rate, segment), data in hsn_data.items():
-            GSTR1HSNSummary.objects.create(
+        GSTR1HSNSummary.objects.bulk_create([
+            GSTR1HSNSummary(
                 period=period,
                 location_id=location_id,
                 hsn_code=hsn_code,
@@ -425,17 +439,23 @@ class GSTR1Generator:
                 version=new_version,
                 is_active=True,
             )
+            for (hsn_code, rate, segment), data in hsn_data.items()
+        ], batch_size=500)
 
         entries_qs = GSTR1Entry.objects.filter(period=period, location_id=location_id, is_active=True)
+        totals = entries_qs.aggregate(
+            taxable=Sum('taxable_value'), cgst=Sum('cgst'),
+            sgst=Sum('sgst'), igst=Sum('igst'),
+        )
         return {
             'period': period,
             'location_id': location_id,
-            'entries_count': entries_created,
+            'entries_count': len(new_entries),
             'version': new_version,
-            'total_taxable': str(entries_qs.aggregate(t=Sum('taxable_value'))['t'] or Decimal('0.00')),
-            'total_cgst': str(entries_qs.aggregate(t=Sum('cgst'))['t'] or Decimal('0.00')),
-            'total_sgst': str(entries_qs.aggregate(t=Sum('sgst'))['t'] or Decimal('0.00')),
-            'total_igst': str(entries_qs.aggregate(t=Sum('igst'))['t'] or Decimal('0.00')),
+            'total_taxable': str(totals['taxable'] or Decimal('0.00')),
+            'total_cgst': str(totals['cgst'] or Decimal('0.00')),
+            'total_sgst': str(totals['sgst'] or Decimal('0.00')),
+            'total_igst': str(totals['igst'] or Decimal('0.00')),
         }
 
 
@@ -817,51 +837,46 @@ class ITCReconciliationService:
         # recon key on the same field. Taxable is summed from the goods-cost
         # debit lines (Closing Stock 1190 in perpetual mode, Purchases 5100
         # in periodic) and tax from the Input GST debit lines.
+        from django.db.models import Prefetch
         from journals.models import JournalEntryLine, JournalEntry
         from inventory_reader.models import SupplierRO
         year, month = map(int, period.split('-'))
 
+        # Prefetch lines WITH their account: the old shape ran two
+        # lines.filter() queries per JE plus one account fetch per line.
         purchase_entries = JournalEntry.objects.filter(
             is_posted=True,
             voucher_type__in=['PURCHASE', 'DEBIT_NOTE'],
             date__year=year,
             date__month=month,
+        ).prefetch_related(
+            Prefetch('lines',
+                     queryset=JournalEntryLine.objects.select_related('account')),
         )
         if location_id:
             purchase_entries = purchase_entries.filter(location_id=location_id)
-
-        supplier_ids: set[int] = set()
-        for je in purchase_entries:
-            for line in je.lines.filter(party_type='Supplier'):
-                if line.party_id:
-                    supplier_ids.add(line.party_id)
-
-        gstin_by_supplier_id = dict(
-            SupplierRO.objects.filter(id__in=supplier_ids)
-            .values_list('id', 'gst_no')
-        )
 
         TAXABLE_CODES = ('1190', '5100')          # Closing Stock OR Purchases
         TAX_CODE_MAP = {'1140': 'cgst', '1150': 'sgst', '1160': 'igst'}
         SIGN_BY_VOUCHER = {'PURCHASE': Decimal('1'), 'DEBIT_NOTE': Decimal('-1')}
 
-        supplier_books: dict[str, dict] = {}
+        # Single pass over the prefetched lines: bucket by supplier_id (the
+        # first supplier-tagged line — there's at most one supplier party per
+        # purchase JE), resolve GSTINs in one bulk query afterwards.
+        books_by_supplier_id: dict[int, dict] = {}
         for je in purchase_entries:
             sign = SIGN_BY_VOUCHER.get(je.voucher_type, Decimal('1'))
-            # Find the supplier GSTIN for this entry — there's at most one
-            # supplier party per purchase JE.
-            supplier_gstin = ''
-            for line in je.lines.filter(party_type='Supplier'):
-                if line.party_id:
-                    supplier_gstin = gstin_by_supplier_id.get(line.party_id, '') or ''
-                    break
-            if not supplier_gstin:
+            lines = list(je.lines.all())
+            supplier_id = next(
+                (l.party_id for l in lines
+                 if l.party_type == 'Supplier' and l.party_id), None)
+            if supplier_id is None:
                 continue
-            bucket = supplier_books.setdefault(supplier_gstin, {
+            bucket = books_by_supplier_id.setdefault(supplier_id, {
                 'taxable': Decimal('0.00'), 'cgst': Decimal('0.00'),
                 'sgst': Decimal('0.00'), 'igst': Decimal('0.00'),
             })
-            for line in je.lines.all():
+            for line in lines:
                 # Per-store clones carry codes like '1190-MAIN' — classify by
                 # the base code so bootstrapped stores reconcile too.
                 base = (line.account.account_code or '').split('-')[0]
@@ -870,11 +885,31 @@ class ITCReconciliationService:
                 elif base in TAX_CODE_MAP:
                     bucket[TAX_CODE_MAP[base]] += sign * (line.debit - line.credit)
 
-        results = []
+        gstin_by_supplier_id = dict(
+            SupplierRO.objects.filter(id__in=set(books_by_supplier_id))
+            .values_list('id', 'gst_no')
+        )
+
+        # Re-key the books buckets by GSTIN (merging suppliers that share
+        # one registration); entries whose supplier has no GSTIN drop out,
+        # exactly as before.
+        supplier_books: dict[str, dict] = {}
+        for supplier_id, bucket in books_by_supplier_id.items():
+            gstin = gstin_by_supplier_id.get(supplier_id, '') or ''
+            if not gstin:
+                continue
+            merged = supplier_books.setdefault(gstin, {
+                'taxable': Decimal('0.00'), 'cgst': Decimal('0.00'),
+                'sgst': Decimal('0.00'), 'igst': Decimal('0.00'),
+            })
+            for key in merged:
+                merged[key] += bucket[key]
+
         all_gstins = set(supplier_2b.keys()) | set(supplier_books.keys())
         empty = {'taxable': Decimal('0.00'), 'cgst': Decimal('0.00'),
                  'sgst': Decimal('0.00'), 'igst': Decimal('0.00')}
 
+        recon_rows = []
         for gstin in all_gstins:
             b2b = supplier_2b.get(gstin, empty)
             books = supplier_books.get(gstin, empty)
@@ -889,7 +924,7 @@ class ITCReconciliationService:
             else:
                 status = 'partial'
 
-            recon = ITCReconciliation.objects.create(
+            recon_rows.append(ITCReconciliation(
                 period=period,
                 location_id=location_id,
                 supplier_gstin=gstin,
@@ -902,11 +937,18 @@ class ITCReconciliationService:
                 gstr2b_sgst=b2b['sgst'],
                 gstr2b_igst=b2b['igst'],
                 status=status,
-            )
-            results.append(recon)
+            ))
 
+        results = ITCReconciliation.objects.bulk_create(recon_rows, batch_size=500)
+
+        # One UPDATE per status (≤3) instead of one per GSTIN.
+        gstins_by_status: dict[str, list[str]] = {}
+        for r in results:
+            gstins_by_status.setdefault(r.status, []).append(r.supplier_gstin)
+        for status, gstins in gstins_by_status.items():
             GSTR2BEntry.objects.filter(
-                period=period, location_id=location_id, supplier_gstin=gstin
+                period=period, location_id=location_id,
+                supplier_gstin__in=gstins,
             ).update(match_status=status)
 
         return {

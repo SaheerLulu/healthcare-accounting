@@ -1,73 +1,79 @@
+import { lazy } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import Layout from './components/Layout'
 import { LocationProvider } from './contexts/LocationContext'
+// Static: the two screens on the critical login path. Everything else is
+// route-lazy so the initial bundle stops shipping all ~60 pages (and big
+// page-only deps — recharts is used by DashboardPage alone). The single
+// Suspense boundary lives in Layout around the <Outlet/>.
 import LoginPage from './pages/LoginPage'
-import DashboardPage from './pages/DashboardPage'
 import GatewayPage from './pages/GatewayPage'
-import SetupChecklistPage from './pages/SetupChecklistPage'
-import CostCentresPage from './pages/CostCentresPage'
-import VoucherTypesPage from './pages/VoucherTypesPage'
-import ActivityMapPage from './pages/ActivityMapPage'
-import AccountsPage from './pages/AccountsPage'
-import JournalsPage from './pages/JournalsPage'
-import JournalEditorPage from './pages/journals/JournalEditorPage'
-import JournalDetailPage from './pages/journals/JournalDetailPage'
-import PaymentVoucherPage from './pages/vouchers/PaymentVoucherPage'
-import ReceiptVoucherPage from './pages/vouchers/ReceiptVoucherPage'
-import ContraVoucherPage from './pages/vouchers/ContraVoucherPage'
-import JournalVoucherPage from './pages/vouchers/JournalVoucherPage'
-import SalesVoucherPage from './pages/vouchers/SalesVoucherPage'
-import PurchaseVoucherPage from './pages/vouchers/PurchaseVoucherPage'
-import CreditNoteVoucherPage from './pages/vouchers/CreditNoteVoucherPage'
-import DebitNoteVoucherPage from './pages/vouchers/DebitNoteVoucherPage'
-import RecurringJournalsListPage from './pages/journals/RecurringJournalsListPage'
-import RecurringJournalEditorPage from './pages/journals/RecurringJournalEditorPage'
-import RecurringJournalDetailPage from './pages/journals/RecurringJournalDetailPage'
-import BillsListPage from './pages/bills/BillsListPage'
-import BillEditorPage from './pages/bills/BillEditorPage'
-import BillDetailPage from './pages/bills/BillDetailPage'
-import RecurringBillsListPage from './pages/bills/RecurringBillsListPage'
-import RecurringBillEditorPage from './pages/bills/RecurringBillEditorPage'
-import RecurringBillDetailPage from './pages/bills/RecurringBillDetailPage'
-import BankingPage from './pages/banking/BankingPage'
-import BankAccountPage from './pages/banking/BankAccountPage'
-import ExpensesListPage from './pages/expenses/ExpensesListPage'
-import ExpenseEditorPage from './pages/expenses/ExpenseEditorPage'
-import ExpenseDetailPage from './pages/expenses/ExpenseDetailPage'
-import ReceivablesPage from './pages/ReceivablesPage'
-import PayablesPage from './pages/PayablesPage'
-import GSTR1Page from './pages/gst/GSTR1Page'
-import GSTR2BPage from './pages/gst/GSTR2BPage'
-import GSTR3BPage from './pages/gst/GSTR3BPage'
-import GstGrandSummaryPage from './pages/gst/GstGrandSummaryPage'
-import ITCReconciliationPage from './pages/gst/ITCReconciliationPage'
-import GSTFilingHealthPage from './pages/gst/GSTFilingHealthPage'
-import TDSPage from './pages/TDSPage'
-import TrialBalancePage from './pages/reports/TrialBalancePage'
-import ProfitLossPage from './pages/reports/ProfitLossPage'
-import BalanceSheetPage from './pages/reports/BalanceSheetPage'
-import GSTComputationPage from './pages/reports/GSTComputationPage'
-import HSNSummaryPage from './pages/reports/HSNSummaryPage'
-import PartyOutstandingPage from './pages/reports/PartyOutstandingPage'
-import BankBookPage from './pages/reports/BankBookPage'
-import CashBookPage from './pages/reports/CashBookPage'
-import DaybookPage from './pages/reports/DaybookPage'
-import PayrollPage from './pages/PayrollPage'
-import StockSummaryPage from './pages/reports/StockSummaryPage'
-import LedgerPage from './pages/reports/LedgerPage'
-import SyncPage from './pages/SyncPage'
-import SettingsPage from './pages/SettingsPage'
-import AuditLogPage from './pages/AuditLogPage'
-import SuppliersListPage from './pages/parties/SuppliersListPage'
-import CustomersListPage from './pages/parties/CustomersListPage'
-import PartyDetailPage from './pages/parties/PartyDetailPage'
-import FixedAssetsPage from './pages/fixed-assets/FixedAssetsPage'
-import LoansPage from './pages/loans/LoansPage'
-import ChequesPage from './pages/banking/ChequesPage'
-import PettyCashPage from './pages/banking/PettyCashPage'
-import NotificationsPage from './pages/notifications/NotificationsPage'
-import ClosingEntriesPage from './pages/journals/ClosingEntriesPage'
+
+const DashboardPage = lazy(() => import('./pages/DashboardPage'))
+const SetupChecklistPage = lazy(() => import('./pages/SetupChecklistPage'))
+const CostCentresPage = lazy(() => import('./pages/CostCentresPage'))
+const VoucherTypesPage = lazy(() => import('./pages/VoucherTypesPage'))
+const ActivityMapPage = lazy(() => import('./pages/ActivityMapPage'))
+const AccountsPage = lazy(() => import('./pages/AccountsPage'))
+const JournalsPage = lazy(() => import('./pages/JournalsPage'))
+const JournalEditorPage = lazy(() => import('./pages/journals/JournalEditorPage'))
+const JournalDetailPage = lazy(() => import('./pages/journals/JournalDetailPage'))
+const PaymentVoucherPage = lazy(() => import('./pages/vouchers/PaymentVoucherPage'))
+const ReceiptVoucherPage = lazy(() => import('./pages/vouchers/ReceiptVoucherPage'))
+const ContraVoucherPage = lazy(() => import('./pages/vouchers/ContraVoucherPage'))
+const JournalVoucherPage = lazy(() => import('./pages/vouchers/JournalVoucherPage'))
+const SalesVoucherPage = lazy(() => import('./pages/vouchers/SalesVoucherPage'))
+const PurchaseVoucherPage = lazy(() => import('./pages/vouchers/PurchaseVoucherPage'))
+const CreditNoteVoucherPage = lazy(() => import('./pages/vouchers/CreditNoteVoucherPage'))
+const DebitNoteVoucherPage = lazy(() => import('./pages/vouchers/DebitNoteVoucherPage'))
+const RecurringJournalsListPage = lazy(() => import('./pages/journals/RecurringJournalsListPage'))
+const RecurringJournalEditorPage = lazy(() => import('./pages/journals/RecurringJournalEditorPage'))
+const RecurringJournalDetailPage = lazy(() => import('./pages/journals/RecurringJournalDetailPage'))
+const BillsListPage = lazy(() => import('./pages/bills/BillsListPage'))
+const BillEditorPage = lazy(() => import('./pages/bills/BillEditorPage'))
+const BillDetailPage = lazy(() => import('./pages/bills/BillDetailPage'))
+const RecurringBillsListPage = lazy(() => import('./pages/bills/RecurringBillsListPage'))
+const RecurringBillEditorPage = lazy(() => import('./pages/bills/RecurringBillEditorPage'))
+const RecurringBillDetailPage = lazy(() => import('./pages/bills/RecurringBillDetailPage'))
+const BankingPage = lazy(() => import('./pages/banking/BankingPage'))
+const BankAccountPage = lazy(() => import('./pages/banking/BankAccountPage'))
+const ExpensesListPage = lazy(() => import('./pages/expenses/ExpensesListPage'))
+const ExpenseEditorPage = lazy(() => import('./pages/expenses/ExpenseEditorPage'))
+const ExpenseDetailPage = lazy(() => import('./pages/expenses/ExpenseDetailPage'))
+const ReceivablesPage = lazy(() => import('./pages/ReceivablesPage'))
+const PayablesPage = lazy(() => import('./pages/PayablesPage'))
+const GSTR1Page = lazy(() => import('./pages/gst/GSTR1Page'))
+const GSTR2BPage = lazy(() => import('./pages/gst/GSTR2BPage'))
+const GSTR3BPage = lazy(() => import('./pages/gst/GSTR3BPage'))
+const GstGrandSummaryPage = lazy(() => import('./pages/gst/GstGrandSummaryPage'))
+const ITCReconciliationPage = lazy(() => import('./pages/gst/ITCReconciliationPage'))
+const GSTFilingHealthPage = lazy(() => import('./pages/gst/GSTFilingHealthPage'))
+const TDSPage = lazy(() => import('./pages/TDSPage'))
+const TrialBalancePage = lazy(() => import('./pages/reports/TrialBalancePage'))
+const ProfitLossPage = lazy(() => import('./pages/reports/ProfitLossPage'))
+const BalanceSheetPage = lazy(() => import('./pages/reports/BalanceSheetPage'))
+const GSTComputationPage = lazy(() => import('./pages/reports/GSTComputationPage'))
+const HSNSummaryPage = lazy(() => import('./pages/reports/HSNSummaryPage'))
+const PartyOutstandingPage = lazy(() => import('./pages/reports/PartyOutstandingPage'))
+const BankBookPage = lazy(() => import('./pages/reports/BankBookPage'))
+const CashBookPage = lazy(() => import('./pages/reports/CashBookPage'))
+const DaybookPage = lazy(() => import('./pages/reports/DaybookPage'))
+const PayrollPage = lazy(() => import('./pages/PayrollPage'))
+const StockSummaryPage = lazy(() => import('./pages/reports/StockSummaryPage'))
+const LedgerPage = lazy(() => import('./pages/reports/LedgerPage'))
+const SyncPage = lazy(() => import('./pages/SyncPage'))
+const SettingsPage = lazy(() => import('./pages/SettingsPage'))
+const AuditLogPage = lazy(() => import('./pages/AuditLogPage'))
+const SuppliersListPage = lazy(() => import('./pages/parties/SuppliersListPage'))
+const CustomersListPage = lazy(() => import('./pages/parties/CustomersListPage'))
+const PartyDetailPage = lazy(() => import('./pages/parties/PartyDetailPage'))
+const FixedAssetsPage = lazy(() => import('./pages/fixed-assets/FixedAssetsPage'))
+const LoansPage = lazy(() => import('./pages/loans/LoansPage'))
+const ChequesPage = lazy(() => import('./pages/banking/ChequesPage'))
+const PettyCashPage = lazy(() => import('./pages/banking/PettyCashPage'))
+const NotificationsPage = lazy(() => import('./pages/notifications/NotificationsPage'))
+const ClosingEntriesPage = lazy(() => import('./pages/journals/ClosingEntriesPage'))
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('token')
