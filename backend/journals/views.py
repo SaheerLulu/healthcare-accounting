@@ -14,6 +14,7 @@ from .serializers import (
     ReceiptVoucherSerializer,
     ContraVoucherSerializer,
     RecurringJournalReadSerializer,
+    RecurringJournalListSerializer,
     RecurringJournalWriteSerializer,
     BillReferenceSerializer,
     VoucherTypeProfileSerializer,
@@ -448,6 +449,10 @@ class RecurringJournalViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
             return RecurringJournalWriteSerializer
+        if self.action == 'list':
+            # The list view skips generated_count / generated_recent — each
+            # is a whole-journal-table icontains scan per profile.
+            return RecurringJournalListSerializer
         return RecurringJournalReadSerializer
 
     def get_queryset(self):

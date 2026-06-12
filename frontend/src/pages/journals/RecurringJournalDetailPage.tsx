@@ -156,7 +156,7 @@ export default function RecurringJournalDetailPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
           <Stat label="Frequency" value={FREQ_LABEL[rj.frequency]} />
           <Stat label="Total per cycle" value={formatCurrency(rj.total_debit)} />
-          <Stat label="Entries generated" value={String(rj.generated_count)} />
+          <Stat label="Entries generated" value={String(rj.generated_count ?? 0)} />
           <Stat label="Last run" value={rj.last_run_date ? formatDate(rj.last_run_date) : '— never —'} />
           <Stat label="Start" value={formatDate(rj.start_date)} />
           <Stat label="End" value={rj.end_date ? formatDate(rj.end_date) : 'Indefinite'} />
@@ -209,7 +209,7 @@ export default function RecurringJournalDetailPage() {
         <div className="px-5 py-3 border-b border-slate-100">
           <h2 className="text-sm font-semibold text-slate-900">Recently Generated</h2>
         </div>
-        {rj.generated_recent.length === 0 ? (
+        {(rj.generated_recent ?? []).length === 0 ? (
           <div className="text-center py-6 text-sm text-slate-400">No entries generated yet</div>
         ) : (
           <table className="w-full text-sm">
@@ -221,7 +221,7 @@ export default function RecurringJournalDetailPage() {
               </tr>
             </thead>
             <tbody>
-              {rj.generated_recent.map((e) => (
+              {(rj.generated_recent ?? []).map((e) => (
                 <tr key={e.id} className="border-b border-slate-100 last:border-0">
                   <td className="px-4 py-2.5">
                     <Link to={`/journals/${e.id}`} className="text-teal-700 hover:underline font-mono">

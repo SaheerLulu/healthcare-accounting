@@ -883,8 +883,10 @@ export interface RecurringJournal {
   total_debit: string
   total_credit: string
   is_balanced: boolean
-  generated_count: number
-  generated_recent: GeneratedJournalStub[]
+  /** Present on retrieve/detail responses only — the list endpoint omits
+   *  both (each one is a journal-table scan per profile). */
+  generated_count?: number
+  generated_recent?: GeneratedJournalStub[]
   created_at: string
   updated_at: string
   created_by: number | null

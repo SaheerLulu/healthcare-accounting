@@ -134,7 +134,6 @@ export default function RecurringJournalsListPage() {
                 <Th className="text-left">Frequency</Th>
                 <Th className="text-left">Next Run</Th>
                 <Th className="text-right px-3">Lines</Th>
-                <Th className="text-right px-3">Generated</Th>
                 <Th className="text-left">Status</Th>
               </Tr>
             </Thead>
@@ -159,7 +158,6 @@ export default function RecurringJournalsListPage() {
                       {isDue && <span className="ml-1 text-xs">(due)</span>}
                     </Td>
                     <Td className="text-right text-sm mono px-3" style={{ color: 'var(--ink-2)' }}>{p.lines.length}</Td>
-                    <Td className="text-right text-sm mono px-3" style={{ color: 'var(--ink-2)' }}>{p.generated_count}</Td>
                     <Td><Badge variant={STATUS_BADGE[p.status]}>{p.status}</Badge></Td>
                   </Tr>
                 )
