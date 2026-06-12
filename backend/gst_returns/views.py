@@ -8,6 +8,7 @@ import django_filters
 from django.http import HttpResponse
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from .models import GSTR1Entry, GSTR1HSNSummary, GSTR3BSummary, GSTR2BEntry, ITCReconciliation, RCMEntry, EWayBill
@@ -21,6 +22,10 @@ from audit.utils import log_action
 from core.mixins import (
     LocationFilterMixin, get_active_location, assert_location_access,
 )
+
+# Same cap as the bill/expense attachment uploads (MAX_ATTACHMENT_BYTES
+# there) — nginx allows 100 MB, so the view must bound reads itself.
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 class GSTR1EntryFilter(django_filters.FilterSet):
@@ -553,7 +558,7 @@ class GSTR2BEntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
         return Response(GSTR2BEntrySerializer(entry).data)
 
     @action(detail=False, methods=['post'], url_path='upload-json',
-            parser_classes=[])
+            parser_classes=[JSONParser, MultiPartParser, FormParser])
     def upload_json(self, request):
         """
         WP 651 — accept the official GSTR-2B JSON download and create
@@ -576,7 +581,23 @@ class GSTR2BEntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
         # as a multipart file upload at request.FILES['file'].
         raw = None
         if 'file' in request.FILES:
-            raw = request.FILES['file'].read().decode('utf-8', errors='replace')
+            upload = request.FILES['file']
+            # Bound the read before touching the content — uploads spill to
+            # disk with no framework limit and nginx allows 100 MB.
+            if upload.size > MAX_UPLOAD_BYTES:
+                mb = MAX_UPLOAD_BYTES // (1024 * 1024)
+                return Response({'detail': f'File too large. Max {mb} MB.'},
+                                status=400)
+            ctype = (upload.content_type or '').lower()
+            name = (upload.name or '').lower()
+            if not (name.endswith('.json')
+                    or ctype in ('application/json', 'text/json')):
+                return Response(
+                    {'detail': 'Upload the GSTR-2B JSON file downloaded from '
+                               'the portal (.json).'},
+                    status=400,
+                )
+            raw = upload.read().decode('utf-8', errors='replace')
         elif 'payload' in request.data:
             raw = request.data['payload']
         else:
