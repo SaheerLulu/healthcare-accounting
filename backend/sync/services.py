@@ -68,16 +68,24 @@ class InventorySyncService:
             error_count=max(0, errors_after - errors_before),
         )
 
-    def _synced_ids(self, reference_type: str) -> set:
-        """All inventory ids already represented by a JournalEntry for this ref type.
-        Used to make sync self-healing — any record the cursor skipped (e.g.,
-        cursor advanced past max while a lower-id record arrived later) gets
-        picked up on the next run regardless of the cursor.
+    def _synced_ids(self, reference_type: str):
+        """Subquery of inventory ids already represented by a JournalEntry for
+        this ref type. Used to make sync self-healing — any record the cursor
+        skipped (e.g., cursor advanced past max while a lower-id record arrived
+        later) gets picked up on the next run regardless of the cursor.
+
+        Returned as a values() queryset (not a materialised set): the journal
+        and inventory tables live in the same database, so each sync_X's
+        ``.exclude(id__in=...)`` becomes one DB-side anti-join instead of
+        shipping every historical reference_id into a Python set on every
+        5-minute run. reference_id and the RO pks are both integers — no cast
+        needed. The isnull filter matters: a NULL inside a SQL ``NOT IN``
+        would make the exclusion match nothing.
         """
-        return set(
+        return (
             JournalEntry.objects
-            .filter(reference_type=reference_type)
-            .values_list('reference_id', flat=True)
+            .filter(reference_type=reference_type, reference_id__isnull=False)
+            .values('reference_id')
         )
 
     def _log_error(self, sync_type, source_id, error):
@@ -537,16 +545,20 @@ class InventorySyncService:
         )
         reversed_count = 0
         for ref_type, model, state_field in specs:
-            originals = list(
+            # Only (reference_id → JE pk) pairs — never the full JE rows.
+            # With years of history this loop used to materialise every
+            # active synced entry × 9 specs; the few entries that actually
+            # need reversing are fetched individually below.
+            by_ref = dict(
                 JournalEntry.objects.filter(
                     reference_type=ref_type, is_posted=True,
                     reversal_of__isnull=True,      # not itself a reversal
                     reversal_entry__isnull=True,   # not already reversed
                 ).exclude(reference_id__isnull=True)
+                .values_list('reference_id', 'id')
             )
-            if not originals:
+            if not by_ref:
                 continue
-            by_ref = {e.reference_id: e for e in originals}
             try:
                 cancelled_ids = list(
                     model.objects.filter(
@@ -559,7 +571,7 @@ class InventorySyncService:
                 continue
             for rid in cancelled_ids:
                 try:
-                    self._reverse_entry(by_ref[rid])
+                    self._reverse_entry(JournalEntry.objects.get(pk=by_ref[rid]))
                     reversed_count += 1
                 except Exception as e:
                     self._log_error(f'{ref_type.lower()}_reversal', rid, e)
