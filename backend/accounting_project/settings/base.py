@@ -24,7 +24,14 @@ if not _SECRET_KEY_ENV:
     )
 SECRET_KEY = _SECRET_KEY_ENV or 'django-insecure--3fejku$$i93u7o15lm79*vl1tve0*tsl8em6hx1x8y4@=k4hr'
 
-ALLOWED_HOSTS = ['*']
+# Comma-separated env override; '*' stays the local-development default.
+# dev.py narrows this when DJANGO_DEBUG=False and prod.py supplies its own
+# stricter default — public deployments must never run with '*'.
+ALLOWED_HOSTS = [
+    h.strip()
+    for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
+    if h.strip()
+]
 
 # ---------------------------------------------------------------------------
 # Application definition
@@ -166,7 +173,9 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ---------------------------------------------------------------------------
-# CORS
+# CORS — allow-all is the local-development default only. dev.py disables it
+# when an explicit allowlist is supplied (or when DJANGO_DEBUG=False) and
+# prod.py always pins an allowlist.
 # ---------------------------------------------------------------------------
 CORS_ALLOW_ALL_ORIGINS = True
 
