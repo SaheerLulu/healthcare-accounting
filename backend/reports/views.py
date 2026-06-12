@@ -327,6 +327,31 @@ class LedgerPagination(PageNumberPagination):
     max_page_size = 200
 
 
+# The 9 columns the ledger/book row shape needs — fetched with .values() so
+# big accounts never materialise full JournalEntryLine + JournalEntry
+# instances. Shared by LedgerView, LedgerExportView and _build_book_response.
+_LEDGER_ROW_FIELDS = (
+    'debit', 'credit', 'narration',
+    'entry__date', 'entry__entry_no', 'entry__narration',
+    'entry__voucher_type', 'entry__reference_type', 'entry__reference_id',
+)
+
+
+def _ledger_row(line, running_balance):
+    """Map a values() row onto the (unchanged) ledger JSON field names."""
+    return {
+        'date': line['entry__date'],
+        'entry_no': line['entry__entry_no'],
+        'narration': line['entry__narration'] or line['narration'],
+        'voucher_type': line['entry__voucher_type'],
+        'reference_type': line['entry__reference_type'] or '',
+        'reference_id': line['entry__reference_id'],
+        'debit': str(line['debit']),
+        'credit': str(line['credit']),
+        'balance': str(running_balance),
+    }
+
+
 class LedgerView(APIView):
     def get(self, request):
         start_date = request.query_params.get('start_date')
@@ -341,7 +366,7 @@ class LedgerView(APIView):
         base_qs = JournalEntryLine.objects.filter(
             account=account,
             entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False
-        ).select_related('entry')
+        )
 
         if location:
             base_qs = base_qs.filter(entry__location_id=location.id)
@@ -365,34 +390,29 @@ class LedgerView(APIView):
         if end_date:
             lines_qs = lines_qs.filter(entry__date__lte=end_date)
 
+        # Only the 9 output columns — a big account no longer materialises
+        # full line+entry instances. Keys are mapped 1:1 onto the existing
+        # response field names below.
+        lines_values = lines_qs.values(*_LEDGER_ROW_FIELDS)
+
         if page:
             # Paginated response
             paginator = LedgerPagination()
-            paginated = paginator.paginate_queryset(lines_qs, request)
+            paginated = paginator.paginate_queryset(lines_values, request)
 
             running_balance = opening_balance
-            # Compute balance up to start of this page
+            # Balance up to the start of this page: one aggregate over the
+            # pre-page slice instead of iterating every earlier row.
             if paginator.page.number > 1:
                 page_size = paginator.get_page_size(request)
                 skip = (paginator.page.number - 1) * page_size
-                pre_page_lines = lines_qs[:skip]
-                for line in pre_page_lines:
-                    running_balance += line.debit - line.credit
+                pre = lines_qs[:skip].aggregate(dr=Sum('debit'), cr=Sum('credit'))
+                running_balance += (pre['dr'] or Decimal('0.00')) - (pre['cr'] or Decimal('0.00'))
 
             transactions = []
             for line in paginated:
-                running_balance += line.debit - line.credit
-                transactions.append({
-                    'date': line.entry.date,
-                    'entry_no': line.entry.entry_no,
-                    'narration': line.entry.narration or line.narration,
-                    'voucher_type': line.entry.voucher_type,
-                    'reference_type': line.entry.reference_type or '',
-                    'reference_id': line.entry.reference_id,
-                    'debit': str(line.debit),
-                    'credit': str(line.credit),
-                    'balance': str(running_balance),
-                })
+                running_balance += line['debit'] - line['credit']
+                transactions.append(_ledger_row(line, running_balance))
 
             return paginator.get_paginated_response({
                 'account': {
@@ -408,19 +428,9 @@ class LedgerView(APIView):
         # Non-paginated (default/legacy)
         running_balance = opening_balance
         transactions = []
-        for line in lines_qs:
-            running_balance += line.debit - line.credit
-            transactions.append({
-                'date': line.entry.date,
-                'entry_no': line.entry.entry_no,
-                'narration': line.entry.narration or line.narration,
-                'voucher_type': line.entry.voucher_type,
-                'reference_type': line.entry.reference_type or '',
-                'reference_id': line.entry.reference_id,
-                'debit': str(line.debit),
-                'credit': str(line.credit),
-                'balance': str(running_balance),
-            })
+        for line in lines_values.iterator():
+            running_balance += line['debit'] - line['credit']
+            transactions.append(_ledger_row(line, running_balance))
 
         return Response({
             'account': {
@@ -457,7 +467,7 @@ class LedgerExportView(APIView):
 
         base_qs = JournalEntryLine.objects.filter(
             account=account, entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
-        ).select_related('entry')
+        )
         if location:
             base_qs = base_qs.filter(entry__location_id=location.id)
 
@@ -476,19 +486,20 @@ class LedgerExportView(APIView):
 
         rows = []
         running = opening_balance
-        for line in lines_qs:
-            running += line.debit - line.credit
-            ref = line.entry.reference_type or ''
-            if ref and line.entry.reference_id:
-                ref = f'{ref}#{line.entry.reference_id}'
+        # Same .values() column set as LedgerView — no full instances.
+        for line in lines_qs.values(*_LEDGER_ROW_FIELDS).iterator():
+            running += line['debit'] - line['credit']
+            ref = line['entry__reference_type'] or ''
+            if ref and line['entry__reference_id']:
+                ref = f"{ref}#{line['entry__reference_id']}"
             rows.append({
-                'date': line.entry.date.isoformat(),
-                'entry_no': line.entry.entry_no,
-                'narration': line.entry.narration or line.narration,
-                'voucher_type': line.entry.voucher_type,
+                'date': line['entry__date'].isoformat(),
+                'entry_no': line['entry__entry_no'],
+                'narration': line['entry__narration'] or line['narration'],
+                'voucher_type': line['entry__voucher_type'],
                 'source': ref,
-                'debit': str(line.debit),
-                'credit': str(line.credit),
+                'debit': str(line['debit']),
+                'credit': str(line['credit']),
                 'balance': str(running),
             })
 
@@ -911,7 +922,7 @@ def _build_book_response(account_subtype, request):
     for account in accounts:
         base_qs = JournalEntryLine.objects.filter(
             account=account, entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False
-        ).select_related('entry')
+        )
         if location:
             base_qs = base_qs.filter(entry__location_id=location.id)
 
@@ -932,21 +943,12 @@ def _build_book_response(account_subtype, request):
 
         running_balance = opening_balance
         transactions = []
-        for line in lines_qs:
-            running_balance += line.debit - line.credit
-            transactions.append({
-                'date': line.entry.date,
-                'entry_no': line.entry.entry_no,
-                'narration': line.entry.narration or line.narration,
-                'voucher_type': line.entry.voucher_type,
-                'reference_type': line.entry.reference_type or '',
-                'reference_id': line.entry.reference_id,
-                'debit': str(line.debit),
-                'credit': str(line.credit),
-                'balance': str(running_balance),
-            })
-            grand_debit += line.debit
-            grand_credit += line.credit
+        # Same .values() column set as LedgerView — no full instances.
+        for line in lines_qs.values(*_LEDGER_ROW_FIELDS).iterator():
+            running_balance += line['debit'] - line['credit']
+            transactions.append(_ledger_row(line, running_balance))
+            grand_debit += line['debit']
+            grand_credit += line['credit']
 
         result_accounts.append({
             'account_code': account.account_code,
