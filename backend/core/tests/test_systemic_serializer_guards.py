@@ -65,6 +65,49 @@ class SerializerGuardTests(TestCase):
         self.assertTrue(ser.is_valid(), ser.errors)
 
 
+class AccountTypeChangeGuardTests(TestCase):
+    """H21 — re-typing an account with postings silently re-classes history;
+    blocked for every account, not just system-mapped ones."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        make_settings()
+        from rest_framework.test import APIClient
+        from core.tests.utils import make_admin
+        self.client = APIClient()
+        self.client.force_authenticate(make_admin())
+
+    def _patch_type(self, account, new_type):
+        return self.client.patch(
+            f'/api/accounts/chart-of-accounts/{account.id}/',
+            {'account_type': new_type}, format='json')
+
+    def test_type_change_blocked_when_account_has_postings(self):
+        from core.tests.utils import make_journal_entry
+        acct = ChartOfAccount.objects.create(
+            account_code='5999', account_name='Misc Operating Expense',
+            account_type='EXPENSE', is_leaf=True)
+        cash = ChartOfAccount.objects.get(account_code='1110')
+        make_journal_entry(lines=[
+            (acct, Decimal('100.00'), Decimal('0.00')),
+            (cash, Decimal('0.00'), Decimal('100.00')),
+        ])
+        resp = self._patch_type(acct, 'ASSET')
+        self.assertEqual(resp.status_code, 400, getattr(resp, 'data', None))
+        self.assertIn('account_type', resp.data)
+        acct.refresh_from_db()
+        self.assertEqual(acct.account_type, 'EXPENSE')
+
+    def test_type_change_allowed_without_postings(self):
+        acct = ChartOfAccount.objects.create(
+            account_code='5997', account_name='Unused Expense',
+            account_type='EXPENSE', is_leaf=True)
+        resp = self._patch_type(acct, 'ASSET')
+        self.assertEqual(resp.status_code, 200, getattr(resp, 'data', None))
+        acct.refresh_from_db()
+        self.assertEqual(acct.account_type, 'ASSET')
+
+
 class ExpenseSerializerGuardTests(TestCase):
     def setUp(self):
         self.coa = seed_chart_and_mappings()

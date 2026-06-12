@@ -298,6 +298,14 @@ class JournalEntryLine(models.Model):
                 f'Cannot post to non-leaf account {self.account.account_code} '
                 f'{self.account.account_name}. Post to a leaf account.'
             )
+        # Inactive accounts are retired from posting (deactivation is the
+        # sanctioned alternative to deleting an account with history) — new
+        # lines must not land on them. Reactivate the account to post again.
+        if self.account_id and not self.account.is_active:
+            raise ValidationError(
+                f'Cannot post to inactive account {self.account.account_code} '
+                f'{self.account.account_name}. Reactivate it first.'
+            )
         # Tag↔ledger agreement: if the account IS a per-party ledger, the line's
         # party tag MUST name the same party. Stops "pay supplier B out of
         # supplier A's ledger" (the leaf and the tag would otherwise disagree,

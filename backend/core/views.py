@@ -143,6 +143,18 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
                     raise ValidationError({
                         protected: f'Cannot change {protected} on a system-mapped account.',
                     })
+        # H21 — re-typing ANY account that already has postings silently
+        # re-classes its history (P&L rows jump to the Balance Sheet and vice
+        # versa, past reports no longer reproduce). Applies regardless of
+        # is_system.
+        new_type = new.get('account_type', old.account_type)
+        if new_type != old.account_type and old.journal_lines.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({
+                'account_type': 'Cannot change the account type of an account '
+                                'that already has journal entries. Create a '
+                                'new account and deactivate this one instead.',
+            })
         old_parent_id = serializer.instance.parent_id
         instance = serializer.save()
         new_parent_id = instance.parent_id

@@ -176,6 +176,40 @@ def record_payment(bill: Bill, *, date, amount, mode='bank',
     return payment
 
 
+def apply_voucher_allocation(bill_id, amount) -> None:
+    """Shift a bill's paid total for a voucher bill-wise allocation.
+
+    Manual payment vouchers settle bills through journals.BillReference rows
+    carrying a `bill_id`; this applies (positive `amount`) or releases
+    (negative) that settlement with the same bookkeeping record_payment does
+    for BillPayments. Unknown bill_ids are ignored — the field is also used
+    as a freeform reference. Idempotent against negative drift: amount_paid
+    never drops below zero.
+    """
+    if not bill_id or not amount:
+        return
+    with transaction.atomic():
+        bill = Bill.objects.select_for_update().filter(pk=bill_id).first()
+        if bill is None:
+            return
+        new_paid = (bill.amount_paid or Decimal('0.00')) + Decimal(str(amount))
+        bill.amount_paid = max(new_paid, Decimal('0.00'))
+        bill.status = bill.recalc_status()
+        bill.save(update_fields=['amount_paid', 'status', 'updated_at'])
+
+
+def release_voucher_allocations(refs) -> int:
+    """Roll back Bill.amount_paid for bill-linked AGAINST allocations before
+    they are deleted (JE reversal, draft-voucher delete/edit). Returns the
+    number of allocations released."""
+    released = 0
+    for ref in refs:
+        if ref.kind == 'AGAINST' and ref.bill_id:
+            apply_voucher_allocation(ref.bill_id, -ref.amount)
+            released += 1
+    return released
+
+
 # ─── Recurring bills ────────────────────────────────────────────────────────
 
 def _add_months(d: date_cls, n: int) -> date_cls:
