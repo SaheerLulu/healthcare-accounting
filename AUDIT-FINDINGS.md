@@ -1,5 +1,18 @@
 # Seefmed Accounting — Edge-Case & Integration Audit
 
+> **Status update 2026-06-12:** residual fixes applied on branch
+> `fix/security-audit-2026-06-12` — H18, H21, H32, M17, M21, M22, M6, M7,
+> L1, L5, L8, L9, L10 closed. New findings fixed on the same branch:
+> RBAC capability enforcement (AccountingRole flags now gate journal
+> post/reverse, FY close, period locks, settings and account-mapping
+> writes), dev-deploy hardening (env-driven DEBUG/ALLOWED_HOSTS/CORS for
+> the public dev stack), EMI-pay/depreciation-run cross-store location
+> checks, GSTR-2B upload size/type cap (plus a routed-parser fix for that
+> endpoint), payroll serializers moved off `fields='__all__'`, and
+> `npm audit fix` + axios >= 1.12 (only the esbuild/vite-5 dev-server
+> advisory remains; fixing it requires the breaking vite 8 upgrade).
+> Still deferred (product decisions): M3, M4, M12, M19, M20, M24, L4, L6.
+
 _Multi-agent audit: 16 domains, 96 agents, 79 raw findings, 2 refuted on adversarial verification, 77 verified. Existing 45 test files all green — these are gaps beyond current coverage._
 
 ## Executive summary
