@@ -98,3 +98,37 @@ class LoanLifecycleTests(TestCase):
             pay_emi(emi)
         self.loan.refresh_from_db()
         self.assertEqual(self.loan.status, 'closed')
+
+    def test_generate_schedule_rejects_out_of_range_emi_day(self):
+        # H18: day 29-31 (or 0) raises 'day is out of range' mid-generation
+        # for short months — guard with a clean ValidationError instead.
+        from django.core.exceptions import ValidationError
+        self.loan.emi_day = 31
+        self.loan.save(update_fields=['emi_day'])
+        with self.assertRaises(ValidationError):
+            generate_schedule(self.loan)
+
+    def test_pay_emi_requires_disbursement(self):
+        # M21: without the disbursement credit, the principal debit would
+        # push the loan liability negative.
+        from django.core.exceptions import ValidationError
+        generate_schedule(self.loan)
+        first = self.loan.emi_schedule.order_by('installment_no').first()
+        with self.assertRaises(ValidationError):
+            pay_emi(first)
+        first.refresh_from_db()
+        self.assertEqual(first.status, 'pending')
+
+    def test_pay_emi_enforces_earliest_first(self):
+        from django.core.exceptions import ValidationError
+        generate_schedule(self.loan)
+        post_disbursement(self.loan)
+        second = self.loan.emi_schedule.get(installment_no=2)
+        with self.assertRaises(ValidationError):
+            pay_emi(second)
+        # Paying in order still works.
+        first = self.loan.emi_schedule.get(installment_no=1)
+        pay_emi(first)
+        pay_emi(second)
+        second.refresh_from_db()
+        self.assertEqual(second.status, 'paid')

@@ -124,7 +124,7 @@ function NewLoanDialog({ open, onClose, onSaved }: any) {
                  onChange={(e) => setData({ ...data, interest_rate_pct: e.target.value })} />
           <Input type="number" placeholder="Tenure (months)" value={data.tenure_months}
                  onChange={(e) => setData({ ...data, tenure_months: parseInt(e.target.value || '0') })} />
-          <Input type="number" placeholder="EMI day (1-28)" value={data.emi_day}
+          <Input type="number" min={1} max={28} placeholder="EMI day (1-28)" value={data.emi_day}
                  onChange={(e) => setData({ ...data, emi_day: parseInt(e.target.value || '5') })} />
           <Input placeholder="Loan-liability GL account ID" value={data.liability_account}
                  onChange={(e) => setData({ ...data, liability_account: e.target.value })} />

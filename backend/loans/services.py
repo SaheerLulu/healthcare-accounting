@@ -45,6 +45,10 @@ def _add_one_month(d: date_cls) -> date_cls:
 def generate_schedule(loan: Loan) -> int:
     """Create the full amortization schedule. Idempotent via uniqueness on
     (loan, installment_no) — re-calling won't create duplicates."""
+    if not 1 <= loan.emi_day <= 28:
+        # Guard against rows created outside the serializer (admin, shell):
+        # day 0 / 29-31 raises 'day is out of range for month' mid-schedule.
+        raise ValidationError('EMI day must be between 1 and 28.')
     if loan.emi_schedule.exists():
         return 0
 
@@ -117,6 +121,25 @@ def pay_emi(emi: EMISchedule, *, payment_date: date_cls = None,
     """
     if emi.status == 'paid':
         raise ValidationError(f'EMI #{emi.installment_no} already paid.')
+    # The principal portion debits the loan liability — without a posted
+    # disbursement there is no credit to relieve, so the liability would go
+    # negative (AUDIT M21).
+    if emi.loan.disbursement_journal_entry_id is None:
+        raise ValidationError(
+            'Loan has not been disbursed — post the disbursement before '
+            'paying EMIs.'
+        )
+    # EMIs amortize in order; paying a later installment first would skip
+    # the earlier interest/principal split and desync the balance column.
+    earlier_unpaid = emi.loan.emi_schedule.filter(
+        status__in=['pending', 'overdue'],
+        installment_no__lt=emi.installment_no,
+    ).order_by('installment_no').first()
+    if earlier_unpaid:
+        raise ValidationError(
+            f'Pay EMIs in order: EMI #{earlier_unpaid.installment_no} '
+            f'is still unpaid.'
+        )
 
     payment_date = payment_date or date_cls.today()
     credit_acct = (AccountMapping.get_account('BANK') if mode == 'bank'

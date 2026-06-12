@@ -48,6 +48,14 @@ class LoanSerializer(serializers.ModelSerializer):
                             'disbursement_journal_entry',
                             'created_at', 'updated_at']
 
+    def validate_emi_day(self, value):
+        # date(year, month, emi_day) is built for every installment; 0 or
+        # 29-31 raises 'day is out of range for month' deep in schedule
+        # generation (HTTP 500) for short months.
+        if not 1 <= value <= 28:
+            raise serializers.ValidationError('EMI day must be between 1 and 28.')
+        return value
+
     def validate_liability_account(self, account):
         # The disbursement credits this account and every EMI's principal debits
         # it. The UI used free-text GL-ID inputs, so a transposed/wrong id booked
