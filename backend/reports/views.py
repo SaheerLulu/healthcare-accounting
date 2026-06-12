@@ -603,24 +603,30 @@ def _age_open_invoices(invoices, payments, as_of):
 
 
 def _party_tax_details(party_type, party_ids):
-    """Bulk-resolve tax-filing identifiers for a set of parties:
-    {party_id: {gstin, state, pan, msme_category, msme_udyam_no}}.
+    """Bulk-resolve display name + tax-filing identifiers for a set of parties:
+    {party_id: {name, gstin, state, pan, msme_category, msme_udyam_no}}.
 
-    GSTIN/state come from the inventory master (CustomerRO/SupplierRO); PAN and
-    MSME registration from parties.PartyMetadata. All fields default to '' so
-    report rows are safe to render/export without null checks.
+    Name/GSTIN/state come from the inventory master (CustomerRO/SupplierRO);
+    PAN and MSME registration from parties.PartyMetadata. All fields default
+    to '' so report rows are safe to render/export without null checks — and
+    so callers stop doing a per-party .get() just for the name.
     """
     from inventory_reader.models import CustomerRO, SupplierRO
     from parties.models import PartyMetadata
 
-    details = {pid: {'gstin': '', 'state': '', 'pan': '',
+    details = {pid: {'name': '', 'gstin': '', 'state': '', 'pan': '',
                      'msme_category': '', 'msme_udyam_no': ''}
                for pid in party_ids}
     if not party_ids:
         return details
 
-    model = CustomerRO if party_type == 'Customer' else SupplierRO
-    for row in model.objects.filter(id__in=list(party_ids)).values('id', 'gst_no', 'state'):
+    if party_type == 'Customer':
+        model, name_field = CustomerRO, 'customer_name'
+    else:
+        model, name_field = SupplierRO, 'company_name'
+    for row in model.objects.filter(id__in=list(party_ids)).values(
+            'id', 'gst_no', 'state', name_field):
+        details[row['id']]['name'] = row[name_field] or ''
         details[row['id']]['gstin'] = row['gst_no'] or ''
         details[row['id']]['state'] = row['state'] or ''
 
@@ -647,22 +653,22 @@ class ReceivablesAgingView(APIView):
             entry__date__lte=as_of_date,
             party_type='Customer',
             account__account_subtype='Receivable'
-        ).select_related('entry')
+        )
 
         if location:
             lines_qs = lines_qs.filter(entry__location_id=location.id)
 
-        from inventory_reader.models import CustomerRO
-
         customer_balances = defaultdict(Decimal)
         customer_dates = defaultdict(list)
 
-        for line in lines_qs:
-            net = line.debit - line.credit
+        # Only the 4 needed columns — not full line+entry instances.
+        for line in lines_qs.values('party_id', 'debit', 'credit', 'entry__date'):
+            net = line['debit'] - line['credit']
             if net != 0:
-                customer_balances[line.party_id] += net
-                if line.debit > 0:
-                    customer_dates[line.party_id].append((line.entry.date, line.debit))
+                customer_balances[line['party_id']] += net
+                if line['debit'] > 0:
+                    customer_dates[line['party_id']].append(
+                        (line['entry__date'], line['debit']))
 
         tax_details = _party_tax_details('Customer', set(customer_balances.keys()))
 
@@ -670,17 +676,13 @@ class ReceivablesAgingView(APIView):
         for customer_id, balance in customer_balances.items():
             if balance <= 0:
                 continue
-            try:
-                customer = CustomerRO.objects.get(id=customer_id)
-                name = customer.customer_name
-            except CustomerRO.DoesNotExist:
-                name = f'Customer #{customer_id}'
+            d = tax_details.get(customer_id, {})
+            name = d.get('name') or f'Customer #{customer_id}'
 
             invoices = customer_dates.get(customer_id, [])
             payments = sum((amt for _, amt in invoices), Decimal('0')) - balance
             aging = _age_open_invoices(invoices, payments, as_of)
 
-            d = tax_details.get(customer_id, {})
             rows.append({
                 'customer_id': customer_id,
                 'customer_name': name,
@@ -833,22 +835,22 @@ class PayablesAgingView(APIView):
             entry__date__lte=as_of_date,
             party_type='Supplier',
             account__account_subtype='Payable'
-        ).select_related('entry')
+        )
 
         if location:
             lines_qs = lines_qs.filter(entry__location_id=location.id)
 
-        from inventory_reader.models import SupplierRO
-
         supplier_balances = defaultdict(Decimal)
         supplier_dates = defaultdict(list)
 
-        for line in lines_qs:
-            net = line.credit - line.debit
+        # Only the 4 needed columns — not full line+entry instances.
+        for line in lines_qs.values('party_id', 'debit', 'credit', 'entry__date'):
+            net = line['credit'] - line['debit']
             if net != 0:
-                supplier_balances[line.party_id] += net
-                if line.credit > 0:
-                    supplier_dates[line.party_id].append((line.entry.date, line.credit))
+                supplier_balances[line['party_id']] += net
+                if line['credit'] > 0:
+                    supplier_dates[line['party_id']].append(
+                        (line['entry__date'], line['credit']))
 
         tax_details = _party_tax_details('Supplier', set(supplier_balances.keys()))
 
@@ -856,17 +858,13 @@ class PayablesAgingView(APIView):
         for supplier_id, balance in supplier_balances.items():
             if balance <= 0:
                 continue
-            try:
-                supplier = SupplierRO.objects.get(id=supplier_id)
-                name = supplier.company_name
-            except SupplierRO.DoesNotExist:
-                name = f'Supplier #{supplier_id}'
+            d = tax_details.get(supplier_id, {})
+            name = d.get('name') or f'Supplier #{supplier_id}'
 
             invoices = supplier_dates.get(supplier_id, [])
             payments = sum((amt for _, amt in invoices), Decimal('0')) - balance
             aging = _age_open_invoices(invoices, payments, as_of)
 
-            d = tax_details.get(supplier_id, {})
             rows.append({
                 'supplier_id': supplier_id,
                 'supplier_name': name,
@@ -1259,16 +1257,10 @@ class PartyOutstandingView(APIView):
 
         as_of = date.fromisoformat(as_of_date)
 
-        if party_type == 'Customer':
-            lines_qs = JournalEntryLine.objects.filter(
-                entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of_date,
-                party_type='Customer',
-            ).select_related('entry')
-        else:
-            lines_qs = JournalEntryLine.objects.filter(
-                entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of_date,
-                party_type='Supplier',
-            ).select_related('entry')
+        lines_qs = JournalEntryLine.objects.filter(
+            entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of_date,
+            party_type='Customer' if party_type == 'Customer' else 'Supplier',
+        )
 
         if location:
             lines_qs = lines_qs.filter(entry__location_id=location.id)
@@ -1279,31 +1271,23 @@ class PartyOutstandingView(APIView):
             'payments': Decimal('0'),
         })
 
-        for line in lines_qs:
-            pid = line.party_id
+        # Only the 4 needed columns — not full line+entry instances.
+        for line in lines_qs.values('party_id', 'debit', 'credit', 'entry__date'):
+            pid = line['party_id']
             if not pid:
                 continue
             # Customer: invoice = Dr, payment = Cr. Supplier: the reverse.
             inv_amt, pay_amt = (
-                (line.debit, line.credit) if party_type == 'Customer'
-                else (line.credit, line.debit)
+                (line['debit'], line['credit']) if party_type == 'Customer'
+                else (line['credit'], line['debit'])
             )
             if inv_amt > 0:
-                party_data[pid]['invoices'].append((line.entry.date, inv_amt))
+                party_data[pid]['invoices'].append((line['entry__date'], inv_amt))
                 party_data[pid]['invoices_total'] += inv_amt
             if pay_amt > 0:
                 party_data[pid]['payments'] += pay_amt
 
-        # Resolve party names
-        if party_type == 'Customer':
-            from inventory_reader.models import CustomerRO
-            model = CustomerRO
-            name_field = 'customer_name'
-        else:
-            from inventory_reader.models import SupplierRO
-            model = SupplierRO
-            name_field = 'company_name'
-
+        # Names arrive with the bulk tax-details query — no per-party .get().
         tax_details = _party_tax_details(party_type, set(party_data.keys()))
 
         rows = []
@@ -1311,14 +1295,10 @@ class PartyOutstandingView(APIView):
             closing = data['invoices_total'] - data['payments']
             if closing <= 0:
                 continue
-            try:
-                party = model.objects.get(id=pid)
-                name = getattr(party, name_field)
-            except model.DoesNotExist:
-                name = f'{party_type} #{pid}'
+            d = tax_details.get(pid, {})
+            name = d.get('name') or f'{party_type} #{pid}'
 
             aging = _age_open_invoices(data['invoices'], data['payments'], as_of)
-            d = tax_details.get(pid, {})
             rows.append({
                 'party_id': pid,
                 'party_name': name,
