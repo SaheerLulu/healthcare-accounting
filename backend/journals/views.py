@@ -2,6 +2,7 @@ import django_filters
 from django.utils.dateparse import parse_date
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
@@ -26,6 +27,7 @@ from core.mixins import (
     LocationFilterMixin, get_active_location, assert_location_access,
 )
 from core.middleware import _has_all_location_access
+from core.permissions import require_capability
 
 
 class JournalEntryFilter(django_filters.FilterSet):
@@ -132,10 +134,16 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
             raise ValidationError(
                 'Cannot delete a posted journal entry. Reverse it instead.'
             )
+        # Deleting a draft voucher CASCADE-drops its bill references; release
+        # any bill-linked allocations first so the bills re-open (H32).
+        from bills.services import release_voucher_allocations
+        release_voucher_allocations(BillReference.objects.filter(line__entry=instance))
         log_action('DELETE', 'JournalEntry', instance.pk, instance.entry_no, request=self.request)
         instance.delete()
 
-    @action(detail=True, methods=['post'], url_path='post')
+    @action(detail=True, methods=['post'], url_path='post',
+            permission_classes=[IsAuthenticated,
+                                require_capability('can_post_journals')])
     def post_entry(self, request, pk=None):
         """Post the journal entry after validating that it is balanced."""
         entry = self.get_object()
@@ -153,7 +161,9 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         serializer = JournalEntrySerializer(entry, context={'request': request})
         return Response(serializer.data)
 
-    @action(detail=True, methods=['post'], url_path='reverse')
+    @action(detail=True, methods=['post'], url_path='reverse',
+            permission_classes=[IsAuthenticated,
+                                require_capability('can_reverse_journals')])
     def reverse_entry(self, request, pk=None):
         """
         Create a reversal journal entry: all debits and credits are swapped.
@@ -221,8 +231,12 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         # Voiding a payment must release its bill-wise allocations so the
         # settled invoices re-open (the reversal posts a NEW entry rather than
         # deleting lines, so CASCADE never fires — do it explicitly here).
+        # Bill-linked allocations also roll their amount back off
+        # Bill.amount_paid (H32) before the rows go.
+        from bills.services import release_voucher_allocations
         from .models import BillReference
         freed = list(BillReference.objects.filter(line__entry=original))
+        release_voucher_allocations(freed)
         for ref in freed:
             log_action('DELETE', 'BillReference', ref.pk, str(ref), request=request)
         BillReference.objects.filter(line__entry=original).delete()
@@ -558,9 +572,29 @@ class BillReferenceViewSet(viewsets.ModelViewSet):
         if line is not None and line.entry_id and line.entry.location_id is not None:
             assert_location_access(self.request, line.entry.location_id)
         instance = serializer.save()
+        # H32: a bill-linked AGAINST allocation settles the bills-app Bill —
+        # book it on amount_paid like record_payment does for BillPayments.
+        if instance.kind == 'AGAINST' and instance.bill_id:
+            from bills.services import apply_voucher_allocation
+            apply_voucher_allocation(instance.bill_id, instance.amount)
         log_action('CREATE', 'BillReference', instance.pk, str(instance), request=self.request)
 
+    def perform_update(self, serializer):
+        from bills.services import apply_voucher_allocation
+        old = serializer.instance
+        old_applied = (old.bill_id, old.amount) if (
+            old.kind == 'AGAINST' and old.bill_id) else None
+        instance = serializer.save()
+        if old_applied:
+            apply_voucher_allocation(old_applied[0], -old_applied[1])
+        if instance.kind == 'AGAINST' and instance.bill_id:
+            apply_voucher_allocation(instance.bill_id, instance.amount)
+        log_action('UPDATE', 'BillReference', instance.pk, str(instance), request=self.request)
+
     def perform_destroy(self, instance):
+        # Deleting an applied allocation re-opens the bill.
+        from bills.services import release_voucher_allocations
+        release_voucher_allocations([instance])
         log_action('DELETE', 'BillReference', instance.pk, str(instance), request=self.request)
         instance.delete()
 

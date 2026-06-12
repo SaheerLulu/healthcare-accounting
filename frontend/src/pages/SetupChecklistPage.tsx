@@ -116,7 +116,11 @@ export default function SetupChecklistPage() {
         label: 'Financial year start',
         description: 'India fiscal year (default 1 April)',
         ok: !!settings.financial_year_start,
-        detail: settings.financial_year_start,
+        // financial_year_start is a month number (1-12) — show the name.
+        detail: settings.financial_year_start
+          ? new Date(2000, settings.financial_year_start - 1, 1)
+              .toLocaleString('en', { month: 'long' })
+          : undefined,
         fix: { label: 'Open Settings', to: '/settings' },
         required: true,
       },

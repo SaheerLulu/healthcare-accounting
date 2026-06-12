@@ -70,9 +70,17 @@ def variance_report(*, period: str, period_kind: str = 'monthly',
             (variance / budget.amount * 100).quantize(Decimal('0.01'))
             if budget.amount else Decimal('0')
         )
-        status = 'over' if variance > 0 and budget.account.account_type in ('EXPENSE',) else (
-                 'under' if variance < 0 and budget.account.account_type in ('EXPENSE',) else
-                 'on_track')
+        acct_type = budget.account.account_type
+        if acct_type == 'EXPENSE':
+            status = ('over' if variance > 0 else
+                      'under' if variance < 0 else 'on_track')
+        elif acct_type == 'REVENUE':
+            # A collection shortfall is the alarm case for revenue budgets;
+            # collecting more than budget is on track (M22 — these rows used
+            # to always read 'on_track').
+            status = 'under' if variance < 0 else 'on_track'
+        else:
+            status = 'on_track'
         rows.append({
             'account_code': budget.account.account_code,
             'account_name': budget.account.account_name,

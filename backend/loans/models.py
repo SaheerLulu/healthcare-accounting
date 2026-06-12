@@ -9,6 +9,7 @@ where bookkeepers treat the entire EMI as interest.
 from decimal import Decimal
 
 from django.contrib.auth.models import User
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 
@@ -41,6 +42,9 @@ class Loan(models.Model):
     start_date = models.DateField()
     end_date = models.DateField()
     emi_day = models.PositiveSmallIntegerField(default=5,
+        # 29-31 (and 0) crash date() in schedule generation for short months
+        # — see AUDIT H18. 1-28 is valid in every month.
+        validators=[MinValueValidator(1), MaxValueValidator(28)],
         help_text='Day of month EMI is auto-debited (1-28).')
     emi_amount = models.DecimalField(max_digits=15, decimal_places=2,
         help_text='Computed at create-time using PMT formula.')

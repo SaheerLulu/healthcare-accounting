@@ -8,11 +8,13 @@ from django.db.models.functions import ExtractMonth, ExtractYear
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import RetrieveUpdateAPIView
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import AccountingSettings, ChartOfAccount, AccountMapping, CostCategory, CostCentre
 from .period_lock import LockedPeriod
+from .permissions import HasAccountingCapability
 from .serializers import (
     AccountingSettingsSerializer,
     ChartOfAccountSerializer,
@@ -29,6 +31,10 @@ from inventory_reader.models import LocationRO, UserLocationAssignmentRO, UserPr
 
 class AccountingSettingsView(RetrieveUpdateAPIView):
     serializer_class = AccountingSettingsSerializer
+    # Reads stay open to any authenticated user; updates need the
+    # AccountingRole settings capability (WP 610).
+    permission_classes = [IsAuthenticated, HasAccountingCapability]
+    required_capability = 'can_manage_settings'
 
     def get_object(self):
         return AccountingSettings.get_settings()
@@ -137,6 +143,18 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
                     raise ValidationError({
                         protected: f'Cannot change {protected} on a system-mapped account.',
                     })
+        # H21 — re-typing ANY account that already has postings silently
+        # re-classes its history (P&L rows jump to the Balance Sheet and vice
+        # versa, past reports no longer reproduce). Applies regardless of
+        # is_system.
+        new_type = new.get('account_type', old.account_type)
+        if new_type != old.account_type and old.journal_lines.exists():
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({
+                'account_type': 'Cannot change the account type of an account '
+                                'that already has journal entries. Create a '
+                                'new account and deactivate this one instead.',
+            })
         old_parent_id = serializer.instance.parent_id
         instance = serializer.save()
         new_parent_id = instance.parent_id
@@ -212,6 +230,10 @@ class AccountMappingViewSet(viewsets.ModelViewSet):
     queryset = AccountMapping.objects.select_related('account').all()
     serializer_class = AccountMappingSerializer
     pagination_class = None
+    # Remapping a GL role rewires every auto-generated posting — master-data
+    # maintenance, so writes (incl. the reset action) need can_manage_masters.
+    permission_classes = [IsAuthenticated, HasAccountingCapability]
+    required_capability = 'can_manage_masters'
 
     def get_queryset(self):
         """Filter by location_id when given. `location_id=null` returns only
@@ -558,6 +580,10 @@ class LockedPeriodViewSet(viewsets.ModelViewSet):
     serializer_class = LockedPeriodSerializer
     pagination_class = None
     http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    # Locking/unlocking a period gates every JV mutation in that month —
+    # restricted to roles holding can_lock_period (reads stay open).
+    permission_classes = [IsAuthenticated, HasAccountingCapability]
+    required_capability = 'can_lock_period'
 
     def perform_create(self, serializer):
         instance = serializer.save(
@@ -575,6 +601,9 @@ class LockedPeriodViewSet(viewsets.ModelViewSet):
 
 class CloseFiscalYearView(APIView):
     """POST {fy_start_year, location_id?, generate_opening?} → close FY + post opening JV."""
+
+    permission_classes = [IsAuthenticated, HasAccountingCapability]
+    required_capability = 'can_close_fy'
 
     def post(self, request):
         from .year_end import close_fiscal_year

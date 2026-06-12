@@ -3,12 +3,15 @@ import json
 from datetime import date
 from decimal import Decimal
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
-from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework.test import APIClient, APIRequestFactory, force_authenticate
 
 from core.tests.utils import make_admin, make_settings, seed_chart_and_mappings
 from gst_returns.models import GSTR2BEntry, ITCReconciliation
-from gst_returns.views import GSTR2BEntryViewSet, ITCReconciliationViewSet
+from gst_returns.views import (
+    MAX_UPLOAD_BYTES, GSTR2BEntryViewSet, ITCReconciliationViewSet,
+)
 
 
 class GSTR2BUploadTests(TestCase):
@@ -100,6 +103,60 @@ class GSTR2BUploadTests(TestCase):
         view = GSTR2BEntryViewSet.as_view({'post': 'upload_json'})
         response = view(request)
         self.assertEqual(response.status_code, 400)
+
+
+class GSTR2BUploadFileTests(TestCase):
+    """Multipart file-upload path, routed through the real URLconf so the
+    action's parser_classes are exercised (parser_classes=[] used to 415
+    every routed call) plus the size/content-type caps."""
+
+    PORTAL_DOC = json.dumps({
+        'data': {'docdata': {'b2b': [{
+            'ctin': '27AABCS1234A1Z5', 'supname': 'Acme',
+            'inv': [{'inum': 'INV-009', 'idt': '01-04-2026',
+                     'txval': 5000, 'camt': 450, 'samt': 450, 'iamt': 0}],
+        }]}},
+    }).encode()
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        make_settings()
+        self.client = APIClient()
+        self.client.force_authenticate(make_admin())
+
+    def _upload(self, content, name='gstr2b.json', ctype='application/json'):
+        f = SimpleUploadedFile(name, content, content_type=ctype)
+        return self.client.post(
+            '/api/gst/gstr2b/upload-json/?period=2026-04&location_id=1',
+            {'file': f}, format='multipart',
+        )
+
+    def test_routed_file_upload_creates_entries(self):
+        resp = self._upload(self.PORTAL_DOC)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(GSTR2BEntry.objects.count(), 1)
+
+    def test_routed_json_payload_still_works(self):
+        resp = self.client.post(
+            '/api/gst/gstr2b/upload-json/',
+            {'period': '2026-04', 'location_id': 1,
+             'payload': self.PORTAL_DOC.decode()},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(GSTR2BEntry.objects.count(), 1)
+
+    def test_oversized_upload_rejected(self):
+        resp = self._upload(b'x' * (MAX_UPLOAD_BYTES + 1))
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('too large', resp.data['detail'])
+        self.assertEqual(GSTR2BEntry.objects.count(), 0)
+
+    def test_non_json_upload_rejected(self):
+        resp = self._upload(self.PORTAL_DOC, name='gstr2b.csv', ctype='text/csv')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('.json', resp.data['detail'])
+        self.assertEqual(GSTR2BEntry.objects.count(), 0)
 
 
 class ITCDiscrepancyExportTests(TestCase):

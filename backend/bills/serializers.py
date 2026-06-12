@@ -127,6 +127,13 @@ class BillWriteSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError('Each line amount must be greater than zero.')
         if data.get('total_amount', 0) <= 0:
             raise serializers.ValidationError('Total amount must be greater than zero.')
+        # L5 — a negative tax flips the GST input debit into a credit and
+        # understates Trade Payables when the bill posts.
+        for tax_field in ('tax_cgst', 'tax_sgst', 'tax_igst'):
+            value = data.get(tax_field)
+            if value is not None and value < 0:
+                raise serializers.ValidationError(
+                    {tax_field: 'Tax amounts cannot be negative.'})
         return data
 
     def create(self, validated_data):
@@ -245,6 +252,11 @@ class RecurringBillWriteSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError('Each line amount must be > 0.')
         if data.get('total_amount', 0) <= 0:
             raise serializers.ValidationError('Total must be > 0.')
+        for tax_field in ('tax_cgst', 'tax_sgst', 'tax_igst'):
+            value = data.get(tax_field)
+            if value is not None and value < 0:
+                raise serializers.ValidationError(
+                    {tax_field: 'Tax amounts cannot be negative.'})
         # default next_run_date = start_date if not provided
         if not data.get('next_run_date'):
             data['next_run_date'] = data['start_date']

@@ -5,9 +5,40 @@ from decimal import Decimal
 from django.test import TestCase
 
 from bills.models import Bill, BillLine, BillPayment
+from bills.serializers import BillWriteSerializer
 from bills.services import post_bill, record_payment
 from core.models import ChartOfAccount
 from core.tests.utils import make_settings, seed_chart_and_mappings
+
+
+class BillTaxValidationTests(TestCase):
+    """L5 — negative tax flips the GST input debit into a credit."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        make_settings()
+        self.rent = ChartOfAccount.objects.get(account_code='5410')
+
+    def _payload(self, **overrides):
+        data = {
+            'bill_no': 'V-NEG', 'bill_date': '2026-04-05',
+            'vendor_name': 'Landlord',
+            'subtotal': '1000.00', 'tax_cgst': '90.00', 'tax_sgst': '90.00',
+            'tax_igst': '0.00', 'total_amount': '1180.00',
+            'lines': [{'account': self.rent.id, 'amount': '1000.00'}],
+        }
+        data.update(overrides)
+        return data
+
+    def test_negative_tax_rejected(self):
+        for field in ('tax_cgst', 'tax_sgst', 'tax_igst'):
+            ser = BillWriteSerializer(data=self._payload(**{field: '-90.00'}))
+            self.assertFalse(ser.is_valid(), field)
+            self.assertIn(field, ser.errors)
+
+    def test_valid_taxes_accepted(self):
+        ser = BillWriteSerializer(data=self._payload())
+        self.assertTrue(ser.is_valid(), ser.errors)
 
 
 class BillLifecycleTests(TestCase):

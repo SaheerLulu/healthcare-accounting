@@ -51,6 +51,41 @@ class LineSignGuardTests(TestCase):
         self.assertEqual(line.debit, Decimal('100.00'))
 
 
+class InactiveAccountGuardTests(TestCase):
+    """L10 — deactivating an account must actually retire it from posting."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        make_settings()
+        self.cash = ChartOfAccount.objects.get(account_code='1110')
+        self.retired = ChartOfAccount.objects.create(
+            account_code='5998', account_name='Retired Expense',
+            account_type='EXPENSE', is_leaf=True, is_active=False,
+        )
+
+    def test_model_save_rejects_inactive_account(self):
+        entry = JournalEntry.objects.create(
+            date=date(2026, 4, 1), voucher_type='JOURNAL',
+            reference_type='Manual', location_id=1,
+        )
+        with self.assertRaisesMessage(ValidationError, 'inactive'):
+            JournalEntryLine.objects.create(
+                entry=entry, account=self.retired, debit=Decimal('100.00'))
+
+    def test_create_serializer_rejects_inactive_account_line(self):
+        from journals.serializers import JournalEntryCreateSerializer
+        ser = JournalEntryCreateSerializer(data={
+            'date': '2026-04-01', 'voucher_type': 'JOURNAL',
+            'narration': 'x', 'location_id': 1,
+            'lines': [
+                {'account': self.retired.id, 'debit': '100.00', 'credit': '0.00'},
+                {'account': self.cash.id, 'debit': '0.00', 'credit': '100.00'},
+            ],
+        })
+        self.assertFalse(ser.is_valid())
+        self.assertIn('lines', ser.errors)
+
+
 class SupplyTypeResolverTests(TestCase):
     """Company state is 27 (Maharashtra) via make_settings."""
 

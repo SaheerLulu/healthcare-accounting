@@ -25,7 +25,11 @@ services:
       - DJANGO_ENV=${DJANGO_ENV:-development}
       - DJANGO_SETTINGS_MODULE=accounting_project.settings
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key-change-me}
-      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-*}
+      # Publicly reachable behind TLS (devaccounting.seefmed.com) — run with
+      # prod-grade DEBUG/hosts/CORS even though DJANGO_ENV=development.
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-devaccounting.seefmed.com,localhost,127.0.0.1}
+      - DJANGO_CORS_ALLOWED_ORIGINS=${DJANGO_CORS_ALLOWED_ORIGINS:-https://devaccounting.seefmed.com}
       - DATABASE_URL=${DATABASE_URL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -53,7 +57,9 @@ services:
       - DJANGO_ENV=${DJANGO_ENV:-development}
       - DJANGO_SETTINGS_MODULE=accounting_project.settings
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key-change-me}
-      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-*}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-devaccounting.seefmed.com,localhost,127.0.0.1}
+      - DJANGO_CORS_ALLOWED_ORIGINS=${DJANGO_CORS_ALLOWED_ORIGINS:-https://devaccounting.seefmed.com}
       - DATABASE_URL=${DATABASE_URL:-}
       - SYNC_INTERVAL=${SYNC_INTERVAL:-300}
     extra_hosts:

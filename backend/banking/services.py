@@ -569,12 +569,18 @@ def cash_in_hand_balance(location_id) -> Decimal:
 
 
 def book_balance(account: BankAccount) -> Decimal:
-    """Net balance from posted journal entry lines on the linked GL account."""
+    """Opening balance + net posted journal entry lines on the linked GL.
+
+    Includes opening_balance so it is symmetric with statement_balance
+    (which also starts from it) — otherwise every books-vs-statement
+    difference was permanently overstated by the opening amount (M17).
+    """
     from django.db.models import Sum
     agg = JournalEntryLine.objects.filter(
         account=account.chart_account, entry__is_posted=True
     ).aggregate(dr=Sum('debit'), cr=Sum('credit'))
-    return (agg['dr'] or Decimal('0.00')) - (agg['cr'] or Decimal('0.00'))
+    return (account.opening_balance or Decimal('0.00')) \
+        + (agg['dr'] or Decimal('0.00')) - (agg['cr'] or Decimal('0.00'))
 
 
 def statement_balance(account: BankAccount) -> Decimal:

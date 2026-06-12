@@ -6,11 +6,12 @@ from decimal import Decimal
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from bills.models import Bill
 from core.models import ChartOfAccount
 from core.tests.utils import make_admin, make_settings, seed_chart_and_mappings
 from journals.models import JournalEntry, JournalEntryLine, BillReference
 from journals.serializers import BillReferenceSerializer
-from journals.views import JournalEntryViewSet
+from journals.views import BillReferenceViewSet, JournalEntryViewSet
 from reports.views import OpenSupplierInvoicesView
 
 
@@ -115,6 +116,112 @@ class OverAllocationGuardTests(TestCase):
         ser = BillReferenceSerializer(data={
             'line': p2.id, 'kind': 'AGAINST', 'ref_no': e.entry_no, 'amount': '700.00'})
         self.assertFalse(ser.is_valid())  # 700 + 700 > 1000
+
+
+class BillLinkedAllocationTests(TestCase):
+    """H32 — AGAINST allocations carrying a bills-app bill_id must be capped
+    at the bill's balance due, settle the bill on create, and roll back on
+    JE reversal / reference delete / draft-voucher delete."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        make_settings()
+        self.admin = make_admin()
+        self.factory = APIRequestFactory()
+        # An 'open' posted bill for ₹1000 (recalc_status needs a linked JE).
+        je = _purchase_invoice(20, '1000.00')
+        self.bill = Bill.objects.create(
+            bill_no='UB-100', bill_date=date(2026, 4, 1),
+            vendor_id=20, vendor_name='Utility Co',
+            subtotal=Decimal('1000.00'), total_amount=Decimal('1000.00'),
+            location_id=1, journal_entry=je, status='open',
+        )
+
+    def _post_ref(self, line, amount, bill=None):
+        req = self.factory.post('/api/journals/bill-references/', {
+            'line': line.id, 'kind': 'AGAINST',
+            'ref_no': (bill or self.bill).bill_no, 'amount': str(amount),
+            'bill_id': (bill or self.bill).id,
+        }, format='json')
+        force_authenticate(req, user=self.admin)
+        return BillReferenceViewSet.as_view({'post': 'create'})(req)
+
+    def test_over_allocation_against_bill_rejected(self):
+        _, pline = _payment(20, '1500.00')
+        resp = self._post_ref(pline, '1500.00')
+        self.assertEqual(resp.status_code, 400, getattr(resp, 'data', None))
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.amount_paid, Decimal('0.00'))
+
+    def test_allocation_applies_to_bill_and_caps_cumulative(self):
+        _, pline = _payment(20, '400.00')
+        resp = self._post_ref(pline, '400.00')
+        self.assertEqual(resp.status_code, 201, getattr(resp, 'data', None))
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.amount_paid, Decimal('400.00'))
+        self.assertEqual(self.bill.status, 'partially_paid')
+
+        # Only ₹600 left — a ₹700 second allocation must be refused.
+        _, pline2 = _payment(20, '700.00')
+        resp = self._post_ref(pline2, '700.00')
+        self.assertEqual(resp.status_code, 400)
+
+        resp = self._post_ref(pline2, '600.00')
+        self.assertEqual(resp.status_code, 201, getattr(resp, 'data', None))
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.amount_paid, Decimal('1000.00'))
+        self.assertEqual(self.bill.status, 'paid')
+
+    def test_reversal_rolls_allocation_back(self):
+        pe, pline = _payment(20, '1000.00')
+        self._post_ref(pline, '1000.00')
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.status, 'paid')
+
+        req = self.factory.post(f'/api/journals/entries/{pe.id}/reverse/',
+                                {}, format='json')
+        force_authenticate(req, user=self.admin)
+        resp = JournalEntryViewSet.as_view({'post': 'reverse_entry'})(req, pk=pe.id)
+        self.assertEqual(resp.status_code, 201, getattr(resp, 'data', None))
+
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.amount_paid, Decimal('0.00'))
+        self.assertEqual(self.bill.status, 'open')
+
+    def test_deleting_reference_rolls_allocation_back(self):
+        _, pline = _payment(20, '300.00')
+        resp = self._post_ref(pline, '300.00')
+        ref_id = resp.data['id']
+        req = self.factory.delete(f'/api/journals/bill-references/{ref_id}/')
+        force_authenticate(req, user=self.admin)
+        resp = BillReferenceViewSet.as_view({'delete': 'destroy'})(req, pk=ref_id)
+        self.assertEqual(resp.status_code, 204)
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.amount_paid, Decimal('0.00'))
+        self.assertEqual(self.bill.status, 'open')
+
+    def test_deleting_draft_voucher_rolls_allocation_back(self):
+        # Draft payment voucher (not posted) with an applied allocation.
+        payable = ChartOfAccount.objects.get(account_code='2110')
+        bank = ChartOfAccount.objects.get(account_code='1120')
+        draft = JournalEntry.objects.create(
+            date=date(2026, 4, 21), voucher_type='PAYMENT',
+            reference_type='Manual', location_id=1)
+        dline = JournalEntryLine.objects.create(
+            entry=draft, account=payable, debit=Decimal('250.00'),
+            party_type='Supplier', party_id=20)
+        JournalEntryLine.objects.create(
+            entry=draft, account=bank, credit=Decimal('250.00'))
+        self._post_ref(dline, '250.00')
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.amount_paid, Decimal('250.00'))
+
+        req = self.factory.delete(f'/api/journals/entries/{draft.id}/')
+        force_authenticate(req, user=self.admin)
+        resp = JournalEntryViewSet.as_view({'delete': 'destroy'})(req, pk=draft.id)
+        self.assertEqual(resp.status_code, 204, getattr(resp, 'data', None))
+        self.bill.refresh_from_db()
+        self.assertEqual(self.bill.amount_paid, Decimal('0.00'))
 
 
 class ReversalReleasesAllocationsTests(TestCase):

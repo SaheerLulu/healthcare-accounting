@@ -77,6 +77,12 @@ export function VoucherLineRow({
           min="0"
           value={line.amount}
           onChange={(e) => onChange({ amount: e.target.value })}
+          onBlur={() => {
+            // Quantize to 2dp — the backend stores paisa-precision Decimals
+            // and rejects >2dp; '10.005' would otherwise 400 on save.
+            const n = parseFloat(line.amount)
+            if (Number.isFinite(n)) onChange({ amount: n.toFixed(2) })
+          }}
           placeholder="0.00"
           className="text-right font-mono"
         />

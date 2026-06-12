@@ -26,6 +26,32 @@ class TDSDeductionSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at', 'updated_at']
 
+    def validate(self, data):
+        """L1 — manual deductions could carry zero/negative gross, TDS larger
+        than the payment itself, or absurd rates; all of it flowed straight
+        into challans and 26Q."""
+        def _value(field):
+            if field in data:
+                return data[field]
+            return getattr(self.instance, field, None)
+
+        gross = _value('gross_amount')
+        tds_amount = _value('tds_amount')
+        rate = _value('tds_rate')
+        if gross is not None and gross <= 0:
+            raise serializers.ValidationError(
+                {'gross_amount': 'Gross amount must be greater than zero.'})
+        if tds_amount is not None and tds_amount < 0:
+            raise serializers.ValidationError(
+                {'tds_amount': 'TDS amount cannot be negative.'})
+        if tds_amount is not None and gross is not None and tds_amount > gross:
+            raise serializers.ValidationError(
+                {'tds_amount': 'TDS amount cannot exceed the gross amount.'})
+        if rate is not None and not (Decimal('0') <= rate <= Decimal('100')):
+            raise serializers.ValidationError(
+                {'tds_rate': 'TDS rate must be between 0 and 100.'})
+        return data
+
 
 class TDSChallanSerializer(serializers.ModelSerializer):
     deductions = TDSDeductionSerializer(many=True, read_only=True)

@@ -2033,7 +2033,8 @@ export interface AccountingSettings {
   state_code: string
   pan: string
   registered_address: string
-  financial_year_start: string
+  /** Month the financial year starts, 1-12 (backend validates the range). */
+  financial_year_start: number
   is_fy_closed: boolean
   last_closed_fy: string
 }

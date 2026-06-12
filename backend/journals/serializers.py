@@ -70,7 +70,32 @@ class BillReferenceSerializer(serializers.ModelSerializer):
         line = data.get('line') or getattr(self.instance, 'line', None)
         ref_no = data.get('ref_no') or getattr(self.instance, 'ref_no', '')
         amount = data.get('amount') if 'amount' in data else getattr(self.instance, 'amount', Decimal('0'))
-        if kind != 'AGAINST' or line is None or not ref_no or not amount:
+        if kind != 'AGAINST' or line is None or not amount:
+            return data
+
+        # Allocation against a bills-app Bill (H32): cap at the bill's live
+        # outstanding balance. The viewset applies/releases the amount on
+        # Bill.amount_paid, so balance_due reflects prior allocations and
+        # BillPayments alike.
+        bill_id = data.get('bill_id') if 'bill_id' in data \
+            else getattr(self.instance, 'bill_id', None)
+        if bill_id:
+            from bills.models import Bill
+            bill = Bill.objects.filter(pk=bill_id).first()
+            if bill is not None:
+                remaining = bill.balance_due
+                if (self.instance and self.instance.kind == 'AGAINST'
+                        and self.instance.bill_id == bill_id):
+                    # Editing an applied allocation: its own amount already
+                    # sits inside amount_paid, so it is still available.
+                    remaining += self.instance.amount
+                if amount > remaining + Decimal('0.005'):
+                    raise serializers.ValidationError(
+                        f'Allocation {amount} exceeds bill '
+                        f'{bill.bill_no or bill.pk} balance due {remaining}.'
+                    )
+
+        if not ref_no:
             return data
 
         party_type = line.party_type
@@ -251,6 +276,15 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
                     f'{account.account_name} (line {idx + 1}). Post to a leaf account.'
                 )
                 continue
+            # Inactive accounts are retired from posting — surface a clean
+            # per-line 400 instead of the model-level save error.
+            if account is not None and not getattr(account, 'is_active', True):
+                line_errors[idx] = (
+                    f'Account {account.account_code} {account.account_name} '
+                    f'is inactive (line {idx + 1}). Reactivate it or pick '
+                    f'another account.'
+                )
+                continue
             # Per-party-ledger line explicitly tagged with a DIFFERENT concrete
             # party: the voucher's header party and the line's ledger disagree.
             # _route_party_line would silently overwrite the tag to the ledger's
@@ -312,6 +346,12 @@ class JournalEntryCreateSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         instance.save()
         if lines_data is not None:
+            # Replacing the lines CASCADE-drops their bill references; release
+            # bill-linked allocations first so Bill.amount_paid rolls back (the
+            # voucher editor re-attaches refs after saving, re-applying them).
+            from bills.services import release_voucher_allocations
+            release_voucher_allocations(
+                BillReference.objects.filter(line__entry=instance))
             instance.lines.all().delete()
             control_ids = _trade_control_ids()
             for line_data in lines_data:

@@ -56,3 +56,12 @@ class LoanCreateAPITests(TestCase):
         self.assertEqual(loan.emi_schedule.count(), 36)
         last = loan.emi_schedule.order_by('-installment_no').first()
         self.assertEqual(last.balance_principal, Decimal('0.00'))
+
+    def test_emi_day_out_of_range_is_clean_400(self):
+        # H18: emi_day 0 / 29-31 crashed schedule generation with
+        # 'day is out of range for month' → HTTP 500.
+        for bad_day in (0, 29, 31):
+            resp = self._create(loan_no=f'LN-API-D{bad_day}', emi_day=bad_day)
+            self.assertEqual(resp.status_code, 400, getattr(resp, 'data', None))
+            self.assertIn('emi_day', resp.data)
+        self.assertFalse(Loan.objects.filter(loan_no__startswith='LN-API-D').exists())
