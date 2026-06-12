@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate, useLocation as useRouterLocation } from 'react-router-dom'
-import { useState, useRef, useEffect, useMemo } from 'react'
+import { Suspense, useState, useRef, useEffect, useMemo } from 'react'
 import {
   LayoutDashboard,
   BookOpen,
@@ -17,6 +17,7 @@ import {
   Landmark,
   Home,
   ArrowLeftRight,
+  Loader2,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { cn } from '../lib/utils'
@@ -614,6 +615,16 @@ function GlobalNavShortcuts() {
   return null
 }
 
+function RouteLoadingFallback() {
+  // Shown while a route-lazy page chunk downloads (pages are code-split in
+  // App.tsx). Same spinner the pages themselves use while fetching data.
+  return (
+    <div className="flex items-center justify-center py-24">
+      <Loader2 size={28} className="animate-spin" style={{ color: 'var(--brand)' }} />
+    </div>
+  )
+}
+
 export default function Layout() {
   const { activeLocationId } = useAppLocation()
   return (
@@ -625,7 +636,10 @@ export default function Layout() {
           {/* Keyed by store: switching the store remounts the routed page so
               every screen refetches with the new X-Location-Id. */}
           <PageTransition key={activeLocationId ?? 'all'}>
-            <Outlet />
+            {/* The ONE Suspense boundary for all route-lazy pages. */}
+            <Suspense fallback={<RouteLoadingFallback />}>
+              <Outlet />
+            </Suspense>
           </PageTransition>
         </main>
         <HotkeyBar />
