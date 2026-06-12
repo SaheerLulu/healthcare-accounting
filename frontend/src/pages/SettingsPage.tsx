@@ -25,8 +25,15 @@ const FIELD_CONFIG: { key: keyof AccountingSettings; label: string; placeholder:
   { key: 'pan', label: 'PAN', placeholder: 'e.g. AAABC1234D' },
   { key: 'tan', label: 'TAN', placeholder: 'e.g. MUMT12345A' },
   { key: 'state_code', label: 'State Code', placeholder: 'e.g. 27' },
-  { key: 'financial_year_start', label: 'Financial Year Start', placeholder: 'MM-DD', type: 'text' },
+  // Backend stores the FY start as a month number (1-12); the old free-text
+  // 'MM-DD' field invited values the API rejects.
+  { key: 'financial_year_start', label: 'Financial Year Starts In', placeholder: '' },
   { key: 'registered_address', label: 'Registered Address', placeholder: 'Full registered address' },
+]
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
 ]
 
 function CompanyInfoTab() {
@@ -55,6 +62,7 @@ function CompanyInfoTab() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           {FIELD_CONFIG.map(({ key, label, placeholder, type }) => {
             const isAddress = key === 'registered_address'
+            const isFyStart = key === 'financial_year_start'
             return (
               <div key={key} className={isAddress ? 'sm:col-span-2' : ''}>
                 <label className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>{label}</label>
@@ -63,6 +71,15 @@ function CompanyInfoTab() {
                     className="w-full px-3 py-2 text-sm border rounded-lg outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)] resize-none"
                     style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
                   />
+                ) : isFyStart ? (
+                  <select {...register(key, { valueAsNumber: true })}
+                    className="w-full h-9 px-3 text-sm border rounded-lg outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+                    style={{ backgroundColor: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+                  >
+                    {MONTH_NAMES.map((name, i) => (
+                      <option key={name} value={i + 1}>{name}</option>
+                    ))}
+                  </select>
                 ) : (
                   <Input {...register(key)} type={type || 'text'} placeholder={placeholder} />
                 )}

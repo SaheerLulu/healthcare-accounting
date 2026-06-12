@@ -35,6 +35,24 @@ function makeLine(side: 'Dr' | 'Cr'): VoucherLine {
   return { uid: uid(), side, account: null, amount: '', narration: '' }
 }
 
+/** Flatten a DRF error payload value, recursing into nested `lines` error
+ * arrays/objects so the toast shows real messages, not [object Object]. */
+function flattenErrValue(v: unknown): string {
+  if (Array.isArray(v)) {
+    return v.map(flattenErrValue).filter(Boolean).join(', ')
+  }
+  if (v && typeof v === 'object') {
+    return Object.entries(v as Record<string, unknown>)
+      .map(([k, inner]) => {
+        const flat = flattenErrValue(inner)
+        return flat ? `${k}: ${flat}` : ''
+      })
+      .filter(Boolean)
+      .join('; ')
+  }
+  return v == null ? '' : String(v)
+}
+
 interface VoucherEditorProps {
   voucherType: VoucherType
 }
@@ -158,7 +176,10 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
     return { dr, cr, diff: dr - cr }
   }, [lines])
 
-  const isBalanced = Math.abs(totals.diff) < 0.005 && totals.dr > 0
+  // Compare on 2dp-rounded paisa — the backend posts 2dp Decimals, so a
+  // float drift below half a paisa must not block (or fake) balance.
+  const isBalanced =
+    Math.round(totals.dr * 100) === Math.round(totals.cr * 100) && totals.dr > 0
 
   // ─── Line manipulation ─────────────────────────────────────────────────────
   function patchLine(uid: string, patch: Partial<VoucherLine>) {
@@ -303,7 +324,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
       const data = e.response?.data
       const msg = data
         ? Object.entries(data).map(([k, v]) =>
-            `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`).join(' • ')
+            `${k}: ${flattenErrValue(v)}`).join(' • ')
         : 'Failed to save'
       toast.error(msg)
     } finally {
