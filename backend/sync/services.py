@@ -155,6 +155,16 @@ class InventorySyncService:
             status__in=['confirmed', 'completed'],
         ).exclude(id__in=already_synced).order_by('id')
 
+        # One bulk customer fetch for the whole batch — generate_pos_sale
+        # otherwise resolves the customer (for supply-type detection) with a
+        # .get() per order.
+        try:
+            self.journal_service.warm_pos_customers(
+                orders.values_list('customer_id', flat=True))
+        except Exception:
+            logger.warning('POS customer warm-up failed; falling back to '
+                           'per-order lookups', exc_info=True)
+
         count = 0
         last_id = since_id
         for pos in orders:
@@ -594,7 +604,13 @@ class InventorySyncService:
                     'reversed_cancelled': 0,
                     'total': 0,
                 }
-            return self._sync_all_locked()
+            # Snapshot the period-lock state once for the whole run:
+            # JournalEntry.save() checks it on every create AND post, so a
+            # run posting N entries saves ~4N settings/lock queries. Locks
+            # cannot change mid-run (this process holds the sync lock).
+            from core.period_lock import period_lock_snapshot
+            with period_lock_snapshot():
+                return self._sync_all_locked()
 
     def _sync_all_locked(self) -> dict:
         # Auto-provision a ledger for every supplier and every non-retail (B2B /

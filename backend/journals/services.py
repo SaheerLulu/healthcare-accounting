@@ -48,9 +48,57 @@ class JournalAutoGenerationService:
         # collapses the 2 aggregate queries per sale line to 2 per distinct
         # product. See _product_avg_cost.
         self._avg_cost_cache = {}
+        # (party_type, party_id, location_id, fallback_account_id) →
+        # ChartOfAccount, memoizing resolve_party_account for the run. The
+        # fallback id is part of the key so a fallback result cached for one
+        # control account (e.g. walk-in → TRADE_RECEIVABLES) can never be
+        # served to a call site passing a different control.
+        self._party_acct_cache = {}
+        # customer_id → CustomerRO | None (None = known-missing). Warmed in
+        # bulk by sync_pos; cold ids fall back to a single .get().
+        self._customer_cache = {}
         # Legacy: callers that haven't been threaded through with location
         # still hit this dict (NULL-location defaults only).
         self._accounts = AccountMapping.get_all_mappings()
+
+    def _party_account(self, party_type, party_id, fallback, location_id=None):
+        """resolve_party_account with a per-run memo. Sync posts hundreds of
+        documents against a handful of parties; each resolution costs at
+        least a ledger lookup (or a get-or-create). The underlying ledger for
+        a (party, location) cannot change mid-run."""
+        key = (party_type, party_id, location_id,
+               fallback.pk if fallback is not None else None)
+        cached = self._party_acct_cache.get(key)
+        if cached is None:
+            cached = resolve_party_account(
+                party_type, party_id, fallback, location_id=location_id)
+            self._party_acct_cache[key] = cached
+        return cached
+
+    def warm_pos_customers(self, customer_ids):
+        """Bulk-load CustomerRO rows into the per-run cache (one query per
+        sync batch instead of a .get() per POS order). Missing ids are cached
+        as None so they aren't re-queried per order. Best-effort: on failure
+        the per-order fallback in _pos_customer still works."""
+        from inventory_reader.models import CustomerRO
+        ids = {cid for cid in customer_ids if cid} - set(self._customer_cache)
+        if not ids:
+            return
+        found = CustomerRO.objects.in_bulk(list(ids))
+        for cid in ids:
+            self._customer_cache[cid] = found.get(cid)
+
+    def _pos_customer(self, customer_id):
+        """Per-run cached CustomerRO lookup; returns None when the customer
+        doesn't exist in the inventory master."""
+        from inventory_reader.models import CustomerRO
+        if customer_id not in self._customer_cache:
+            try:
+                self._customer_cache[customer_id] = CustomerRO.objects.get(
+                    id=customer_id)
+            except CustomerRO.DoesNotExist:
+                self._customer_cache[customer_id] = None
+        return self._customer_cache[customer_id]
 
     def _acct(self, key, location_id=None):
         """Get the ChartOfAccount mapped to `key`, preferring the row scoped
@@ -90,7 +138,7 @@ class JournalAutoGenerationService:
         (a tag on a settled line would inflate AR aging)."""
         pt = (payment_type or '').strip().lower()
         if payment_type == 'Credit':
-            account = resolve_party_account(
+            account = self._party_account(
                 'Customer', customer_id, self._acct('TRADE_RECEIVABLES', loc), location_id=loc)
             tag = dict(party_type='Customer', party_id=customer_id) if customer_id else {}
         elif pt in self.BANK_SETTLEMENT_MODES:
@@ -449,7 +497,7 @@ class JournalAutoGenerationService:
         if total_payable > 0:
             JournalEntryLine.objects.create(
                 entry=entry,
-                account=resolve_party_account(
+                account=self._party_account(
                     'Supplier', po.supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc),
                 credit=total_payable,
                 party_type='Supplier',
@@ -493,13 +541,15 @@ class JournalAutoGenerationService:
         # Resolve supply type from the customer's GSTIN, falling back to their
         # state — so an inter-state walk-in with no GSTIN still posts IGST and
         # the GL agrees with GSTR-1. No customer at all → intra (true OTC).
+        # Customer rows come from the per-run cache (bulk-warmed by sync_pos);
+        # missing/unreadable masters keep the intra default, as before.
         supply_type = 'intra_state'
         if pos.customer_id:
             try:
-                from inventory_reader.models import CustomerRO
-                customer = CustomerRO.objects.get(id=pos.customer_id)
-                supply_type = self._get_supply_type(
-                    customer.gst_no, self._counterparty_state_code(customer))
+                customer = self._pos_customer(pos.customer_id)
+                if customer is not None:
+                    supply_type = self._get_supply_type(
+                        customer.gst_no, self._counterparty_state_code(customer))
             except Exception:
                 pass
 
@@ -820,7 +870,7 @@ class JournalAutoGenerationService:
             if total > 0:
                 JournalEntryLine.objects.create(
                     entry=entry,
-                    account=resolve_party_account(
+                    account=self._party_account(
                         'Customer', ret.customer_id,
                         self._acct('TRADE_RECEIVABLES', loc), location_id=loc),
                     credit=total,
@@ -934,7 +984,7 @@ class JournalAutoGenerationService:
         if total_return > 0:
             JournalEntryLine.objects.create(
                 entry=entry,
-                account=resolve_party_account(
+                account=self._party_account(
                     'Supplier', ret.supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc),
                 debit=total_return,
                 party_type='Supplier',
@@ -1018,7 +1068,7 @@ class JournalAutoGenerationService:
         supplier_id = data.get('party_id')
         JournalEntryLine.objects.create(
             entry=entry,
-            account=resolve_party_account(
+            account=self._party_account(
                 'Supplier', supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc),
             debit=amount,
             party_type='Supplier',
@@ -1094,7 +1144,7 @@ class JournalAutoGenerationService:
         # Credit: Trade Receivables (the customer's own ledger when linked)
         JournalEntryLine.objects.create(
             entry=entry,
-            account=resolve_party_account(
+            account=self._party_account(
                 'Customer', party_id, self._acct('TRADE_RECEIVABLES', loc), location_id=loc),
             credit=amount,
             party_type='Customer',

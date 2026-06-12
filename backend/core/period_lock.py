@@ -13,7 +13,13 @@ Two layers:
 
 The `assert_unlocked(d)` helper raises `PeriodLockedError` (a `ValidationError`
 subclass) so DRF surfaces a clean 400.
+
+For bulk posting runs (sync), wrap the run in `period_lock_snapshot()` — it
+caches the settings row and the locked-period set for the duration of the
+block so the per-entry checks stop costing two queries each.
 """
+import threading
+from contextlib import contextmanager
 from datetime import date
 
 from django.core.exceptions import ValidationError
@@ -70,6 +76,44 @@ def _date_in_fy(d: date, fy_label: str, fy_start_month: int) -> bool:
     return fy_start <= d <= fy_end
 
 
+# Run-scoped cache for assert_unlocked. JournalEntry.save() runs the check on
+# EVERY save — a sync run posting N entries pays it at least 2N times (create
+# + post), at two queries per call. The lock set cannot change mid-run, so a
+# snapshot taken at run start is both correct and ~4N queries cheaper.
+#
+# Deliberately a context-managed thread-local, NOT a module-global cache with
+# save/delete invalidation: TestCase rollbacks (and any out-of-band writer,
+# e.g. a second app process locking a period) never fire model save/delete
+# hooks, so a process-global cache could serve stale locks indefinitely. The
+# snapshot dies with the `with` block — nothing can outlive its run.
+_snapshot = threading.local()
+
+
+@contextmanager
+def period_lock_snapshot():
+    """Cache AccountingSettings + the locked-period set for a bulk run.
+
+    Nested use keeps the outermost snapshot (re-entering is a no-op), so a
+    caller can wrap a whole pipeline without caring whether a callee already
+    did. Locks created INSIDE the block are intentionally not seen until the
+    block exits — a run validates against the lock state it started with.
+    """
+    if getattr(_snapshot, 'active', False):
+        yield
+        return
+    from .models import AccountingSettings
+    _snapshot.settings = AccountingSettings.get_settings()
+    _snapshot.periods = frozenset(
+        LockedPeriod.objects.values_list('period', flat=True))
+    _snapshot.active = True
+    try:
+        yield
+    finally:
+        _snapshot.active = False
+        _snapshot.settings = None
+        _snapshot.periods = None
+
+
 def assert_unlocked(d):
     """Raise PeriodLockedError if `d` is in a closed FY or locked month."""
     if d is None:
@@ -83,7 +127,9 @@ def assert_unlocked(d):
     # Lazy imports — this module is loaded by app startup paths.
     from .models import AccountingSettings
 
-    settings = AccountingSettings.get_settings()
+    snapshot_active = getattr(_snapshot, 'active', False)
+    settings = _snapshot.settings if snapshot_active \
+        else AccountingSettings.get_settings()
 
     # FY-level lock
     if settings.is_fy_closed and settings.last_closed_fy:
@@ -97,7 +143,9 @@ def assert_unlocked(d):
 
     # Month-level lock
     period_str = d.strftime('%Y-%m')
-    if LockedPeriod.objects.filter(period=period_str).exists():
+    locked = (period_str in _snapshot.periods) if snapshot_active \
+        else LockedPeriod.objects.filter(period=period_str).exists()
+    if locked:
         raise PeriodLockedError(
             f'Period {period_str} is locked; '
             f'no entries allowed on {d.isoformat()}.',
