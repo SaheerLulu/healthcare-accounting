@@ -3,10 +3,14 @@ from decimal import Decimal
 
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
 from audit.utils import log_action
-from core.mixins import LocationFilterMixin
+from core.middleware import _has_all_location_access
+from core.mixins import (
+    LocationFilterMixin, assert_location_access, get_active_location,
+)
 
 from .models import AssetClass, DepreciationEntry, FixedAsset
 from .serializers import (
@@ -98,8 +102,18 @@ class DepreciationRunView(viewsets.ViewSet):
         if not period:
             return Response({'detail': 'period (YYYY-MM) is required'},
                             status=status.HTTP_400_BAD_REQUEST)
+        # Cross-store guard (mirrors journals/tds/payroll): explicit body
+        # location wins, else the active store from X-Location-Id; the caller
+        # must be allowed to act on it, and only all-stores users may run an
+        # unscoped (every-store) depreciation.
+        location_id = request.data.get('location_id')
+        if location_id is None:
+            active = get_active_location(request)
+            location_id = active.id if active else None
+        assert_location_access(request, location_id)
+        if location_id is None and not _has_all_location_access(request.user):
+            raise PermissionDenied('A valid X-Location-Id header is required.')
         try:
-            location_id = request.data.get('location_id')
             if location_id is not None:
                 location_id = int(location_id)
             result = post_monthly_depreciation(

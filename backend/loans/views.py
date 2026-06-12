@@ -6,7 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from audit.utils import log_action
-from core.mixins import LocationFilterMixin
+from core.mixins import LocationFilterMixin, assert_location_access
 
 from .models import EMISchedule, Loan
 from .serializers import EMIScheduleSerializer, LoanSerializer
@@ -90,6 +90,9 @@ class EMIPayView(viewsets.ViewSet):
         if not emi_id:
             return Response({'detail': 'emi_id is required'}, status=400)
         emi = get_object_or_404(EMISchedule, pk=emi_id)
+        # Cross-store guard: paying an EMI posts a JE into the loan's store —
+        # the caller must be allowed to act on that location.
+        assert_location_access(request, emi.loan.location_id)
         try:
             payment_date = (date_cls.fromisoformat(request.data['payment_date'])
                             if request.data.get('payment_date') else None)
