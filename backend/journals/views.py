@@ -82,7 +82,12 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     reverse_entry: POST /{id}/reverse/ — creates a reversal entry with debits and credits swapped.
     """
 
-    queryset = JournalEntry.objects.prefetch_related('lines__account').select_related('created_by')
+    # lines__bill_references matters: the line serializer embeds bill
+    # references, so without the prefetch the list page ran one query per
+    # journal LINE on top of the page query.
+    queryset = JournalEntry.objects.prefetch_related(
+        'lines__account', 'lines__bill_references',
+    ).select_related('created_by')
     filterset_class = JournalEntryFilter
     filter_backends = [django_filters.rest_framework.DjangoFilterBackend, filters.OrderingFilter]
     ordering_fields = ['date', 'created_at', 'entry_no']
@@ -95,10 +100,18 @@ class JournalEntryViewSet(LocationFilterMixin, viewsets.ModelViewSet):
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
-        qs = self.filter_queryset(self.get_queryset())
         if hasattr(response, 'data') and isinstance(response.data, dict):
-            response.data['posted_count'] = qs.filter(is_posted=True).count()
-            response.data['draft_count'] = qs.filter(is_posted=False).count()
+            # One conditional aggregate instead of two full COUNT queries.
+            # distinct=True keeps the numbers stable when a filter joins the
+            # lines table (account/party filters apply .distinct()).
+            from django.db.models import Count, Q
+            qs = self.filter_queryset(self.get_queryset())
+            counts = qs.aggregate(
+                posted=Count('id', filter=Q(is_posted=True), distinct=True),
+                draft=Count('id', filter=Q(is_posted=False), distinct=True),
+            )
+            response.data['posted_count'] = counts['posted']
+            response.data['draft_count'] = counts['draft']
         return response
 
     def perform_create(self, serializer):
