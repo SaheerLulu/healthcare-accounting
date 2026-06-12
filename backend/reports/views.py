@@ -1961,7 +1961,7 @@ class DepartmentalPLView(APIView):
                  .filter(entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
                          entry__date__gte=start, entry__date__lte=end,
                          account__account_type__in=('REVENUE', 'EXPENSE'))
-                 .select_related('entry', 'account'))
+                 )
         if location:
             lines = lines.filter(entry__location_id=location.id)
 
@@ -1969,16 +1969,24 @@ class DepartmentalPLView(APIView):
         cost_centers = set()
         meta = {}
 
-        for line in lines:
-            cc = line.entry.cost_center or 'UNASSIGNED'
+        # Grouped (account × cost-centre) sums instead of one Python pass
+        # over every line instance in the period.
+        grouped = lines.values(
+            'entry__cost_center', 'account__account_code',
+            'account__account_name', 'account__account_type',
+        ).annotate(dr=Sum('debit'), cr=Sum('credit'))
+        for g in grouped:
+            cc = g['entry__cost_center'] or 'UNASSIGNED'
             cost_centers.add(cc)
-            net = (line.credit - line.debit
-                   if line.account.account_type == 'REVENUE'
-                   else line.debit - line.credit)
-            rows_by_acct[line.account.account_code][cc] += net
-            meta[line.account.account_code] = {
-                'name': line.account.account_name,
-                'type': line.account.account_type,
+            dr = g['dr'] or Decimal('0')
+            cr = g['cr'] or Decimal('0')
+            net = (cr - dr
+                   if g['account__account_type'] == 'REVENUE'
+                   else dr - cr)
+            rows_by_acct[g['account__account_code']][cc] += net
+            meta[g['account__account_code']] = {
+                'name': g['account__account_name'],
+                'type': g['account__account_type'],
             }
 
         cc_sorted = sorted(cost_centers)
@@ -2036,17 +2044,33 @@ class CashFlowStatementView(APIView):
 
         all_lines = JournalEntryLine.objects.filter(
             entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__gte=start, entry__date__lte=end,
-        ).select_related('entry', 'account')
+        )
         if location:
             all_lines = all_lines.filter(entry__location_id=location.id)
 
+        # ONE grouped query replaces five full-instance passes over every
+        # line in the period: every bucket below keys purely on the account's
+        # type / subtype / name, so the small (type, subtype, name) → (Σdr,
+        # Σcr) result carries everything the heuristics need.
+        grouped = list(
+            all_lines.values(
+                'account__account_type', 'account__account_subtype',
+                'account__account_name',
+            ).annotate(dr=Sum('debit'), cr=Sum('credit'))
+        )
+        for g in grouped:
+            g['dr'] = g['dr'] or Decimal('0')
+            g['cr'] = g['cr'] or Decimal('0')
+
         # 1. Net profit for the period
         revenue = sum(
-            (l.credit - l.debit for l in all_lines if l.account.account_type == 'REVENUE'),
+            (g['cr'] - g['dr'] for g in grouped
+             if g['account__account_type'] == 'REVENUE'),
             Decimal('0'),
         )
         expenses = sum(
-            (l.debit - l.credit for l in all_lines if l.account.account_type == 'EXPENSE'),
+            (g['dr'] - g['cr'] for g in grouped
+             if g['account__account_type'] == 'EXPENSE'),
             Decimal('0'),
         )
         net_profit = revenue - expenses
@@ -2054,17 +2078,18 @@ class CashFlowStatementView(APIView):
         # 2. Non-cash addbacks: depreciation expense (subtype 'Other_Expense'
         # carrying name 'Depreciation' — heuristic) + bad debts + other non-cash
         non_cash = Decimal('0')
-        for l in all_lines:
-            name = (l.account.account_name or '').lower()
+        for g in grouped:
+            name = (g['account__account_name'] or '').lower()
             if any(k in name for k in ('depreciation', 'amortization', 'bad debt')):
-                non_cash += (l.debit - l.credit)
+                non_cash += (g['dr'] - g['cr'])
 
         # 3. Working capital changes — increase in asset uses cash; increase in liability provides cash
         wc_change = Decimal('0')
         wc_breakdown = {}
         for sub in self.OPERATING_WC_SUBTYPES:
             net = sum(
-                (l.debit - l.credit for l in all_lines if l.account.account_subtype == sub),
+                (g['dr'] - g['cr'] for g in grouped
+                 if g['account__account_subtype'] == sub),
                 Decimal('0'),
             )
             wc_breakdown[sub] = str(net)
@@ -2078,19 +2103,19 @@ class CashFlowStatementView(APIView):
 
         # 4. Investing — fixed asset purchases (cash out) and disposals (cash in)
         investing_cf = Decimal('0')
-        for l in all_lines:
-            name = (l.account.account_name or '').lower()
+        for g in grouped:
+            name = (g['account__account_name'] or '').lower()
             if any(k in name for k in self.INVESTING_KEYWORDS):
                 # Asset bought (Dr) = outflow, sold (Cr) = inflow
-                investing_cf -= (l.debit - l.credit)
+                investing_cf -= (g['dr'] - g['cr'])
 
         # 5. Financing — loans + capital
         financing_cf = Decimal('0')
-        for l in all_lines:
-            name = (l.account.account_name or '').lower()
+        for g in grouped:
+            name = (g['account__account_name'] or '').lower()
             if any(k in name for k in self.FINANCING_KEYWORDS):
                 # Liability/equity increase (Cr) = inflow
-                financing_cf += (l.credit - l.debit)
+                financing_cf += (g['cr'] - g['dr'])
 
         # 6. Net change in cash
         cash_subtypes = ('Cash', 'Bank')
@@ -2102,13 +2127,11 @@ class CashFlowStatementView(APIView):
             # Same store scope as the period transactions, else opening cash
             # would fold in every other store's historical balance.
             opening_cash_qs = opening_cash_qs.filter(entry__location_id=location.id)
-        opening_cash = sum(
-            (Decimal(str((line.debit - line.credit))) for line in opening_cash_qs),
-            Decimal('0'),
-        )
+        opening_agg = opening_cash_qs.aggregate(dr=Sum('debit'), cr=Sum('credit'))
+        opening_cash = (opening_agg['dr'] or Decimal('0')) - (opening_agg['cr'] or Decimal('0'))
         closing_cash = opening_cash + sum(
-            (Decimal(str((l.debit - l.credit))) for l in all_lines
-             if l.account.account_subtype in cash_subtypes),
+            (g['dr'] - g['cr'] for g in grouped
+             if g['account__account_subtype'] in cash_subtypes),
             Decimal('0'),
         )
 
