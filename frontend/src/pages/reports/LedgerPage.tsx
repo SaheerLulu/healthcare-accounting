@@ -2,18 +2,26 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Loader2, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
-import { getLedger, type LedgerReport } from '../../lib/api'
+import { getLedgerPage, type LedgerReport } from '../../lib/api'
 import { formatCurrency, formatDate, getCurrentFY } from '../../lib/utils'
 import { Card } from '../../components/ui/card'
 import { Input } from '../../components/ui/input'
 import { Button } from '../../components/ui/button'
+import { Pagination } from '../../components/ui/Pagination'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
+
+const DEFAULT_PAGE_SIZE = 200 // backend LedgerPagination.max_page_size
 
 /**
  * Ledger drill-down for a single Chart-of-Accounts row. Opens at
- * /reports/ledger/:code and lists every posted JV line that touched
- * the account, with running balance and links back to the source
- * journal entry.
+ * /reports/ledger/:code and lists the posted JV lines that touched the
+ * account, with running balance and links back to the source journal entry.
+ *
+ * Always requests a page (page_size <= 200): the unpaginated endpoint
+ * materialises the WHOLE ledger — multi-MB responses on busy accounts.
+ * The backend returns the period opening balance on every page and running
+ * balances seeded from the rows before the page, so pages stitch together
+ * exactly like the old full response.
  */
 export default function LedgerPage() {
   const { code } = useParams<{ code: string }>()
@@ -26,32 +34,41 @@ export default function LedgerPage() {
   const [dateFrom, setDateFrom] = useState(initialFrom)
   const [dateTo, setDateTo] = useState(initialTo)
   const [report, setReport] = useState<LedgerReport | null>(null)
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [loading, setLoading] = useState(true)
 
-  async function load() {
+  async function load(targetPage = page, size = pageSize) {
     if (!code) return
     setLoading(true)
     try {
-      const res = await getLedger({
+      const res = await getLedgerPage({
         account_code: code,
         start_date: dateFrom,
         end_date: dateTo,
+        page: String(targetPage),
+        page_size: String(size),
       })
-      setReport(res)
+      setReport(res.results)
+      setTotal(res.count)
+      setPage(targetPage)
+      setPageSize(size)
     } catch (err) {
       const e = err as { response?: { data?: { error?: string } } }
       toast.error(e.response?.data?.error || 'Failed to load ledger')
       setReport(null)
+      setTotal(0)
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { load() /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [code])
+  useEffect(() => { load(1) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [code])
 
   function applyDates() {
     setSearchParams({ from: dateFrom, to: dateTo })
-    load()
+    load(1)
   }
 
   if (!code) {
@@ -61,6 +78,18 @@ export default function LedgerPage() {
       </div>
     )
   }
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const isLastPage = page >= totalPages
+  const txns = report?.transactions ?? []
+  // On pages after the first, the period opening row is replaced by the
+  // balance brought forward into this page (first row balance net of its
+  // own movement).
+  const broughtForward = txns.length > 0
+    ? parseFloat(String(txns[0].balance)) -
+      (parseFloat(String(txns[0].debit)) || 0) +
+      (parseFloat(String(txns[0].credit)) || 0)
+    : null
 
   return (
     <div className="max-w-6xl mx-auto space-y-4">
@@ -109,11 +138,11 @@ export default function LedgerPage() {
         <>
           <div className="grid grid-cols-3 gap-3">
             <Stat label="Opening" value={formatCurrency(report.opening_balance)} />
-            <Stat label="Transactions" value={String(report.transactions.length)} mono />
+            <Stat label="Transactions" value={total.toLocaleString()} mono />
             <Stat
-              label="Closing"
+              label={isLastPage ? 'Closing' : `Balance · pg ${page}/${totalPages}`}
               value={formatCurrency(report.closing_balance)}
-              tone={parseFloat(String(report.closing_balance)) === 0 ? 'muted' : 'default'}
+              tone={isLastPage && parseFloat(String(report.closing_balance)) === 0 ? 'muted' : 'default'}
             />
           </div>
 
@@ -134,13 +163,15 @@ export default function LedgerPage() {
               <Tbody>
                 <Tr>
                   <Td colSpan={7} className="text-sm" style={{ color: 'var(--ink-3)' }}>
-                    Opening balance
+                    {page === 1 ? 'Opening balance' : 'Balance brought forward'}
                   </Td>
                   <Td className="text-right mono px-3" style={{ color: 'var(--ink-2)' }}>
-                    {formatCurrency(report.opening_balance)}
+                    {page === 1
+                      ? formatCurrency(report.opening_balance)
+                      : broughtForward !== null ? formatCurrency(broughtForward) : '—'}
                   </Td>
                 </Tr>
-                {report.transactions.map((t, i) => {
+                {txns.map((t, i) => {
                   const dr = parseFloat(String(t.debit)) || 0
                   const cr = parseFloat(String(t.credit)) || 0
                   return (
@@ -174,7 +205,7 @@ export default function LedgerPage() {
                     </Tr>
                   )
                 })}
-                {report.transactions.length === 0 && (
+                {txns.length === 0 && (
                   <Tr>
                     <Td colSpan={8} className="py-8 text-center text-sm" style={{ color: 'var(--ink-3)' }}>
                       No transactions in this period.
@@ -184,6 +215,17 @@ export default function LedgerPage() {
               </Tbody>
             </Table>
           </Card>
+
+          {total > 0 && (
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              onPageChange={(p) => load(p)}
+              onPageSizeChange={(s) => load(1, s)}
+              pageSizeOptions={[50, 100, 200]}
+            />
+          )}
         </>
       )}
     </div>

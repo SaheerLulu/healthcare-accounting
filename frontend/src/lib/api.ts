@@ -1741,6 +1741,22 @@ export async function getLedger(params?: Record<string, string>) {
   return res.data as LedgerReport
 }
 
+/** DRF envelope returned by /reports/ledger/ when a `page` param is sent.
+ *  `results` carries the period opening balance and the page's rows with
+ *  running balances; `results.closing_balance` is the balance through the
+ *  END OF THE PAGE (== the true closing only on the last page). */
+export interface PaginatedLedgerReport {
+  count: number
+  next: string | null
+  previous: string | null
+  results: LedgerReport
+}
+
+export async function getLedgerPage(params?: Record<string, string>) {
+  const res = await api.get('/reports/ledger/', { params })
+  return res.data as PaginatedLedgerReport
+}
+
 export async function getReceivablesAging(params?: Record<string, string>) {
   const res = await api.get('/reports/receivables-aging/', { params })
   return res.data as { rows: ReceivablesAgingRow[]; total_outstanding: string }
