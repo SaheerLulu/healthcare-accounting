@@ -57,11 +57,12 @@ export function AccountPicker({
     [accounts, value]
   )
 
-  // Eligible = active leaves only.
+  // Eligible = active leaves only. Group/parent accounts (is_leaf === false)
+  // can never be posted to, so the engine rejects them — keep them out of the
+  // picker. The list endpoint doesn't populate `children`, so leaf-ness must be
+  // judged from is_leaf alone, not from a children array.
   const eligible = useMemo(
-    () => accounts.filter((a) =>
-      a.is_active !== false && (a.children == null || a.children.length === 0 || a.is_leaf)
-    ),
+    () => accounts.filter((a) => a.is_active !== false && a.is_leaf !== false),
     [accounts]
   )
 

@@ -113,7 +113,9 @@ function partyOfAccount(accounts: Account[], accountId: number | null): {
 
 function isPostable(a: Account): boolean {
   if (a.is_active === false) return false
-  if (a.children && a.children.length > 0 && !a.is_leaf) return false
+  // Group/parent accounts can't be posted to. The list endpoint doesn't return
+  // a `children` array, so leaf-ness must come from is_leaf, not children.
+  if (a.is_leaf === false) return false
   return true
 }
 
