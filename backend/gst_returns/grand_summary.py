@@ -18,7 +18,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.models import AccountingSettings
+from core.models import LocationTaxProfile
 from core.mixins import get_active_location
 from core.gst_utils import back_calculate_taxable
 from inventory_reader.models import (
@@ -52,7 +52,9 @@ def _blank_slab():
 
 def compute_grand_summary(period: str, location_id):
     start, end = _period_range(period)
-    settings = AccountingSettings.get_settings()
+    # Filer identity for this store (own GSTIN); company-wide fallback when no
+    # store is selected (consolidated view) or the store has no profile.
+    biz = LocationTaxProfile.resolve(location_id)
 
     output = defaultdict(_blank_slab)   # rate(Decimal) -> slab
     inp = defaultdict(_blank_slab)
@@ -148,8 +150,8 @@ def compute_grand_summary(period: str, location_id):
     return {
         'period': period,
         'return_type': 'GSTR-3B',
-        'business_name': settings.company_name,
-        'gstin': settings.gstin or '',
+        'business_name': biz.legal_name,
+        'gstin': biz.gstin or '',
         'location_id': location_id,
         'slabs': slabs,
         'output_totals': serialise(out_tot),

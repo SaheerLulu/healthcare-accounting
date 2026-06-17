@@ -1,5 +1,11 @@
+from collections import namedtuple
+
 from django.db import models
 from django.db.models import Sum
+
+
+# Resolved filer identity used by GST returns / e-invoice / grand summary.
+TaxIdentity = namedtuple('TaxIdentity', ['gstin', 'state_code', 'legal_name'])
 
 
 class AccountingSettings(models.Model):
@@ -38,6 +44,66 @@ class AccountingSettings(models.Model):
             defaults={'company_name': 'My Company'},
         )
         return obj
+
+
+class LocationTaxProfile(models.Model):
+    """Per-store GST registration identity.
+
+    Each store can be its own GST registration (own GSTIN/state) when branches
+    span different states or legal entities — in India a GSTIN is per-state, so
+    no two stores share one. GST returns, e-invoice IRNs and the grand summary
+    read the *filer* identity from here, scoped to the store's ``location_id``,
+    and fall back to the company-wide :class:`AccountingSettings` for any field
+    a store hasn't set yet. There is no FK to a location table — ``location_id``
+    mirrors the unmanaged inventory ``LocationRO`` ids used everywhere else.
+    """
+    location_id = models.PositiveIntegerField(unique=True, db_index=True)
+    gstin = models.CharField(max_length=15, blank=True)
+    # In India the first two digits of a GSTIN *are* the state code; the column
+    # is explicit so a store can set a state before it has a GSTIN, and is
+    # auto-derived from the GSTIN otherwise (see save()).
+    state_code = models.CharField(max_length=2, blank=True)
+    # Optional legal/trade name for the return header; falls back to the
+    # company name when blank.
+    legal_name = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Location Tax Profile'
+        verbose_name_plural = 'Location Tax Profiles'
+        ordering = ['location_id']
+
+    def __str__(self):
+        return f'loc{self.location_id}: {self.gstin or "(no GSTIN)"}'
+
+    def save(self, *args, **kwargs):
+        # GSTIN[:2] is the state code — keep them consistent without making the
+        # user type the state separately.
+        if self.gstin and not self.state_code:
+            self.state_code = self.gstin[:2]
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def resolve(cls, location_id):
+        """Return the filer :class:`TaxIdentity` for a store, falling back to
+        the company-wide AccountingSettings for any field the store leaves blank
+        (including when no profile row exists, e.g. an unconfigured store)."""
+        settings = AccountingSettings.get_settings()
+        gstin = settings.gstin or ''
+        state_code = settings.state_code or ''
+        legal_name = settings.company_name or ''
+        if location_id:
+            prof = cls.objects.filter(location_id=location_id).first()
+            if prof:
+                if prof.gstin:
+                    gstin = prof.gstin
+                    state_code = prof.state_code or prof.gstin[:2]
+                elif prof.state_code:
+                    state_code = prof.state_code
+                if prof.legal_name:
+                    legal_name = prof.legal_name
+        return TaxIdentity(gstin=gstin, state_code=state_code, legal_name=legal_name)
 
 
 class ChartOfAccount(models.Model):

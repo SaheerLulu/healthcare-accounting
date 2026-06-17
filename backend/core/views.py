@@ -12,7 +12,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import AccountingSettings, ChartOfAccount, AccountMapping, CostCategory, CostCentre
+from .models import (
+    AccountingSettings, ChartOfAccount, AccountMapping, CostCategory,
+    CostCentre, LocationTaxProfile,
+)
 from .period_lock import LockedPeriod
 from .permissions import HasAccountingCapability
 from .serializers import (
@@ -23,8 +26,9 @@ from .serializers import (
     LockedPeriodSerializer,
     CostCategorySerializer,
     CostCentreSerializer,
+    LocationTaxProfileSerializer,
 )
-from .mixins import get_active_location
+from .mixins import get_active_location, assert_location_access
 from audit.utils import log_action
 from inventory_reader.models import LocationRO, UserLocationAssignmentRO, UserProfileRO, SupplierRO, CustomerRO
 
@@ -395,6 +399,83 @@ class UserLocationsView(APIView):
             ]
 
         return Response({'locations': result, 'can_see_all': can_see_all})
+
+
+class LocationTaxProfilesView(APIView):
+    """Per-store GST registration (own GSTIN/state/legal name).
+
+    GET → every location the caller can see, each merged with its tax profile
+    (blank when unset) plus the *effective* values after company-wide fallback.
+    PUT {location_id, gstin, state_code?, legal_name?} → upsert one store's
+    profile. Reads are open (SAFE_METHODS); writes need can_manage_settings AND
+    access to that location.
+    """
+    permission_classes = [IsAuthenticated, HasAccountingCapability]
+    required_capability = 'can_manage_settings'
+
+    def _accessible_locations(self, request):
+        from .middleware import _has_all_location_access
+        user = request.user
+        if _has_all_location_access(user):
+            return list(
+                LocationRO.objects.filter(usage='internal')
+                .order_by('name').values('id', 'name', 'complete_name')
+            )
+        assignments = (
+            UserLocationAssignmentRO.objects
+            .filter(user_profile__user=user)
+            .select_related('location').order_by('location__name')
+        )
+        return [
+            {'id': a.location.id, 'name': a.location.name,
+             'complete_name': a.location.complete_name}
+            for a in assignments
+        ]
+
+    def get(self, request):
+        locs = self._accessible_locations(request)
+        profiles = {p.location_id: p for p in LocationTaxProfile.objects.all()}
+        company = AccountingSettings.get_settings()
+        rows = []
+        for loc in locs:
+            prof = profiles.get(loc['id'])
+            effective = LocationTaxProfile.resolve(loc['id'])
+            rows.append({
+                'location_id': loc['id'],
+                'location_name': loc['name'],
+                'gstin': prof.gstin if prof else '',
+                'state_code': prof.state_code if prof else '',
+                'legal_name': prof.legal_name if prof else '',
+                'has_profile': prof is not None,
+                # What returns/e-invoices will actually use (after fallback).
+                'effective_gstin': effective.gstin,
+                'effective_state_code': effective.state_code,
+            })
+        return Response({
+            'company_gstin': company.gstin,
+            'company_state_code': company.state_code,
+            'company_name': company.company_name,
+            'profiles': rows,
+        })
+
+    def put(self, request):
+        location_id = request.data.get('location_id')
+        if location_id in (None, ''):
+            return Response({'detail': 'location_id is required.'}, status=400)
+        # Refuse a location the caller isn't assigned to (admins pass).
+        assert_location_access(request, location_id)
+        try:
+            location_id = int(location_id)
+        except (TypeError, ValueError):
+            return Response({'detail': 'Invalid location_id.'}, status=400)
+        instance = LocationTaxProfile.objects.filter(location_id=location_id).first()
+        serializer = LocationTaxProfileSerializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        obj = serializer.save(location_id=location_id)
+        log_action('UPDATE' if instance else 'CREATE', 'LocationTaxProfile',
+                   obj.pk, f'loc{location_id} {obj.gstin or "(no GSTIN)"}',
+                   request=request)
+        return Response(LocationTaxProfileSerializer(obj).data)
 
 
 def _scope_party_qs(request, qs):

@@ -1,6 +1,9 @@
 from django.db.models import Count
 from rest_framework import serializers
-from .models import AccountingSettings, ChartOfAccount, AccountMapping, CostCategory, CostCentre
+from .models import (
+    AccountingSettings, ChartOfAccount, AccountMapping, CostCategory,
+    CostCentre, LocationTaxProfile,
+)
 from .period_lock import LockedPeriod
 
 
@@ -31,6 +34,27 @@ class CostCentreSerializer(serializers.ModelSerializer):
             'parent', 'parent_name',
             'location_id', 'is_active', 'description',
         ]
+
+
+class LocationTaxProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LocationTaxProfile
+        fields = [
+            'id', 'location_id', 'gstin', 'state_code', 'legal_name',
+            'created_at', 'updated_at',
+        ]
+        # location_id is set by the view from the validated/access-checked path,
+        # never trusted from the request body.
+        read_only_fields = ['id', 'location_id', 'created_at', 'updated_at']
+
+    def validate_gstin(self, value):
+        value = (value or '').strip().upper()
+        if value and len(value) != 15:
+            raise serializers.ValidationError('GSTIN must be exactly 15 characters.')
+        return value
+
+    def validate_state_code(self, value):
+        return (value or '').strip()
 
 
 class AccountingSettingsSerializer(serializers.ModelSerializer):

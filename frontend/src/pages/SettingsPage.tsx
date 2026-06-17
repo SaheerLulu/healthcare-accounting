@@ -9,6 +9,8 @@ import {
   resetAccountMappings, type AccountMappingKeyRow,
   getChartOfAccounts, type Account,
   getTDSRateConfigs, updateTDSRateConfig, type TDSRateConfig,
+  getLocationTaxProfiles, saveLocationTaxProfile,
+  type LocationTaxProfile, type LocationTaxProfilesResponse,
 } from '../lib/api'
 import { useLocation } from '../contexts/LocationContext'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
@@ -134,7 +136,7 @@ const KEY_GROUPS: { title: string; description: string; keys: string[] }[] = [
   },
   {
     title: 'GST',
-    description: 'Output/Input GST and RCM — stay shared across stores (single GSTIN).',
+    description: 'Output/Input GST and RCM — per store (each store files under its own GSTIN; see the GST Registrations tab).',
     keys: ['OUTPUT_CGST', 'OUTPUT_SGST', 'OUTPUT_IGST',
       'INPUT_CGST', 'INPUT_SGST', 'INPUT_IGST',
       'RCM_LIABILITY', 'GST_LATE_FEE'],
@@ -607,6 +609,166 @@ function TDSRatesTab() {
   )
 }
 
+type ProfileDraft = { gstin: string; state_code: string; legal_name: string }
+
+function GstRegistrationsTab() {
+  const [data, setData] = useState<LocationTaxProfilesResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [drafts, setDrafts] = useState<Record<number, ProfileDraft>>({})
+  const [savingId, setSavingId] = useState<number | null>(null)
+
+  async function load() {
+    setLoading(true)
+    try {
+      const res = await getLocationTaxProfiles()
+      setData(res)
+      const d: Record<number, ProfileDraft> = {}
+      for (const p of res.profiles) {
+        d[p.location_id] = { gstin: p.gstin, state_code: p.state_code, legal_name: p.legal_name }
+      }
+      setDrafts(d)
+    } catch {
+      toast.error('Failed to load GST registrations')
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { load() }, [])
+
+  function setField(locId: number, field: keyof ProfileDraft, value: string) {
+    setDrafts((prev) => ({ ...prev, [locId]: { ...prev[locId], [field]: value } }))
+  }
+
+  function isDirty(p: LocationTaxProfile) {
+    const d = drafts[p.location_id]
+    return !!d && (d.gstin !== p.gstin || d.state_code !== p.state_code || d.legal_name !== p.legal_name)
+  }
+
+  async function save(p: LocationTaxProfile) {
+    const d = drafts[p.location_id]
+    if (!d) return
+    if (d.gstin && d.gstin.trim().length !== 15) {
+      toast.error('GSTIN must be exactly 15 characters')
+      return
+    }
+    setSavingId(p.location_id)
+    try {
+      await saveLocationTaxProfile({
+        location_id: p.location_id,
+        gstin: d.gstin.trim(),
+        state_code: d.state_code.trim(),
+        legal_name: d.legal_name.trim(),
+      })
+      toast.success(`Saved GST registration for ${p.location_name}`)
+      await load()
+    } catch {
+      toast.error('Failed to save GST registration')
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  if (loading) return (
+    <div className="flex items-center justify-center h-40">
+      <Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} />
+    </div>
+  )
+
+  const company = data
+  const profiles = data?.profiles ?? []
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4">
+        <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
+          Each store is its own GST registration. Set the store's GSTIN here — GST
+          returns (GSTR-1/3B), e-invoice IRNs and the grand summary use the
+          store's own GSTIN. The state code is derived from the GSTIN's first two
+          digits; override it only if needed.
+        </p>
+        <p className="text-xs mt-1.5" style={{ color: 'var(--ink-3)' }}>
+          Stores left blank fall back to the company GSTIN
+          {' '}
+          <span className="font-mono" style={{ color: 'var(--ink-2)' }}>
+            {company?.company_gstin || '(not set)'}
+          </span>
+          {' '}(edit that under Company Info).
+        </p>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <Table>
+          <Thead>
+            <Tr style={{ background: 'var(--surface-1)' }}>
+              <Th>Store</Th>
+              <Th className="w-[220px]">GSTIN</Th>
+              <Th className="w-[90px]">State</Th>
+              <Th className="w-[240px]">Legal / trade name (optional)</Th>
+              <Th className="w-[120px]" />
+            </Tr>
+          </Thead>
+          <Tbody>
+            {profiles.length === 0 ? (
+              <Tr><Td colSpan={5} className="text-center py-12 text-sm" style={{ color: 'var(--ink-3)' }}>No locations available.</Td></Tr>
+            ) : profiles.map((p) => {
+              const d = drafts[p.location_id] ?? { gstin: '', state_code: '', legal_name: '' }
+              const usingFallback = !p.gstin
+              return (
+                <Tr key={p.location_id}>
+                  <Td className="align-top pt-3">
+                    <div className="text-sm" style={{ color: 'var(--ink)' }}>{p.location_name}</div>
+                    {usingFallback && (
+                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--ink-3)' }}>
+                        using company GSTIN: <span className="font-mono">{p.effective_gstin || '(none)'}</span>
+                      </div>
+                    )}
+                  </Td>
+                  <Td className="align-top">
+                    <Input
+                      value={d.gstin}
+                      onChange={(e) => setField(p.location_id, 'gstin', e.target.value.toUpperCase())}
+                      placeholder="15-char GSTIN"
+                      maxLength={15}
+                      className="font-mono"
+                    />
+                  </Td>
+                  <Td className="align-top">
+                    <Input
+                      value={d.state_code}
+                      onChange={(e) => setField(p.location_id, 'state_code', e.target.value)}
+                      placeholder={d.gstin ? d.gstin.slice(0, 2) : '—'}
+                      maxLength={2}
+                      className="font-mono"
+                    />
+                  </Td>
+                  <Td className="align-top">
+                    <Input
+                      value={d.legal_name}
+                      onChange={(e) => setField(p.location_id, 'legal_name', e.target.value)}
+                      placeholder="defaults to company name"
+                    />
+                  </Td>
+                  <Td className="align-top pt-2">
+                    <Button
+                      onClick={() => save(p)}
+                      disabled={savingId === p.location_id || !isDirty(p)}
+                      variant="primary"
+                      size="sm"
+                    >
+                      {savingId === p.location_id ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                      Save
+                    </Button>
+                  </Td>
+                </Tr>
+              )
+            })}
+          </Tbody>
+        </Table>
+      </Card>
+    </div>
+  )
+}
+
 export default function SettingsPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
@@ -619,6 +781,7 @@ export default function SettingsPage() {
         <TabsList>
           {[
             { value: 'company', label: 'Company Info' },
+            { value: 'gst-registrations', label: 'GST Registrations' },
             { value: 'mappings', label: 'Account Mappings' },
             { value: 'tds-rates', label: 'TDS Rates' },
           ].map((tab) => (
@@ -628,6 +791,7 @@ export default function SettingsPage() {
           ))}
         </TabsList>
         <TabsContent value="company"><CompanyInfoTab /></TabsContent>
+        <TabsContent value="gst-registrations"><GstRegistrationsTab /></TabsContent>
         <TabsContent value="mappings"><AccountMappingsTab /></TabsContent>
         <TabsContent value="tds-rates"><TDSRatesTab /></TabsContent>
       </Tabs>

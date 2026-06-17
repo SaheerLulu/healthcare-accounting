@@ -7,7 +7,7 @@ from django.db.models import Sum, F
 from inventory_reader.models import (
     POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseOrderRO
 )
-from core.models import AccountingSettings
+from core.models import LocationTaxProfile
 from core.gst_utils import (
     compute_tax_split, detect_supply_type, back_calculate_taxable,
     state_name_to_code,
@@ -34,13 +34,15 @@ def b2cl_threshold(invoice_date):
 class GSTR1Generator:
 
     def __init__(self):
-        self._settings = AccountingSettings.get_settings()
+        # Filer identity; defaults to the company-wide registration and is
+        # re-resolved per store at the top of generate().
+        self._biz = LocationTaxProfile.resolve(None)
 
     def _get_supply_type(self, counterparty_gstin, counterparty_state_code=''):
         return detect_supply_type(
-            self._settings.gstin,
+            self._biz.gstin,
             counterparty_gstin,
-            self._settings.state_code,
+            self._biz.state_code,
             counterparty_state_code,
         )
 
@@ -49,6 +51,9 @@ class GSTR1Generator:
         Generate GSTR-1 entries non-destructively (Phase 2A).
         Old entries are marked is_active=False, new ones created with incremented version.
         """
+        # Filer GSTIN/state for THIS store (own registration; falls back to the
+        # company default when the store has no profile yet).
+        self._biz = LocationTaxProfile.resolve(location_id)
         year, month = map(int, period.split('-'))
 
         # Determine next version
@@ -112,7 +117,7 @@ class GSTR1Generator:
             supply_type = 'intra_state'
             customer_gstin = ''
             customer_state_code = ''
-            pos_code = self._settings.state_code
+            pos_code = self._biz.state_code
             if pos.customer_id:
                 try:
                     customer = pos_customers[pos.customer_id]
@@ -123,10 +128,10 @@ class GSTR1Generator:
                     )
                     pos_code = (
                         customer_gstin[:2] if customer_gstin else
-                        customer_state_code or self._settings.state_code
+                        customer_state_code or self._biz.state_code
                     )
                 except Exception:
-                    pos_code = self._settings.state_code
+                    pos_code = self._biz.state_code
 
             # Aggregate per line using the SAME split arithmetic as the JE
             # (`JournalAutoGenerationService.generate_pos_sale`): per-line
@@ -250,7 +255,7 @@ class GSTR1Generator:
 
             pos_code = (
                 customer_gstin[:2] if customer_gstin else
-                customer_state_code or self._settings.state_code
+                customer_state_code or self._biz.state_code
             )
             # B2C-Large only applies to inter-state above the date-aware threshold.
             b2b_inv_date = order.sale_date or (order.created_at.date() if order.created_at else None)
@@ -392,7 +397,7 @@ class GSTR1Generator:
                 invoice_date=ret_date,
                 customer_gstin=customer_gstin,
                 invoice_type=inv_type,
-                place_of_supply=customer_gstin[:2] if customer_gstin else self._settings.state_code,
+                place_of_supply=customer_gstin[:2] if customer_gstin else self._biz.state_code,
                 taxable_value=-taxable_base,
                 cgst=-split['cgst'],
                 sgst=-split['sgst'],
@@ -558,9 +563,14 @@ class GSTR2BGenerator:
     """Generate GSTR-2B (purchase register) from confirmed purchases (Phase 2C)."""
 
     def __init__(self):
-        self._settings = AccountingSettings.get_settings()
+        # Filer identity; defaults to the company-wide registration and is
+        # re-resolved per store at the top of generate().
+        self._biz = LocationTaxProfile.resolve(None)
 
     def generate(self, period: str, location_id: int):
+        # Filer GSTIN/state for THIS store (own registration; falls back to the
+        # company default when the store has no profile yet).
+        self._biz = LocationTaxProfile.resolve(location_id)
         year, month = map(int, period.split('-'))
 
         # Clear ONLY the auto-derived (PO-sourced) rows for re-generation.
@@ -601,7 +611,7 @@ class GSTR2BGenerator:
             # on the inventory side have been observed wrong (intra when supplier state
             # differs from company state).
             supply_type = detect_supply_type(
-                self._settings.gstin, supplier_gstin, self._settings.state_code,
+                self._biz.gstin, supplier_gstin, self._biz.state_code,
             )
 
             taxable_amount = Decimal('0.00')
@@ -621,7 +631,7 @@ class GSTR2BGenerator:
                 sgst_amount += split['sgst']
                 igst_amount += split['igst']
 
-            pos_code = supplier_gstin[:2] if supplier_gstin else self._settings.state_code
+            pos_code = supplier_gstin[:2] if supplier_gstin else self._biz.state_code
 
             GSTR2BEntry.objects.create(
                 period=period,

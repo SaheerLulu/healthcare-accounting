@@ -81,7 +81,7 @@ def build_qr_payload(*, irn: str, supplier_gstin: str, recipient_gstin: str,
 def generate_irn_for_entry(entry):
     """Compute + persist IRN/QR/ack on a GSTR1Entry. Idempotent: if IRN already
     populated, returns the existing record unchanged."""
-    from core.models import AccountingSettings
+    from core.models import LocationTaxProfile
 
     if entry.irn:
         return entry
@@ -90,10 +90,14 @@ def generate_irn_for_entry(entry):
         # NIL/exempt entries don't need IRN
         return entry
 
-    settings = AccountingSettings.get_settings()
-    supplier_gstin = settings.gstin
+    # The IRN hash embeds the supplier GSTIN, so it must be THIS store's own
+    # registration, not a single company-wide one.
+    supplier_gstin = LocationTaxProfile.resolve(entry.location_id).gstin
     if not supplier_gstin:
-        raise ValueError('Cannot generate IRN: AccountingSettings.gstin is empty.')
+        raise ValueError(
+            'Cannot generate IRN: no GSTIN configured for this store. '
+            'Set it in Settings → Locations (or the company GSTIN as a fallback).'
+        )
 
     doc_type = DOC_TYPE_MAP[entry.invoice_type]
     irn = compute_irn(

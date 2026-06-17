@@ -137,11 +137,10 @@ class GSTR1EntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
             generate_irn_for_entry(entry)
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=400)
-        from core.models import AccountingSettings
-        settings = AccountingSettings.get_settings()
+        from core.models import LocationTaxProfile
         qr = build_qr_payload(
             irn=entry.irn,
-            supplier_gstin=settings.gstin,
+            supplier_gstin=LocationTaxProfile.resolve(entry.location_id).gstin,
             recipient_gstin=entry.customer_gstin or '',
             doc_no=entry.invoice_no,
             doc_date=entry.invoice_date,
@@ -296,8 +295,10 @@ class GSTR1EntryViewSet(LocationFilterMixin, viewsets.ReadOnlyModelViewSet):
             })
 
         # Convert dict groupings to portal-style list shape
+        from core.models import LocationTaxProfile
         payload = {
-            'gstin': '',  # filled by caller from settings if desired
+            # Filer GSTIN of the store this export is scoped to.
+            'gstin': LocationTaxProfile.resolve(location.id if location else None).gstin,
             'fp': period.replace('-', ''),
             'gt': 0,
             'cur_gt': 0,

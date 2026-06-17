@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import AccountingSettings, ChartOfAccount
+from .models import AccountingSettings, ChartOfAccount, LocationTaxProfile
 
 
 @admin.register(AccountingSettings)
@@ -14,6 +14,14 @@ class AccountingSettingsAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(LocationTaxProfile)
+class LocationTaxProfileAdmin(admin.ModelAdmin):
+    list_display = ['location_id', 'gstin', 'state_code', 'legal_name', 'updated_at']
+    search_fields = ['location_id', 'gstin', 'legal_name']
+    readonly_fields = ['created_at', 'updated_at']
+    ordering = ['location_id']
 
 
 @admin.register(ChartOfAccount)

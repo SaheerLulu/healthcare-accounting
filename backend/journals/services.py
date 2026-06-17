@@ -21,7 +21,7 @@ def _dec(obj, name, default='0'):
     """Decimal-coerce an optional attribute (tolerates RO rows and test mocks
     that predate newly-added fields)."""
     return Decimal(str(getattr(obj, name, None) or default))
-from core.models import AccountMapping, AccountingSettings
+from core.models import AccountMapping, LocationTaxProfile
 from core.party_ledgers import resolve_party_account
 from decimal import ROUND_HALF_UP
 from core.gst_utils import (
@@ -39,9 +39,12 @@ class JournalAutoGenerationService:
         """Initialise per-instance caches; mappings are resolved lazily per
         (key, location_id) so per-store overrides take effect without a
         service restart. See [[per-location-coa]]."""
-        self._settings = AccountingSettings.get_settings()
         # (key, location_id_or_None) → ChartOfAccount
         self._acct_cache = {}
+        # location_id_or_None → filer TaxIdentity. A sync run posts across many
+        # stores, each with its OWN GSTIN/state, so the supply-type anchor is
+        # resolved + cached per location, not once for the company.
+        self._biz_cache = {}
         # (product_id, location_id_or_None) → weighted-avg cost. One service
         # instance lives for exactly one sync run / one request, and purchases
         # post before sales in sync_all, so a per-run snapshot is safe — it
@@ -199,19 +202,34 @@ class JournalAutoGenerationService:
             reference_id=reference_id,
         ).exists()
 
-    def _get_supply_type(self, counterparty_gstin, counterparty_state_code=''):
-        """Detect supply type from the company state anchor and the counterparty.
+    def _biz_for(self, location_id):
+        """This store's filer GST identity (own GSTIN/state), resolved + cached.
+        Falls back to the company-wide AccountingSettings for an unconfigured
+        store (or location_id=None)."""
+        cached = self._biz_cache.get(location_id)
+        if cached is None:
+            cached = LocationTaxProfile.resolve(location_id)
+            self._biz_cache[location_id] = cached
+        return cached
+
+    def _get_supply_type(self, counterparty_gstin, counterparty_state_code='', location_id=None):
+        """Detect supply type from the SELLING STORE's state and the counterparty.
+
+        The business anchor is the posting store's own GSTIN/state (each store is
+        its own GST registration), not a single company-wide one — so a store in
+        a different state splits CGST/SGST vs IGST correctly on the GL itself.
 
         Falls back to the counterparty's 2-digit state code when their GSTIN is
         blank, so a no-GSTIN customer in another state is still classified
-        inter-state — EXACTLY as GSTR1Generator does. Without this fallback the
-        journal posted CGST+SGST (default intra) while the filed GSTR-1/3B showed
-        IGST, so the GL tax head silently diverged from the return.
+        inter-state — EXACTLY as GSTR1Generator does. Without this the journal
+        posted CGST+SGST (default intra) while the filed GSTR-1/3B showed IGST,
+        so the GL tax head silently diverged from the return.
         """
+        biz = self._biz_for(location_id)
         return detect_supply_type(
-            self._settings.gstin,
+            biz.gstin,
             counterparty_gstin,
-            self._settings.state_code,
+            biz.state_code,
             counterparty_state_code,
         )
 
@@ -417,7 +435,8 @@ class JournalAutoGenerationService:
         igst_amount = Decimal('0.00')
 
         # Always re-derive supply_type — pre-populated po.supply_type from inventory has been observed wrong.
-        supply_type = self._get_supply_type(po.supplier.gst_no if po.supplier else '')
+        supply_type = self._get_supply_type(
+            po.supplier.gst_no if po.supplier else '', location_id=po.location_id)
 
         # Pre-computed line.cgst_amount/sgst_amount/igst_amount carry the inventory's
         # (possibly wrong) classification. Sum the total tax across lines and re-split
@@ -549,7 +568,8 @@ class JournalAutoGenerationService:
                 customer = self._pos_customer(pos.customer_id)
                 if customer is not None:
                     supply_type = self._get_supply_type(
-                        customer.gst_no, self._counterparty_state_code(customer))
+                        customer.gst_no, self._counterparty_state_code(customer),
+                        location_id=pos.location_id)
             except Exception:
                 pass
 
@@ -693,6 +713,7 @@ class JournalAutoGenerationService:
         supply_type = self._get_supply_type(
             order.customer.gst_no if order.customer else '',
             self._counterparty_state_code(order.customer if order.customer else None),
+            location_id=order.location_id,
         )
 
         # Source line tax fields (cgst_amount/sgst_amount/igst_amount) carry the inventory's
@@ -803,6 +824,7 @@ class JournalAutoGenerationService:
         supply_type = self._get_supply_type(
             ret.customer.gst_no if ret.customer else '',
             self._counterparty_state_code(ret.customer),
+            location_id=ret.location_id,
         )
 
         # Per-line aggregation. POS returns: line_total is tax-inclusive.
@@ -939,7 +961,8 @@ class JournalAutoGenerationService:
         igst_amount = Decimal('0.00')
 
         supply_type = self._get_supply_type(
-            ret.supplier.gst_no if ret.supplier else ''
+            ret.supplier.gst_no if ret.supplier else '',
+            location_id=ret.location_id,
         )
 
         # Same approach as generate_purchase: sum total tax from lines, then re-split

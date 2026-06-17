@@ -2067,6 +2067,43 @@ export async function updateSettings(data: Partial<AccountingSettings>) {
   return res.data as AccountingSettings
 }
 
+// ─── Per-location GST registrations ────────────────────────────────────────────
+
+export interface LocationTaxProfile {
+  location_id: number
+  location_name: string
+  /** Store's own values (blank when not set). */
+  gstin: string
+  state_code: string
+  legal_name: string
+  has_profile: boolean
+  /** What GST returns / e-invoices actually use, after company-wide fallback. */
+  effective_gstin: string
+  effective_state_code: string
+}
+
+export interface LocationTaxProfilesResponse {
+  company_gstin: string
+  company_state_code: string
+  company_name: string
+  profiles: LocationTaxProfile[]
+}
+
+export async function getLocationTaxProfiles() {
+  const res = await api.get('/accounts/location-tax-profiles/')
+  return res.data as LocationTaxProfilesResponse
+}
+
+export async function saveLocationTaxProfile(data: {
+  location_id: number
+  gstin?: string
+  state_code?: string
+  legal_name?: string
+}) {
+  const res = await api.put('/accounts/location-tax-profiles/', data)
+  return res.data as { id: number; location_id: number; gstin: string; state_code: string; legal_name: string }
+}
+
 // ─── Audit Log ────────────────────────────────────────────────────────────────
 
 export interface AuditLog {
