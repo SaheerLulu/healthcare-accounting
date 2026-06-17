@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Loader2, Plus, Save, Send, History, Check, FileStack, Layers, Globe } from 'lucide-react'
+import { ArrowLeft, Loader2, Plus, Save, Send, History, Check, FileStack, Layers, Globe, Calculator } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getChartOfAccounts, getJournalEntry, getJournalEntries, getSuppliers, getCustomers,
   createJournalEntry, updateJournalEntry, postEntry,
-  createBillReference,
+  createBillReference, getAllAccountMappingKeys,
   type Account, type JournalEntry, type Party,
 } from '../../lib/api'
 import { formatCurrency } from '../../lib/utils'
@@ -22,6 +22,12 @@ import { BillAllocationSheet } from './BillAllocationSheet'
 import { CostCenterPopup } from './CostCenterPopup'
 import { PartySearchPicker } from '../parties/PartySearchPicker'
 import { voucherConfigs, type VoucherConfig, type VoucherType } from './voucherConfig'
+import { GstHelperPopup, type GstLedgers, type GstSide, type GstInsertLine } from './GstHelperPopup'
+
+const EMPTY_GST_LEDGERS: GstLedgers = {
+  INPUT_CGST: null, INPUT_SGST: null, INPUT_IGST: null,
+  OUTPUT_CGST: null, OUTPUT_SGST: null, OUTPUT_IGST: null,
+}
 
 function uid() {
   return Math.random().toString(36).slice(2)
@@ -90,6 +96,8 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
   const [createLedgerOpen, setCreateLedgerOpen] = useState(false)
   const [allocOpen, setAllocOpen] = useState(false)
   const [costCenterOpen, setCostCenterOpen] = useState(false)
+  const [gstOpen, setGstOpen] = useState(false)
+  const [gstLedgers, setGstLedgers] = useState<GstLedgers>(EMPTY_GST_LEDGERS)
   const [pendingAllocations, setPendingAllocations] = useState<{
     bill_id: number; ref_no: string; ref_date: string | null; amount: string
   }[]>([])
@@ -100,8 +108,26 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
     let cancelled = false
     async function load() {
       try {
-        const [accs] = await Promise.all([getChartOfAccounts()])
-        if (!cancelled) setAccounts(accs)
+        // Mapping keys resolve the GST helper's ledgers to THIS store's own
+        // Input/Output GST accounts (per-location overrides included).
+        const [accs, gstRows] = await Promise.all([
+          getChartOfAccounts(),
+          getAllAccountMappingKeys({ location_id: (activeLocationId ?? 'null') as number | 'null' })
+            .catch(() => []),
+        ])
+        if (!cancelled) {
+          setAccounts(accs)
+          const byKey: Record<string, number | null> = {}
+          for (const r of gstRows) byKey[r.key] = r.account
+          setGstLedgers({
+            INPUT_CGST: byKey['INPUT_CGST'] ?? null,
+            INPUT_SGST: byKey['INPUT_SGST'] ?? null,
+            INPUT_IGST: byKey['INPUT_IGST'] ?? null,
+            OUTPUT_CGST: byKey['OUTPUT_CGST'] ?? null,
+            OUTPUT_SGST: byKey['OUTPUT_SGST'] ?? null,
+            OUTPUT_IGST: byKey['OUTPUT_IGST'] ?? null,
+          })
+        }
       } catch { /* ignore */ }
       if (config.partyType) {
         try {
@@ -195,6 +221,34 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
   }
   function removeLine(uid: string) {
     setLines((ls) => ls.length <= 1 ? ls : ls.filter((l) => l.uid !== uid))
+  }
+
+  // ─── GST helper ─────────────────────────────────────────────────────────────
+  // Prefill the taxable base from the largest existing line (usually the asset/
+  // expense/income line the user just entered).
+  const gstBasePrefill = useMemo(() => {
+    let max = 0
+    for (const l of lines) { const a = parseFloat(l.amount) || 0; if (a > max) max = a }
+    return max > 0 ? String(max) : ''
+  }, [lines])
+  // Sales-type vouchers default to Output GST; everything else (incl. plain
+  // Journal and Purchase) defaults to Input.
+  const gstDefaultSide: GstSide =
+    (voucherType === 'SALE' || voucherType === 'CREDIT_NOTE') ? 'output' : 'input'
+
+  function handleGstInsert(newLines: GstInsertLine[]) {
+    setLines((ls) => {
+      // Drop the empty starter rows so the inserted GST lines aren't buried
+      // under blanks; keep anything the user has touched.
+      const kept = ls.filter((l) =>
+        l.account != null || (l.amount && parseFloat(l.amount) > 0) || l.narration.trim())
+      const additions = newLines.map((l): VoucherLine => ({
+        uid: uid(), side: l.side, account: l.account,
+        amount: l.amount, narration: l.narration,
+      }))
+      return [...kept, ...additions]
+    })
+    toast.success('GST lines added')
   }
 
   // ─── Save / post ───────────────────────────────────────────────────────────
@@ -606,14 +660,25 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
             <tfoot className="border-t" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
               <tr>
                 <td className="px-2 py-2" colSpan={2}>
-                  <button
-                    type="button"
-                    onClick={addLine}
-                    className="inline-flex items-center gap-1.5 text-sm hover:opacity-90"
-                    style={{ color: 'var(--brand)' }}
-                  >
-                    <Plus size={14} /> Add line
-                  </button>
+                  <div className="flex items-center gap-4">
+                    <button
+                      type="button"
+                      onClick={addLine}
+                      className="inline-flex items-center gap-1.5 text-sm hover:opacity-90"
+                      style={{ color: 'var(--brand)' }}
+                    >
+                      <Plus size={14} /> Add line
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGstOpen(true)}
+                      className="inline-flex items-center gap-1.5 text-sm hover:opacity-90"
+                      style={{ color: 'var(--brand)' }}
+                      title="Auto-fill CGST/SGST or IGST lines from a taxable amount"
+                    >
+                      <Calculator size={14} /> GST
+                    </button>
+                  </div>
                 </td>
                 <td className="px-2 py-2 text-right text-xs" style={{ color: 'var(--ink-2)' }}>
                   Total
@@ -732,6 +797,16 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
           setCostCentreId(id)
           setCostCenter(label)
         }}
+      />
+
+      <GstHelperPopup
+        open={gstOpen}
+        onOpenChange={setGstOpen}
+        accounts={accounts}
+        ledgers={gstLedgers}
+        defaultSide={gstDefaultSide}
+        basePrefill={gstBasePrefill}
+        onInsert={handleGstInsert}
       />
     </div>
   )
