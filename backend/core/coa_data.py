@@ -304,3 +304,39 @@ LEAVES = [
     ('6100', 'Round Off',                      'EXPENSE',   'Other_Expense',     '6000', 'ROUND_OFF'),
     ('6200', 'Suspense Account',               'EXPENSE',   'Other_Expense',     '6000', 'SUSPENSE'),
 ]
+
+
+# Mapping keys whose accounts are AUTO-CLONED per store on bootstrap/sync.
+# These are exactly the keys the automatic integration postings touch — the
+# pharmacy inventory sync (purchases, POS/B2B sales, returns, opening stock,
+# write-offs, stock adjustments/transfers, petty cash) and the doctor /
+# front-office fee collection. Traced from journals/services.py
+# (JournalAutoGenerationService) and sync/services.py.
+#
+# Every OTHER mapped key (payroll heads, bank charges, retained earnings,
+# bad-debts, the long tail of manual expense/asset heads) is intentionally
+# NOT cloned per store: it resolves to the shared NULL-location template via
+# AccountMapping.get_account()'s fallback, and journal entries stay tagged by
+# location so per-store reports remain correct. Admins can still surface any
+# of those as a deliberate shared account (is_shared=True) if they want it
+# visible in every store's Chart of Accounts.
+OPERATIONAL_KEYS = frozenset({
+    # Cash & bank / petty cash
+    'CASH', 'BANK', 'PETTY_EXPENSE',
+    # Control accounts (fallback when a party ledger is not used)
+    'TRADE_RECEIVABLES', 'TRADE_PAYABLES',
+    # Inventory / COGS / transfers / opening balance
+    'CLOSING_STOCK', 'COGS', 'STOCK_TRANSFER_TRANSIT', 'OPENING_BALANCE_EQUITY',
+    # GST input / output
+    'INPUT_CGST', 'INPUT_SGST', 'INPUT_IGST',
+    'OUTPUT_CGST', 'OUTPUT_SGST', 'OUTPUT_IGST',
+    # Sales + contra-revenue + recovered charges
+    'SALES_POS', 'SALES_B2B', 'SALES_RETURNS',
+    'DISCOUNT_ALLOWED', 'DISCOUNT_RECEIVED', 'OTHER_CHARGES_RECOVERED',
+    # Rounding + reverse-charge
+    'ROUND_OFF', 'RCM_LIABILITY',
+    # Stock losses / audit variance
+    'INVENTORY_LOSS', 'EXPIRY_LOSS', 'STOCK_AUDIT_VARIANCE',
+    # Doctor / front-office consultation income
+    'CONSULTATION_INCOME',
+})

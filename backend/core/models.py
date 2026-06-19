@@ -151,6 +151,16 @@ class ChartOfAccount(models.Model):
         null=True, blank=True, db_index=True,
         help_text='NULL = shared/template account; non-NULL = per-store clone.',
     )
+    # Deliberate, admin-managed "shared" account: location_id IS NULL AND
+    # is_shared=True. Unlike the seed templates (location_id NULL, is_shared
+    # False — internal scaffolding used only for posting fallback + hierarchy),
+    # a shared account is surfaced in EVERY store's Chart of Accounts. Only
+    # admins may create/edit shared accounts; none are created automatically.
+    is_shared = models.BooleanField(
+        default=False,
+        help_text='Admin-created shared account, visible in every store '
+                  '(only meaningful when location_id IS NULL).',
+    )
     # Tally-style per-party ledger link. When set, this leaf IS the ledger
     # account for one inventory supplier/customer (a "Sundry Creditor/Debtor"
     # ledger) — see [[party-ledger-per-party]] and core.party_ledgers. Party

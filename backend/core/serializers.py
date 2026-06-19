@@ -89,11 +89,14 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'account_code', 'account_name', 'account_type',
             'account_subtype', 'parent', 'parent_code', 'parent_name',
-            'location_id', 'is_leaf', 'is_active', 'description',
+            'location_id', 'is_shared', 'is_leaf', 'is_active', 'description',
             'party_type', 'party_id',
             'documents_count',
             'created_at', 'updated_at',
         ]
+        # location_id and is_shared are write-checked in the viewset
+        # (admin-only for shared accounts; non-admins always get a store
+        # account scoped to their active location).
         read_only_fields = ['id', 'is_leaf', 'party_type', 'party_id',
                             'created_at', 'updated_at']
 

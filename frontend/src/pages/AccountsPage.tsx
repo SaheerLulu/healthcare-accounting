@@ -7,10 +7,11 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  getChartOfAccounts, getAccountTree, getAccountCounts,
+  getChartOfAccounts, getAccountCounts,
   createAccount, updateAccount, deleteAccount, toggleAccountActive,
   type Account, type AccountCounts,
 } from '../lib/api'
+import { useLocation } from '../contexts/LocationContext'
 import { cn } from '../lib/utils'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -51,26 +52,27 @@ interface AccountForm {
   parent: string
   description: string
   is_active: boolean
+  is_shared: boolean
 }
 
 const blankForm: AccountForm = {
   account_code: '', account_name: '', account_type: 'ASSET',
   account_subtype: '', parent: '', description: '', is_active: true,
+  is_shared: false,
 }
 
 export default function AccountsPage() {
+  const { canSeeAll } = useLocation()
   const [view, setView] = useState<'list' | 'tree'>('list')
   const [accounts, setAccounts] = useState<Account[]>([])
-  const [tree, setTree] = useState<Account[]>([])
   const [counts, setCounts] = useState<AccountCounts | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [activeType, setActiveType] = useState<'all' | AccountType>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all')
-  // 'auto' = active-location clones + shared (default);
-  // 'shared' = only NULL-location templates;
-  // 'all' = every account (admin view across stores).
-  const [locationScope, setLocationScope] = useState<'auto' | 'shared' | 'all'>('auto')
+  // 'store' = only this store's own accounts (default);
+  // 'store_shared' = this store's accounts + admin-created shared accounts.
+  const [locationScope, setLocationScope] = useState<'store' | 'store_shared'>('store')
 
   const [editing, setEditing] = useState<Account | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -81,13 +83,14 @@ export default function AccountsPage() {
   async function load() {
     setLoading(true)
     try {
-      const [list, treeRes, c] = await Promise.all([
+      // The tree is built client-side from this flat list (grouped by
+      // category), so a single scoped request powers both views — no separate,
+      // unscoped, all-locations tree fetch.
+      const [list, c] = await Promise.all([
         getChartOfAccounts({ location_scope: locationScope }),
-        getAccountTree(),
-        getAccountCounts(),
+        getAccountCounts({ location_scope: locationScope }),
       ])
       setAccounts(list)
-      setTree(treeRes)
       setCounts(c)
     } catch {
       toast.error('Failed to load accounts')
@@ -114,6 +117,7 @@ export default function AccountsPage() {
       parent: acc.parent ? String(acc.parent) : '',
       description: acc.description || '',
       is_active: acc.is_active,
+      is_shared: !!acc.is_shared,
     })
     setSheetOpen(true)
   }
@@ -130,6 +134,9 @@ export default function AccountsPage() {
         parent: form.parent ? Number(form.parent) : null,
         description: form.description,
         is_active: form.is_active,
+        // Admin-only. The server ignores any client location and decides:
+        // shared → no location & visible everywhere; otherwise → active store.
+        is_shared: canSeeAll ? form.is_shared : false,
       }
       if (editing) await updateAccount(editing.id, payload as Partial<Account>)
       else await createAccount(payload as Partial<Account>)
@@ -185,6 +192,32 @@ export default function AccountsPage() {
       return true
     })
   }, [accounts, activeType, statusFilter, search])
+
+  // Tree view: group the (filtered) flat list by category → sub-category.
+  // The store's own accounts have no per-store group hierarchy, so we present
+  // a clean category breakdown instead of the shared template tree.
+  const categoryTree = useMemo<CategoryGroup[]>(() => {
+    const out: CategoryGroup[] = []
+    for (const type of ACCOUNT_TYPES) {
+      const rows = filteredList.filter((a) => a.account_type === type)
+      if (!rows.length) continue
+      const bySub = new Map<string, Account[]>()
+      for (const a of rows) {
+        const key = a.account_subtype || ''
+        if (!bySub.has(key)) bySub.set(key, [])
+        bySub.get(key)!.push(a)
+      }
+      const subgroups = Array.from(bySub.entries())
+        // Named sub-categories first (alphabetical); the blank "Other" last.
+        .sort((a, b) => (a[0] === '' ? 1 : b[0] === '' ? -1 : a[0].localeCompare(b[0])))
+        .map(([sub, items]) => ({
+          label: sub ? sub.replace(/_/g, ' ') : 'Other',
+          rows: items.sort((x, y) => x.account_code.localeCompare(y.account_code)),
+        }))
+      out.push({ type, label: TYPE_PILL[type].label, count: rows.length, subgroups })
+    }
+    return out
+  }, [filteredList])
 
   const subtypes = ACCOUNT_SUBTYPES[form.account_type] || []
   const totalCount = counts?.total ?? 0
@@ -270,11 +303,10 @@ export default function AccountsPage() {
           value={locationScope}
           onChange={(e) => setLocationScope(e.target.value as typeof locationScope)}
           className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
-          title="Which location's accounts to show"
+          title="Which accounts to show"
         >
-          <option value="auto">This store + Shared</option>
-          <option value="shared">Shared only</option>
-          <option value="all">All locations</option>
+          <option value="store">This store</option>
+          <option value="store_shared">This store + Shared</option>
         </select>
       </div>
 
@@ -289,11 +321,12 @@ export default function AccountsPage() {
             onToggle={handleToggleActive}
           />
         ) : (
-          <TreeView
-            tree={tree}
+          <CategoryTreeView
+            groups={categoryTree}
             loading={loading}
             onEdit={openEdit}
             onDelete={(a) => setDeleteTarget(a)}
+            onToggle={handleToggleActive}
           />
         )}
       </Card>
@@ -387,6 +420,23 @@ export default function AccountsPage() {
                   <span className="text-slate-700">Active</span>
                   <span className="text-xs text-slate-400">— inactive accounts are hidden from new transactions</span>
                 </label>
+                {canSeeAll && (
+                  <label className="flex items-start gap-2 text-sm cursor-pointer rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                    <input
+                      type="checkbox"
+                      checked={form.is_shared}
+                      onChange={(e) => setForm({ ...form, is_shared: e.target.checked })}
+                      className="accent-teal-600 w-4 h-4 mt-0.5"
+                    />
+                    <span>
+                      <span className="text-slate-700 font-medium">Shared (all stores)</span>
+                      <span className="block text-xs text-slate-400">
+                        Visible in every store's chart of accounts. Leave off to create
+                        this account for the current store only.
+                      </span>
+                    </span>
+                  </label>
+                )}
               </div>
             </SheetBody>
             <SheetFooter>
@@ -510,7 +560,7 @@ function ListView({
               >
                 {a.account_name}
               </button>
-              {a.location_id == null && (
+              {a.is_shared && (
                 <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 uppercase tracking-wide">
                   Shared
                 </span>
@@ -584,80 +634,129 @@ function ListView({
   )
 }
 
-// ─── Tree view ──────────────────────────────────────────────────────────────
+// ─── Tree view (grouped by category) ─────────────────────────────────────────
 
-function TreeView({
-  tree, loading, onEdit, onDelete,
+interface CategoryGroup {
+  type: AccountType
+  label: string
+  count: number
+  subgroups: { label: string; rows: Account[] }[]
+}
+
+function CategoryTreeView({
+  groups, loading, onEdit, onDelete, onToggle,
 }: {
-  tree: Account[]
+  groups: CategoryGroup[]
   loading: boolean
   onEdit: (a: Account) => void
   onDelete: (a: Account) => void
+  onToggle: (a: Account) => void
 }) {
   if (loading) return <div className="py-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
-  if (tree.length === 0) return <div className="py-12 text-center text-slate-400 text-sm">No accounts</div>
+  if (groups.length === 0) return <div className="py-12 text-center text-slate-400 text-sm">No accounts</div>
   return (
     <div className="py-1">
-      {tree.map((node) => (
-        <TreeNode key={node.id} node={node} depth={0} onEdit={onEdit} onDelete={onDelete} />
+      {groups.map((g) => (
+        <CategoryGroupNode key={g.type} group={g} onEdit={onEdit} onDelete={onDelete} onToggle={onToggle} />
       ))}
     </div>
   )
 }
 
-function TreeNode({
-  node, depth, onEdit, onDelete,
+function CategoryGroupNode({
+  group, onEdit, onDelete, onToggle,
 }: {
-  node: Account
-  depth: number
+  group: CategoryGroup
   onEdit: (a: Account) => void
   onDelete: (a: Account) => void
+  onToggle: (a: Account) => void
 }) {
   const [expanded, setExpanded] = useState(true)
-  const hasChildren = !!(node.children && node.children.length)
   return (
     <>
       <div
-        className="flex items-center gap-2 py-1.5 px-3 hover:bg-slate-50 group cursor-pointer border-b border-slate-100 last:border-0"
-        style={{ paddingLeft: 12 + depth * 18 }}
-        onClick={() => onEdit(node)}
+        className="flex items-center gap-2 py-2 px-3 bg-slate-50/60 hover:bg-slate-50 cursor-pointer border-b border-slate-100"
+        onClick={() => setExpanded((x) => !x)}
       >
-        {hasChildren ? (
-          <button
-            onClick={(e) => { e.stopPropagation(); setExpanded((x) => !x) }}
-            className="w-5 h-5 flex items-center justify-center text-slate-400 hover:text-slate-700"
-          >
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
-        ) : (
-          <span className="w-5" />
-        )}
-        <FileText size={14} className={cn('flex-shrink-0', TYPE_PILL[node.account_type]?.dot.replace('bg-', 'text-'))} />
-        <span className="font-mono text-xs text-slate-500 w-16 flex-shrink-0">{node.account_code}</span>
-        <span className={cn('flex-1 text-sm font-medium truncate', !node.is_active && 'text-slate-400 line-through')}>
-          {node.account_name}
-        </span>
-        <span className={cn('hidden md:inline text-xs px-1.5 py-0.5 rounded', TYPE_PILL[node.account_type]?.bg)}>
-          {TYPE_PILL[node.account_type]?.label}
-        </span>
-        <button
-          onClick={(e) => { e.stopPropagation(); onEdit(node) }}
-          className="p-1 text-slate-300 hover:text-teal-600 opacity-0 group-hover:opacity-100"
-          title="Edit"
-        >
-          <Pencil size={13} />
+        <button className="w-5 h-5 flex items-center justify-center text-slate-400 hover:text-slate-700">
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onDelete(node) }}
-          className="p-1 text-slate-300 hover:text-rose-600 opacity-0 group-hover:opacity-100"
-          title="Delete"
-        >
-          <Trash2 size={13} />
-        </button>
+        <span className={cn('w-1.5 h-1.5 rounded-full', TYPE_PILL[group.type]?.dot)} />
+        <span className="text-sm font-semibold text-slate-700">{group.label}</span>
+        <span className="text-[10px] tabular-nums text-slate-400">{group.count}</span>
       </div>
-      {expanded && hasChildren && node.children!.map((c) => (
-        <TreeNode key={c.id} node={c} depth={depth + 1} onEdit={onEdit} onDelete={onDelete} />
+      {expanded && group.subgroups.map((sg) => (
+        <div key={sg.label}>
+          <div
+            className="px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-slate-400"
+            style={{ paddingLeft: 42 }}
+          >
+            {sg.label}
+          </div>
+          {sg.rows.map((a) => (
+            <AccountTreeRow key={a.id} acc={a} onEdit={onEdit} onDelete={onDelete} onToggle={onToggle} />
+          ))}
+        </div>
       ))}
     </>
+  )
+}
+
+function AccountTreeRow({
+  acc, onEdit, onDelete, onToggle,
+}: {
+  acc: Account
+  onEdit: (a: Account) => void
+  onDelete: (a: Account) => void
+  onToggle: (a: Account) => void
+}) {
+  return (
+    <div
+      className="flex items-center gap-2 py-1.5 px-3 hover:bg-slate-50 group cursor-pointer border-b border-slate-100 last:border-0"
+      style={{ paddingLeft: 60 }}
+      onClick={() => onEdit(acc)}
+    >
+      <FileText size={14} className={cn('flex-shrink-0', TYPE_PILL[acc.account_type]?.dot.replace('bg-', 'text-'))} />
+      <span className="font-mono text-xs text-slate-500 w-20 flex-shrink-0">{acc.account_code}</span>
+      <span className={cn('flex-1 text-sm font-medium truncate', !acc.is_active && 'text-slate-400 line-through')}>
+        {acc.account_name}
+      </span>
+      {acc.is_shared && (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 uppercase tracking-wide">
+          Shared
+        </span>
+      )}
+      {acc.documents_count ? (
+        <Link
+          to={`/reports/ledger/${acc.account_code}`}
+          onClick={(e) => e.stopPropagation()}
+          className="text-xs text-slate-400 hover:text-teal-700 tabular-nums"
+          title="Open ledger"
+        >
+          {acc.documents_count} docs
+        </Link>
+      ) : null}
+      <button
+        onClick={(e) => { e.stopPropagation(); onToggle(acc) }}
+        className="p-1 text-slate-300 hover:text-teal-600 opacity-0 group-hover:opacity-100"
+        title={acc.is_active ? 'Mark inactive' : 'Mark active'}
+      >
+        {acc.is_active ? <PowerOff size={13} /> : <Power size={13} />}
+      </button>
+      <button
+        onClick={(e) => { e.stopPropagation(); onEdit(acc) }}
+        className="p-1 text-slate-300 hover:text-teal-600 opacity-0 group-hover:opacity-100"
+        title="Edit"
+      >
+        <Pencil size={13} />
+      </button>
+      <button
+        onClick={(e) => { e.stopPropagation(); onDelete(acc) }}
+        className="p-1 text-slate-300 hover:text-rose-600 opacity-0 group-hover:opacity-100"
+        title="Delete"
+      >
+        <Trash2 size={13} />
+      </button>
+    </div>
   )
 }

@@ -29,6 +29,7 @@ from .serializers import (
     LocationTaxProfileSerializer,
 )
 from .mixins import get_active_location, assert_location_access
+from .middleware import _has_all_location_access
 from audit.utils import log_action
 from inventory_reader.models import LocationRO, UserLocationAssignmentRO, UserProfileRO, SupplierRO, CustomerRO
 
@@ -57,18 +58,34 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
     def _apply_location_scope(self, qs):
         """Per-store scoping shared by the list and counts endpoints.
 
-        By default (`location_scope=auto`) a request with X-Location-Id sees
-        this store's clones + the NULL-location shared accounts (GST, equity
-        etc.). `location_scope=all` opts out (COA admin view); `shared`
-        returns just the NULL-location templates. No active location → show
-        all (legacy admin behaviour).
+        Scopes (query param `location_scope`):
+          - `store` (Chart-of-Accounts page default): ONLY this store's own
+            accounts. With no active location (admin all-stores mode) it falls
+            back to the deliberate shared accounts so an admin can manage them.
+          - `store_shared`: this store's accounts + deliberate shared accounts
+            (location NULL AND is_shared=True).
+          - `auto` (default when no param is sent — used by every account
+            PICKER across the app): this store's clones + ALL NULL-location
+            accounts (templates + shared) so the full postable catalog is
+            offered.
+          - `shared`: only the deliberate shared accounts.
+          - `all`: every account (kept for admin/back-office tooling; the COA
+            page no longer exposes it).
         """
         scope = self.request.query_params.get('location_scope', 'auto')
         if scope == 'all':
             return qs
+        shared_q = models.Q(location_id__isnull=True, is_shared=True)
         if scope == 'shared':
-            return qs.filter(location_id__isnull=True)
+            return qs.filter(shared_q)
         location = get_active_location(self.request)
+        if scope == 'store':
+            return qs.filter(location_id=location.id) if location else qs.filter(shared_q)
+        if scope == 'store_shared':
+            if location:
+                return qs.filter(models.Q(location_id=location.id) | shared_q)
+            return qs.filter(shared_q)
+        # `auto` (and any unknown value): store clones + every NULL row.
         if location:
             return qs.filter(
                 models.Q(location_id=location.id) | models.Q(location_id__isnull=True)
@@ -127,17 +144,50 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
         return self._apply_location_scope(qs)
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        # A new account is EITHER a deliberate shared account (admin-only, no
+        # location, visible in every store) OR a store account scoped to the
+        # caller's active location. The client-sent location_id is ignored —
+        # the server decides, so a non-admin can never create a shared or
+        # other-store account.
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+        is_admin = _has_all_location_access(self.request.user)
+        want_shared = bool(serializer.validated_data.get('is_shared'))
+        if want_shared:
+            if not is_admin:
+                raise PermissionDenied('Only an administrator can create a shared account.')
+            save_kwargs = {'is_shared': True, 'location_id': None}
+        else:
+            location = get_active_location(self.request)
+            if location is None:
+                raise ValidationError(
+                    'Select a specific store before creating an account, or enable '
+                    '"Shared (all stores)" (administrators only).'
+                )
+            save_kwargs = {'is_shared': False, 'location_id': location.id}
+        instance = serializer.save(**save_kwargs)
         if instance.parent_id:
             ChartOfAccount.objects.filter(pk=instance.parent_id, is_leaf=True).update(is_leaf=False)
         log_action('CREATE', 'ChartOfAccount', instance.pk, str(instance), request=self.request)
 
     def perform_update(self, serializer):
+        from rest_framework.exceptions import PermissionDenied, ValidationError
+        old = self.get_object()
+        new = serializer.validated_data
+        # Shared status and store assignment are admin-only. A non-admin may
+        # edit only accounts belonging to their active store, and may not flip
+        # an account to/from shared or move it between stores.
+        is_admin = _has_all_location_access(self.request.user)
+        if not is_admin:
+            location = get_active_location(self.request)
+            if old.location_id is None or location is None or old.location_id != location.id:
+                raise PermissionDenied('You can only edit accounts for your active store.')
+            if new.get('is_shared', old.is_shared) != old.is_shared:
+                raise PermissionDenied('Only an administrator can change shared status.')
+            if 'location_id' in new and new['location_id'] != old.location_id:
+                raise PermissionDenied('Only an administrator can move an account between stores.')
         # WP 613 — system accounts (those bound to an AccountMapping) cannot
         # change account_type or account_code; that would silently break
         # auto-generation across journals/GST/TDS/payroll.
-        old = self.get_object()
-        new = serializer.validated_data
         is_system = AccountMapping.objects.filter(account=old).exists()
         if is_system:
             for protected in ('account_type', 'account_code'):
@@ -160,7 +210,9 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
                                 'new account and deactivate this one instead.',
             })
         old_parent_id = serializer.instance.parent_id
-        instance = serializer.save()
+        # A shared account never carries a location; keep the two consistent.
+        save_kwargs = {'location_id': None} if new.get('is_shared', old.is_shared) else {}
+        instance = serializer.save(**save_kwargs)
         new_parent_id = instance.parent_id
         if old_parent_id != new_parent_id:
             if new_parent_id:

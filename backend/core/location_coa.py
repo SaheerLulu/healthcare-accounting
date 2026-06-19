@@ -1,16 +1,19 @@
 """Per-location Chart of Accounts bootstrapping ([[per-location-coa]]).
 
 Shared service used by both the ``bootstrap_location_coa`` management command
-and the incremental sync. Every store gets its own leaves under codes like
-``1110-MUM`` (parent: the template ``1110 Cash``). Per the store-isolation
-policy ``AccountMapping.SHARED_KEYS`` is empty — EVERY mapped account is cloned
-per store, including the GST/TDS/equity heads; add a key back to that set only
-to deliberately keep it shared. All functions are idempotent.
+and the incremental sync. A store gets its own leaves under codes like
+``1110-MUM`` (parent: the template ``1110 Cash``), but ONLY for the accounts
+the automatic integration postings touch — the allow-list
+``core.coa_data.OPERATIONAL_KEYS`` (pharmacy inventory sync + doctor/front-office
+fee collection). Every other mapped account stays as the shared NULL-location
+template and resolves via ``AccountMapping.get_account()``'s fallback, so the
+per-store Chart of Accounts stays small and fast. All functions are idempotent.
 """
 import re
 
 from django.db import transaction
 
+from core.coa_data import OPERATIONAL_KEYS
 from core.models import AccountMapping, ChartOfAccount
 
 
@@ -32,17 +35,18 @@ def derive_location_code(name: str) -> str:
 
 @transaction.atomic
 def bootstrap_location(loc_id, loc_name, loc_code, *, dry_run=False):
-    """Clone every non-shared template account + mapping for one location.
+    """Clone the per-store operational accounts + mappings for one location.
 
-    Returns (n_accounts_created, n_mappings_created). Idempotent: existing
-    clones/mappings are skipped, so re-running is a no-op."""
-    shared_keys = AccountMapping.SHARED_KEYS
-
-    # Role-mapped codes that stay shared (NULL location). Anything not in this
-    # set gets per-store clones.
-    shared_codes = set(
+    Only the accounts the automatic integration postings touch
+    (OPERATIONAL_KEYS) are cloned; everything else stays as the shared
+    NULL-location template. Returns (n_accounts_created, n_mappings_created).
+    Idempotent: existing clones/mappings are skipped, so re-running is a no-op."""
+    # Template codes whose NULL-location mapping key is operational → these are
+    # the only accounts cloned per store. Anything else resolves to the shared
+    # template via AccountMapping.get_account()'s fallback.
+    operational_codes = set(
         AccountMapping.objects.filter(
-            key__in=shared_keys, location_id__isnull=True,
+            key__in=OPERATIONAL_KEYS, location_id__isnull=True,
         ).values_list('account__account_code', flat=True)
     )
 
@@ -52,8 +56,8 @@ def bootstrap_location(loc_id, loc_name, loc_code, *, dry_run=False):
             # Per-party ledgers (Sundry Creditor/Debtor leaves) are shared
             # across stores by design — never clone them per location.
             party_id__isnull=True,
-        ).exclude(account_code__in=shared_codes)
-        .order_by('account_code')
+            account_code__in=operational_codes,
+        ).order_by('account_code')
     )
 
     clones_created = 0
@@ -89,10 +93,10 @@ def bootstrap_location(loc_id, loc_name, loc_code, *, dry_run=False):
             template_to_clone[tpl.id] = clone.id
         clones_created += 1
 
-    # Rebind each non-shared AccountMapping default onto the clone.
+    # Rebind each operational AccountMapping default onto the clone.
     mappings_created = 0
-    defaults = AccountMapping.objects.filter(location_id__isnull=True).exclude(
-        key__in=shared_keys,
+    defaults = AccountMapping.objects.filter(
+        location_id__isnull=True, key__in=OPERATIONAL_KEYS,
     ).select_related('account')
 
     for m in defaults:
@@ -114,37 +118,37 @@ def ensure_locations_bootstrapped(*, only_missing=True):
     """Bootstrap per-store COA for every inventory location, cheaply.
 
     Intended to run on every sync. Detects, per location, whether every
-    non-shared mapping key already has a per-store override; a store is
+    operational mapping key already has a per-store override; a store is
     (re)bootstrapped when it is missing ANY of them. This catches both brand-new
-    stores AND stores bootstrapped before a new expense/cost account was added
-    (e.g. a newly un-shared ROUND_OFF, or a freshly added PETTY_EXPENSE), so no
-    cost ever silently falls back to a shared account. `bootstrap_location` is
-    idempotent, so it only fills the gaps. Best-effort: wrap in try/except.
+    stores AND stores bootstrapped before a new operational account was added,
+    so no integration posting ever silently falls back to the shared template.
+    `bootstrap_location` is idempotent, so it only fills the gaps. Best-effort:
+    wrap in try/except.
     """
     from collections import defaultdict
     from inventory_reader.models import LocationRO
 
     summary = {'locations': 0, 'accounts': 0, 'mappings': 0}
 
-    # Every mapping key that SHOULD have a per-store override.
-    nonshared_keys = set(
-        AccountMapping.objects.filter(location_id__isnull=True)
-        .exclude(key__in=AccountMapping.SHARED_KEYS)
-        .values_list('key', flat=True)
+    # Every operational mapping key that SHOULD have a per-store override.
+    operational_keys = set(
+        AccountMapping.objects.filter(
+            location_id__isnull=True, key__in=OPERATIONAL_KEYS,
+        ).values_list('key', flat=True)
     )
-    if not nonshared_keys:
+    if not operational_keys:
         return summary
 
     # Per-location keys that already have an override.
     have = defaultdict(set)
     for loc_id, key in (
-        AccountMapping.objects.filter(location_id__isnull=False, key__in=nonshared_keys)
+        AccountMapping.objects.filter(location_id__isnull=False, key__in=operational_keys)
         .values_list('location_id', 'key')
     ):
         have[loc_id].add(key)
 
     for loc in LocationRO.objects.all().order_by('id'):
-        missing = nonshared_keys - have.get(loc.id, set())
+        missing = operational_keys - have.get(loc.id, set())
         if only_missing and not missing:
             continue
         code = derive_location_code(loc.name)

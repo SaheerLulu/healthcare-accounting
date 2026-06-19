@@ -69,8 +69,10 @@ export interface Account {
   parent: number | null
   parent_code?: string | null
   parent_name?: string | null
-  /** null = shared/template (shown as "Shared" in UI); non-null = per-store clone */
+  /** null = shared or internal template; non-null = per-store account */
   location_id: number | null
+  /** Admin-created shared account (location_id null), shown in every store. */
+  is_shared?: boolean
   is_leaf: boolean
   is_active: boolean
   description: string
@@ -93,11 +95,6 @@ export async function getChartOfAccounts(params?: Record<string, string>) {
   return res.data as Account[]
 }
 
-export async function getAccountTree() {
-  const res = await api.get('/accounts/chart-of-accounts/tree/')
-  return res.data as Account[]
-}
-
 export async function getAccount(id: number) {
   const res = await api.get(`/accounts/chart-of-accounts/${id}/`)
   return res.data as Account
@@ -117,8 +114,8 @@ export async function deleteAccount(id: number) {
   await api.delete(`/accounts/chart-of-accounts/${id}/`)
 }
 
-export async function getAccountCounts() {
-  const res = await api.get('/accounts/chart-of-accounts/counts/')
+export async function getAccountCounts(params?: Record<string, string>) {
+  const res = await api.get('/accounts/chart-of-accounts/counts/', { params })
   return res.data as AccountCounts
 }
 

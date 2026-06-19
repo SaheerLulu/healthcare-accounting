@@ -1,7 +1,9 @@
-"""Per-location COA bootstrap: every non-shared template account should
-get a per-store clone with a suffixed code, parented to the template so
-consolidated reports roll up via parent. AccountMapping defaults are
-overridden per location.
+"""Per-location COA bootstrap: only the OPERATIONAL template accounts (the
+ones the inventory sync / fee collection post to) get a per-store clone with a
+suffixed code, parented to the template so consolidated reports roll up via
+parent. Non-operational heads (retained earnings, payroll, TDS, manual expense
+heads) stay as the shared NULL-location template and resolve via fallback.
+AccountMapping defaults are overridden per location for operational keys.
 
 Bootstrap is idempotent — re-running for the same location is a no-op."""
 from unittest.mock import patch
@@ -66,16 +68,30 @@ class BootstrapLocationCOATests(TestCase):
         self.assertEqual(clone.parent.account_code, '1110')
         self.assertIsNone(clone.parent.location_id)
 
-    def test_clones_all_mapped_accounts_per_store(self):
-        # Store-isolation policy: SHARED_KEYS is empty, so EVERY mapped account —
-        # including GST output (2120) and retained earnings (3200) — is cloned
-        # per store. Nothing is forced shared.
+    def test_clones_only_operational_accounts_per_store(self):
+        # Only operational keys get per-store clones. GST output (2120),
+        # cash (1110), POS sales (4100) and COGS (5560) are operational;
+        # retained earnings (3200), salary (5400) and TDS receivable (1170)
+        # are not and must stay shared (resolve via the NULL template).
         self._run()
-        for code in ('2120-MUM', '3200-MUM', '1110-MUM'):
+        for code in ('1110-MUM', '2120-MUM', '4100-MUM', '5560-MUM'):
             self.assertTrue(
                 ChartOfAccount.objects.filter(account_code=code, location_id=7).exists(),
-                f'{code} should be cloned per store (nothing is shared)',
+                f'{code} is operational and should be cloned per store',
             )
+        for code in ('3200-MUM', '5400-MUM', '1170-MUM'):
+            self.assertFalse(
+                ChartOfAccount.objects.filter(account_code=code, location_id=7).exists(),
+                f'{code} is non-operational and should NOT be cloned',
+            )
+
+    def test_non_operational_key_resolves_to_shared_template(self):
+        # A non-operational key (no per-store clone) still resolves for posting
+        # via AccountMapping.get_account()'s NULL-location fallback.
+        self._run()
+        resolved = AccountMapping.get_account('RETAINED_EARNINGS', location_id=7)
+        self.assertEqual(resolved.account_code, '3200')
+        self.assertIsNone(resolved.location_id)
 
     def test_creates_per_location_mapping_override(self):
         self._run()
