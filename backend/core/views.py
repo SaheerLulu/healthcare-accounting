@@ -485,21 +485,38 @@ class LocationTaxProfilesView(APIView):
         ]
 
     def get(self, request):
+        from inventory_reader.store_settings import get_store_gst_bulk
         locs = self._accessible_locations(request)
         profiles = {p.location_id: p for p in LocationTaxProfile.objects.all()}
+        pharma = get_store_gst_bulk([loc['id'] for loc in locs])
         company = AccountingSettings.get_settings()
         rows = []
         for loc in locs:
             prof = profiles.get(loc['id'])
+            ph = pharma.get(loc['id'])
+            pharma_gstin = ((ph or {}).get('gst_number') or '')
             effective = LocationTaxProfile.resolve(loc['id'])
+            # Where the effective GSTIN comes from: an accounting override wins,
+            # else the live pharmacy GSTIN, else the store is unconfigured.
+            if prof and prof.gstin:
+                source = 'override'
+            elif pharma_gstin:
+                source = 'pharma'
+            else:
+                source = 'unconfigured'
             rows.append({
                 'location_id': loc['id'],
                 'location_name': loc['name'],
+                # The accounting override (blank for most stores).
                 'gstin': prof.gstin if prof else '',
                 'state_code': prof.state_code if prof else '',
                 'legal_name': prof.legal_name if prof else '',
                 'has_profile': prof is not None,
-                # What returns/e-invoices will actually use (after fallback).
+                # Live pharmacy value + where the effective identity resolves from.
+                'pharma_gstin': pharma_gstin,
+                'source': source,
+                'configured': bool(effective.gstin),
+                # What returns/e-invoices will actually use.
                 'effective_gstin': effective.gstin,
                 'effective_state_code': effective.state_code,
             })

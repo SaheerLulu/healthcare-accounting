@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.test import TestCase
 
-from core.models import ChartOfAccount
+from core.models import ChartOfAccount, LocationTaxProfile
 from core.tests.utils import make_settings, seed_chart_and_mappings
 from gst_returns.annual_return import (
     fy_period_list, generate_gstr9, gstr_late_fee_and_interest,
@@ -77,6 +77,10 @@ class IRNTests(TestCase):
     def setUp(self):
         seed_chart_and_mappings()
         make_settings(gstin='27AABCT1234A1Z5')
+        # Store 1 files under its own GSTIN (the per-store identity that the
+        # IRN hash embeds). Pharmacy is the live source in production; here we
+        # pin an accounting override so the test doesn't depend on that table.
+        LocationTaxProfile.objects.create(location_id=1, gstin='27AABCT1234A1Z5')
 
     def test_fy_from_date(self):
         self.assertEqual(fy_from_date(date(2026, 5, 1)), '2026-27')

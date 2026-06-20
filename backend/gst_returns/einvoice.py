@@ -96,7 +96,8 @@ def generate_irn_for_entry(entry):
     if not supplier_gstin:
         raise ValueError(
             'Cannot generate IRN: no GSTIN configured for this store. '
-            'Set it in Settings → Locations (or the company GSTIN as a fallback).'
+            'Set the store GSTIN in the pharmacy store settings, or add an '
+            'accounting override in Settings → GST Registrations.'
         )
 
     doc_type = DOC_TYPE_MAP[entry.invoice_type]

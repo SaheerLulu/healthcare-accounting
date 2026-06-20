@@ -26,11 +26,31 @@ class ResolverTests(TestCase):
     def setUp(self):
         make_settings(gstin=MH_GSTIN, state_code='27', company_name='Test Co')
 
-    def test_fallback_to_company_when_no_profile(self):
+    def test_no_profile_no_pharma_leaves_gstin_blank(self):
+        # No accounting override and (in tests) no pharmacy row → GSTIN is left
+        # blank, NOT silently the company GSTIN. The state still falls back to
+        # the company so intra/inter-state classification keeps working.
         ti = LocationTaxProfile.resolve(1)
-        self.assertEqual(ti.gstin, MH_GSTIN)
+        self.assertEqual(ti.gstin, '')
         self.assertEqual(ti.state_code, '27')
         self.assertEqual(ti.legal_name, 'Test Co')
+
+    def test_pharma_gstin_used_when_no_override(self):
+        # Pharmacy store settings are the live source of truth for the GSTIN.
+        with mock.patch('inventory_reader.store_settings.get_store_gst',
+                        return_value={'gst_number': KA_GSTIN, 'store_name': 'KA Branch'}):
+            ti = LocationTaxProfile.resolve(30)
+        self.assertEqual(ti.gstin, KA_GSTIN)
+        self.assertEqual(ti.state_code, '29')        # derived from GSTIN[:2]
+        self.assertEqual(ti.legal_name, 'KA Branch')  # store_name → legal name
+
+    def test_accounting_override_wins_over_pharma(self):
+        LocationTaxProfile.objects.create(location_id=31, gstin=MH_GSTIN)
+        with mock.patch('inventory_reader.store_settings.get_store_gst',
+                        return_value={'gst_number': KA_GSTIN, 'store_name': 'KA Branch'}):
+            ti = LocationTaxProfile.resolve(31)
+        self.assertEqual(ti.gstin, MH_GSTIN)
+        self.assertEqual(ti.state_code, '27')
 
     def test_none_location_is_company_identity(self):
         ti = LocationTaxProfile.resolve(None)
@@ -64,12 +84,12 @@ class ResolverTests(TestCase):
         LocationTaxProfile.objects.create(location_id=6, gstin='07AABCT1234A1Z5')
         self.assertEqual(LocationTaxProfile.resolve(6).legal_name, 'Test Co')
 
-    def test_blank_gstin_profile_falls_back_to_company_gstin(self):
-        # A profile row with only a state set (no GSTIN) still bills under the
-        # company GSTIN, but its state override applies.
+    def test_state_only_profile_keeps_state_but_gstin_blank(self):
+        # A profile row with only a state set (no GSTIN, no pharmacy GSTIN) →
+        # GSTIN stays blank; the explicit state override still applies.
         LocationTaxProfile.objects.create(location_id=8, state_code='07')
         ti = LocationTaxProfile.resolve(8)
-        self.assertEqual(ti.gstin, MH_GSTIN)
+        self.assertEqual(ti.gstin, '')
         self.assertEqual(ti.state_code, '07')
 
 
@@ -103,12 +123,23 @@ class EInvoiceIdentityTests(TestCase):
         )
         self.assertNotEqual(e.irn, company_irn)
 
-    def test_irn_falls_back_to_company_gstin_when_no_profile(self):
+    def test_irn_raises_when_store_gstin_unconfigured(self):
+        # No override and no pharmacy GSTIN → the IRN cannot (and must not) be
+        # computed from the company GSTIN; surface a clear error instead.
         e = self._entry(10, invoice_no='INV-2')
-        generate_irn_for_entry(e)
+        with self.assertRaises(ValueError):
+            generate_irn_for_entry(e)
+        e.refresh_from_db()
+        self.assertFalse(e.irn)
+
+    def test_irn_uses_pharma_gstin_when_no_override(self):
+        e = self._entry(40, invoice_no='INV-PH')
+        with mock.patch('inventory_reader.store_settings.get_store_gst',
+                        return_value={'gst_number': KA_GSTIN, 'store_name': 'KA'}):
+            generate_irn_for_entry(e)
         e.refresh_from_db()
         expected = compute_irn(
-            supplier_gstin=MH_GSTIN, doc_no='INV-2',
+            supplier_gstin=KA_GSTIN, doc_no='INV-PH',
             doc_date=date(2026, 4, 5), doc_type=DOC_TYPE_MAP['B2B'],
         )
         self.assertEqual(e.irn, expected)
@@ -206,13 +237,39 @@ class LocationTaxProfileAPITests(APITestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.data['company_gstin'], MH_GSTIN)
         by_id = {r['location_id']: r for r in res.data['profiles']}
-        # Configured store shows its own GSTIN.
+        # Store with an accounting override shows its own GSTIN + source.
         self.assertEqual(by_id[15]['gstin'], KA_GSTIN)
         self.assertTrue(by_id[15]['has_profile'])
-        # Unconfigured store falls back to the company GSTIN as "effective".
+        self.assertEqual(by_id[15]['source'], 'override')
+        self.assertTrue(by_id[15]['configured'])
+        # No override + (in tests) no pharmacy GSTIN → unconfigured, blank.
         self.assertEqual(by_id[16]['gstin'], '')
         self.assertFalse(by_id[16]['has_profile'])
-        self.assertEqual(by_id[16]['effective_gstin'], MH_GSTIN)
+        self.assertEqual(by_id[16]['effective_gstin'], '')
+        self.assertEqual(by_id[16]['source'], 'unconfigured')
+        self.assertFalse(by_id[16]['configured'])
+
+    def test_get_reports_pharma_as_source(self):
+        self.client.force_authenticate(user=self.admin)
+        fake_locs = [{'id': 16, 'name': 'MH Store', 'complete_name': 'MH Store'}]
+        pharma_row = {'location_id': 16, 'gst_number': KA_GSTIN, 'store_name': 'MH Store'}
+        with mock.patch(
+            'core.views.LocationTaxProfilesView._accessible_locations',
+            return_value=fake_locs,
+        ), mock.patch(
+            'inventory_reader.store_settings.get_store_gst_bulk',
+            return_value={16: pharma_row},
+        ), mock.patch(
+            'inventory_reader.store_settings.get_store_gst',
+            return_value=pharma_row,
+        ):
+            res = self.client.get('/api/accounts/location-tax-profiles/')
+        self.assertEqual(res.status_code, 200)
+        row = {r['location_id']: r for r in res.data['profiles']}[16]
+        self.assertEqual(row['source'], 'pharma')
+        self.assertEqual(row['pharma_gstin'], KA_GSTIN)
+        self.assertTrue(row['configured'])
+        self.assertEqual(row['effective_gstin'], KA_GSTIN)
 
     def test_put_denied_without_capability(self):
         regular = make_user(username='nobody')

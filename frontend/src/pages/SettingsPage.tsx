@@ -674,25 +674,22 @@ function GstRegistrationsTab() {
     </div>
   )
 
-  const company = data
   const profiles = data?.profiles ?? []
 
   return (
     <div className="space-y-4">
       <Card className="p-4">
         <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
-          Each store is its own GST registration. Set the store's GSTIN here — GST
-          returns (GSTR-1/3B), e-invoice IRNs and the grand summary use the
-          store's own GSTIN. The state code is derived from the GSTIN's first two
-          digits; override it only if needed.
+          Each store files under its own GSTIN. The GSTIN is taken{' '}
+          <span className="font-medium">live from the pharmacy store settings</span>{' '}
+          — GST returns (GSTR-1/3B), e-invoice IRNs and the grand summary all use
+          it automatically, so there's nothing to re-type here.
         </p>
         <p className="text-xs mt-1.5" style={{ color: 'var(--ink-3)' }}>
-          Stores left blank fall back to the company GSTIN
-          {' '}
-          <span className="font-mono" style={{ color: 'var(--ink-2)' }}>
-            {company?.company_gstin || '(not set)'}
-          </span>
-          {' '}(edit that under Company Info).
+          Set an override below only if a store should file under a different
+          GSTIN than pharmacy has. A store with no GSTIN in pharmacy (and no
+          override) is shown as <span className="font-medium" style={{ color: 'var(--danger)' }}>unconfigured</span> — set its
+          GSTIN in the pharmacy store settings.
         </p>
       </Card>
 
@@ -701,7 +698,7 @@ function GstRegistrationsTab() {
           <Thead>
             <Tr style={{ background: 'var(--surface-1)' }}>
               <Th>Store</Th>
-              <Th className="w-[220px]">GSTIN</Th>
+              <Th className="w-[220px]">GSTIN override</Th>
               <Th className="w-[90px]">State</Th>
               <Th className="w-[240px]">Legal / trade name (optional)</Th>
               <Th className="w-[120px]" />
@@ -712,14 +709,25 @@ function GstRegistrationsTab() {
               <Tr><Td colSpan={5} className="text-center py-12 text-sm" style={{ color: 'var(--ink-3)' }}>No locations available.</Td></Tr>
             ) : profiles.map((p) => {
               const d = drafts[p.location_id] ?? { gstin: '', state_code: '', legal_name: '' }
-              const usingFallback = !p.gstin
               return (
                 <Tr key={p.location_id}>
                   <Td className="align-top pt-3">
                     <div className="text-sm" style={{ color: 'var(--ink)' }}>{p.location_name}</div>
-                    {usingFallback && (
+                    {p.source === 'pharma' && (
+                      <div className="text-[11px] mt-0.5 flex items-center gap-1.5" style={{ color: 'var(--ink-3)' }}>
+                        <span className="px-1 py-0.5 rounded text-[10px] font-medium" style={{ background: 'var(--surface-1)', color: 'var(--ink-2)' }}>from pharmacy</span>
+                        <span className="font-mono">{p.pharma_gstin}</span>
+                      </div>
+                    )}
+                    {p.source === 'override' && (
                       <div className="text-[11px] mt-0.5" style={{ color: 'var(--ink-3)' }}>
-                        using company GSTIN: <span className="font-mono">{p.effective_gstin || '(none)'}</span>
+                        accounting override
+                        {p.pharma_gstin ? <> · pharmacy has <span className="font-mono">{p.pharma_gstin}</span></> : null}
+                      </div>
+                    )}
+                    {p.source === 'unconfigured' && (
+                      <div className="text-[11px] mt-0.5 font-medium" style={{ color: 'var(--danger)' }}>
+                        No GSTIN — set it in the pharmacy store settings
                       </div>
                     )}
                   </Td>
@@ -727,7 +735,7 @@ function GstRegistrationsTab() {
                     <Input
                       value={d.gstin}
                       onChange={(e) => setField(p.location_id, 'gstin', e.target.value.toUpperCase())}
-                      placeholder="15-char GSTIN"
+                      placeholder={p.pharma_gstin ? 'override pharmacy GSTIN' : '15-char GSTIN'}
                       maxLength={15}
                       className="font-mono"
                     />

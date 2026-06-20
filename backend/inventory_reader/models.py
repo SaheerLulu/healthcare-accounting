@@ -15,6 +15,30 @@ class LocationRO(models.Model):
         return self.name
 
 
+class SystemSettingsRO(models.Model):
+    """Read-only proxy for the pharmacy `dashboard_systemsettings` table.
+
+    Per-store registration settings, one row per location (a NULL-location row
+    is the pharmacy's global defaults). Accounting reads each store's GSTIN from
+    here so it never has to be re-typed — see
+    ``inventory_reader.store_settings`` and ``core.LocationTaxProfile.resolve``.
+    Never written to (owned by the pharmacy app)."""
+    location_id = models.PositiveIntegerField(null=True, blank=True)
+    store_name = models.CharField(max_length=255)
+    store_address = models.TextField()
+    store_phone = models.CharField(max_length=20)
+    store_email = models.EmailField(max_length=255)
+    gst_number = models.CharField(max_length=50)
+    drug_license = models.CharField(max_length=100)
+
+    class Meta:
+        managed = False
+        db_table = 'dashboard_systemsettings'
+
+    def __str__(self):
+        return f'settings loc{self.location_id}: {self.gst_number or "(no GSTIN)"}'
+
+
 class SupplierRO(models.Model):
     company_name = models.CharField(max_length=255)
     gst_no = models.CharField(max_length=50)

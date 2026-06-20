@@ -47,14 +47,15 @@ class AccountingSettings(models.Model):
 
 
 class LocationTaxProfile(models.Model):
-    """Per-store GST registration identity.
+    """Per-store GST registration OVERRIDE.
 
-    Each store can be its own GST registration (own GSTIN/state) when branches
-    span different states or legal entities — in India a GSTIN is per-state, so
-    no two stores share one. GST returns, e-invoice IRNs and the grand summary
-    read the *filer* identity from here, scoped to the store's ``location_id``,
-    and fall back to the company-wide :class:`AccountingSettings` for any field
-    a store hasn't set yet. There is no FK to a location table — ``location_id``
+    Each store files under its own GSTIN/state (in India a GSTIN is per-state).
+    The live source of truth for a store's GSTIN is the pharmacy store settings
+    (``dashboard_systemsettings.gst_number`` via
+    ``inventory_reader.store_settings``); this table only holds an optional
+    accounting-side override that wins over pharma when set (see
+    :meth:`resolve`). A row is NOT required for a store — most stores resolve
+    straight from pharma. There is no FK to a location table — ``location_id``
     mirrors the unmanaged inventory ``LocationRO`` ids used everywhere else.
     """
     location_id = models.PositiveIntegerField(unique=True, db_index=True)
@@ -86,23 +87,60 @@ class LocationTaxProfile(models.Model):
 
     @classmethod
     def resolve(cls, location_id):
-        """Return the filer :class:`TaxIdentity` for a store, falling back to
-        the company-wide AccountingSettings for any field the store leaves blank
-        (including when no profile row exists, e.g. an unconfigured store)."""
+        """Return the filer :class:`TaxIdentity` for a store.
+
+        Per-store identity is sourced LIVE from the pharmacy store settings (the
+        operational system of record for each store's GSTIN), with an optional
+        accounting-side override that wins:
+
+          gstin       : accounting override → pharmacy gst_number → blank
+          legal_name  : override → pharmacy store_name → company name
+          state_code  : override → gstin[:2] → company state (kept as a last
+                        resort so the CGST/SGST-vs-IGST GL split never breaks for
+                        a store whose GSTIN isn't set up yet)
+
+        A blank GSTIN is deliberate ("unconfigured") — it is NOT silently
+        replaced by the company GSTIN. Callers that need a real filer GSTIN
+        (e-invoice IRN) must treat blank as an error. ``resolve(None)``
+        (company-level, no store) returns the company identity unchanged."""
         settings = AccountingSettings.get_settings()
-        gstin = settings.gstin or ''
-        state_code = settings.state_code or ''
+        if not location_id:
+            return TaxIdentity(
+                gstin=settings.gstin or '',
+                state_code=settings.state_code or '',
+                legal_name=settings.company_name or '',
+            )
+
+        gstin = ''
+        state_code = ''
         legal_name = settings.company_name or ''
-        if location_id:
-            prof = cls.objects.filter(location_id=location_id).first()
-            if prof:
-                if prof.gstin:
-                    gstin = prof.gstin
-                    state_code = prof.state_code or prof.gstin[:2]
-                elif prof.state_code:
-                    state_code = prof.state_code
-                if prof.legal_name:
-                    legal_name = prof.legal_name
+
+        prof = cls.objects.filter(location_id=location_id).first()
+        if prof:
+            if prof.legal_name:
+                legal_name = prof.legal_name
+            if prof.gstin:
+                gstin = prof.gstin
+                state_code = prof.state_code or prof.gstin[:2]
+            elif prof.state_code:
+                state_code = prof.state_code
+
+        if not gstin:
+            # Live source of truth: the pharmacy per-store settings.
+            from inventory_reader.store_settings import get_store_gst
+            src = get_store_gst(location_id)
+            if src:
+                gstin = (src.get('gst_number') or '').strip().upper()
+                if gstin:
+                    state_code = state_code or gstin[:2]
+                    if not (prof and prof.legal_name) and src.get('store_name'):
+                        legal_name = src['store_name']
+
+        # The GSTIN is left blank when unconfigured, but the state still falls
+        # back to the company so intra/inter-state classification keeps working.
+        if not state_code:
+            state_code = settings.state_code or ''
+
         return TaxIdentity(gstin=gstin, state_code=state_code, legal_name=legal_name)
 
 

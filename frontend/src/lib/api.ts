@@ -2069,12 +2069,18 @@ export async function updateSettings(data: Partial<AccountingSettings>) {
 export interface LocationTaxProfile {
   location_id: number
   location_name: string
-  /** Store's own values (blank when not set). */
+  /** Accounting-side override (blank for most stores). */
   gstin: string
   state_code: string
   legal_name: string
   has_profile: boolean
-  /** What GST returns / e-invoices actually use, after company-wide fallback. */
+  /** Live GSTIN from the pharmacy store settings (blank when not set there). */
+  pharma_gstin: string
+  /** Where the effective GSTIN comes from. */
+  source: 'override' | 'pharma' | 'unconfigured'
+  /** True when an effective GSTIN exists (override or pharma). */
+  configured: boolean
+  /** What GST returns / e-invoices actually use. */
   effective_gstin: string
   effective_state_code: string
 }
