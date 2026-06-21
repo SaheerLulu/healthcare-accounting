@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.db import transaction, connection
 from inventory_reader.models import (
     PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO,
+    PurchaseReversalRO,
     OpeningStockRO, StockMovementRO, PettyCashTxnRO, FeeCollectionRO,
 )
 from journals.models import JournalEntry
@@ -300,6 +301,35 @@ class InventorySyncService:
         self._record_metrics('purchase_return', started, errors_before)
         return count
 
+    def sync_purchase_reversals(self, since_id: int = 0) -> int:
+        """Sync purchase reversals (internal undo of a confirmed GRN) into their
+        own reversal journal entries. Distinct from purchase returns."""
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='purchase_reversal', resolved=False).count()
+        already_synced = self._synced_ids('PurchaseReversal')
+        reversals = PurchaseReversalRO.objects.filter(
+            status__in=['confirmed', 'completed', 'approved'],
+        ).exclude(id__in=already_synced).order_by('id')
+
+        count = 0
+        last_id = since_id
+        for rev in reversals:
+            try:
+                entry = self.journal_service.generate_purchase_reversal(rev.id)
+                if entry:
+                    count += 1
+                self._resolve_error('purchase_reversal', rev.id)
+                last_id = max(last_id, rev.id)
+            except Exception as e:
+                self._log_error('purchase_reversal', rev.id, e)
+
+        SyncLog.objects.update_or_create(
+            sync_type='purchase_reversal',
+            defaults={'last_synced_id': last_id, 'records_processed': count}
+        )
+        self._record_metrics('purchase_reversal', started, errors_before)
+        return count
+
     def sync_stock_writeoffs(self, since_id: int = 0) -> int:
         """Post a loss JV for every inventory write-off (damage/wastage/expiry).
 
@@ -478,6 +508,8 @@ class InventorySyncService:
                     self.journal_service.generate_sales_return(error.source_id)
                 elif error.sync_type == 'purchase_return':
                     self.journal_service.generate_purchase_return(error.source_id)
+                elif error.sync_type == 'purchase_reversal':
+                    self.journal_service.generate_purchase_reversal(error.source_id)
                 elif error.sync_type == 'stock_writeoff':
                     self.journal_service.generate_stock_writeoff(error.source_id)
                 elif error.sync_type == 'stock_adjustment':
@@ -546,6 +578,7 @@ class InventorySyncService:
             ('B2BSalesOrder', B2BSalesOrderRO, 'status'),
             ('SalesReturn', SalesReturnRO, 'status'),
             ('PurchaseReturn', PurchaseReturnRO, 'status'),
+            ('PurchaseReversal', PurchaseReversalRO, 'status'),
             # Both legs of a transfer pair key on the destination GRN id, so a
             # cancelled transfer reverses the OUT and IN JVs together.
             ('StockTransferIn', PurchaseOrderRO, 'state'),
@@ -646,6 +679,7 @@ class InventorySyncService:
         b2b_count = self.sync_b2b(SyncLog.get_last_id('b2b'))
         return_count = self.sync_returns(SyncLog.get_last_id('return'))
         purchase_return_count = self.sync_purchase_returns(SyncLog.get_last_id('purchase_return'))
+        purchase_reversal_count = self.sync_purchase_reversals(SyncLog.get_last_id('purchase_reversal'))
         writeoff_count = self.sync_stock_writeoffs(SyncLog.get_last_id('stock_writeoff'))
         adjustment_count = self.sync_stock_adjustments(SyncLog.get_last_id('stock_adjustment'))
         petty_cash_count = self.sync_petty_cash(SyncLog.get_last_id('petty_cash'))
@@ -657,7 +691,7 @@ class InventorySyncService:
         reversed_cancelled = self.reverse_cancelled()
 
         total = (opening_stock_count + purchase_count + pos_count + b2b_count
-                 + return_count + purchase_return_count
+                 + return_count + purchase_return_count + purchase_reversal_count
                  + writeoff_count + adjustment_count + petty_cash_count
                  + stock_transfer_count + fee_collection_count)
         SyncLog.objects.create(
@@ -673,6 +707,7 @@ class InventorySyncService:
             'b2b': b2b_count,
             'returns': return_count,
             'purchase_returns': purchase_return_count,
+            'purchase_reversals': purchase_reversal_count,
             'stock_writeoffs': writeoff_count,
             'stock_adjustments': adjustment_count,
             'petty_cash': petty_cash_count,
@@ -690,7 +725,7 @@ class InventorySyncService:
 AUTO_GEN_REF_TYPES = (
     'OpeningStock',
     'PurchaseOrder', 'POSOrder', 'B2BSalesOrder',
-    'SalesReturn', 'PurchaseReturn',
+    'SalesReturn', 'PurchaseReturn', 'PurchaseReversal',
     'StockWriteOff', 'StockAdjustment',
     'PettyCash', 'StockTransferIn', 'StockTransferOut', 'FeeCollection',
 )

@@ -9,6 +9,7 @@ from inventory_reader.models import (
     B2BSalesOrderRO,
     SalesReturnRO,
     PurchaseReturnRO,
+    PurchaseReversalRO,
     OpeningStockRO,
     OpeningStockLineRO,
     StockMovementRO,
@@ -1021,6 +1022,118 @@ class JournalAutoGenerationService:
                 entry=entry, account=self._acct('CLOSING_STOCK', loc), credit=taxable_amount,
             )
         # Credit: Reverse ITC
+        if cgst_amount > 0:
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST', loc), credit=cgst_amount)
+        if sgst_amount > 0:
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_SGST', loc), credit=sgst_amount)
+        if igst_amount > 0:
+            JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_IGST', loc), credit=igst_amount)
+
+        entry.post()
+        return entry
+
+    @transaction.atomic
+    def generate_purchase_reversal(self, reversal_id):
+        """Generate the journal entry for a purchase reversal — an internal undo
+        of a confirmed GRN. Always a SEPARATE, posted entry; the original
+        purchase entry is never edited or deleted.
+
+        FULL reversal: post an exact swap of the original purchase entry
+        (debits/credits flipped) so header charges (transport / round-off /
+        discount) net perfectly to zero. PARTIAL reversal: a debit note for the
+        reversed lines only (Dr Trade Payables, Cr Closing Stock, Cr Input GST).
+        """
+        if self._entry_exists('PurchaseReversal', reversal_id):
+            return None
+
+        rev = (PurchaseReversalRO.objects
+               .select_related('supplier')
+               .prefetch_related('lines')
+               .get(id=reversal_id))
+        if rev.status not in ('confirmed', 'completed', 'approved'):
+            return None
+
+        loc = rev.location_id
+        rev_date = rev.reversal_date
+        if hasattr(rev_date, 'date'):
+            rev_date = rev_date.date()
+
+        # FULL: post an exact swap of the original purchase entry.
+        if rev.reversal_type == 'full':
+            original = (JournalEntry.objects
+                        .filter(reference_type='PurchaseOrder',
+                                reference_id=rev.original_purchase_order_id,
+                                is_posted=True, reversal_of__isnull=True)
+                        .order_by('id').first())
+            if original is None:
+                # The purchase was never booked (e.g. reversed before its own
+                # sync) — there is nothing to reverse in the books.
+                return None
+            entry = JournalEntry.objects.create(
+                date=rev_date,
+                narration=f"Purchase Reversal: {rev.reversal_no} (reverses PO {rev.original_purchase_order_id})",
+                voucher_type='DEBIT_NOTE',
+                reference_type='PurchaseReversal',
+                reference_id=reversal_id,
+                location_id=loc,
+            )
+            for line in original.lines.all():
+                JournalEntryLine.objects.create(
+                    entry=entry, account=line.account,
+                    debit=line.credit, credit=line.debit,
+                    narration=line.narration,
+                    party_type=line.party_type, party_id=line.party_id,
+                )
+            entry.post()
+            return entry
+
+        # PARTIAL: debit-note for the reversed lines only. Line taxable/tax were
+        # captured equal to the original GRN line, so summing nets exactly.
+        lines_data = list(rev.lines.all())
+        taxable_amount = sum(
+            (Decimal(str(l.taxable_amount or 0)) for l in lines_data), Decimal('0.00'))
+        total_tax = sum(
+            (Decimal(str(l.cgst_amount or 0)) + Decimal(str(l.sgst_amount or 0))
+             + Decimal(str(l.igst_amount or 0)))
+            for l in lines_data
+        )
+        if total_tax == Decimal('0.00'):
+            for line in lines_data:
+                base = Decimal(str(line.taxable_amount or 0))
+                total_tax += (base * Decimal(str(line.tax_percent or 0)) / Decimal('100')).quantize(
+                    Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        supply_type = self._get_supply_type(
+            rev.supplier.gst_no if rev.supplier else '', location_id=loc)
+        if supply_type == 'inter_state':
+            cgst_amount, sgst_amount, igst_amount = Decimal('0.00'), Decimal('0.00'), total_tax
+        else:
+            half = (total_tax / Decimal('2')).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            cgst_amount, sgst_amount, igst_amount = half, total_tax - half, Decimal('0.00')
+
+        total_return = taxable_amount + cgst_amount + sgst_amount + igst_amount
+
+        entry = JournalEntry.objects.create(
+            date=rev_date,
+            narration=f"Purchase Reversal: {rev.reversal_no} (partial; reverses PO {rev.original_purchase_order_id})",
+            voucher_type='DEBIT_NOTE',
+            reference_type='PurchaseReversal',
+            reference_id=reversal_id,
+            location_id=loc,
+        )
+        # Debit: Trade Payables (reduce supplier liability for the reversed lines)
+        if total_return > 0:
+            JournalEntryLine.objects.create(
+                entry=entry,
+                account=self._party_account(
+                    'Supplier', rev.supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc),
+                debit=total_return,
+                party_type='Supplier', party_id=rev.supplier_id,
+            )
+        # Credit: Closing Stock (perpetual — stock goes back out) + reverse ITC.
+        if taxable_amount > 0:
+            JournalEntryLine.objects.create(
+                entry=entry, account=self._acct('CLOSING_STOCK', loc), credit=taxable_amount)
         if cgst_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_CGST', loc), credit=cgst_amount)
         if sgst_amount > 0:

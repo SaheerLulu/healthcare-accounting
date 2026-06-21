@@ -456,6 +456,71 @@ class PurchaseReturnLineRO(models.Model):
         db_table = 'purchase_return_purchasereturnline'
 
 
+class PurchaseReversalRO(models.Model):
+    """Read-only proxy for purchase reversals (internal corrections of a
+    confirmed GRN). Distinct from purchase returns; posts its own reversal JE."""
+    reversal_no = models.CharField(max_length=100, blank=True)
+    supplier = models.ForeignKey(
+        SupplierRO, on_delete=models.DO_NOTHING, db_constraint=False
+    )
+    original_purchase_order = models.ForeignKey(
+        PurchaseOrderRO, on_delete=models.DO_NOTHING, db_constraint=False
+    )
+    location = models.ForeignKey(
+        LocationRO, null=True, blank=True,
+        on_delete=models.DO_NOTHING, db_constraint=False
+    )
+    reversal_type = models.CharField(max_length=10)  # full / partial
+    reversal_date = models.DateField()
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2)
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    total_cgst = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_sgst = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    total_igst = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    round_off = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    supply_type = models.CharField(max_length=20, blank=True)
+    reason = models.TextField(blank=True)
+    remarks = models.TextField(blank=True)
+    status = models.CharField(max_length=20)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'purchase_reversal_purchasereversal'
+
+    def __str__(self):
+        return self.reversal_no or f"PREV#{self.id}"
+
+
+class PurchaseReversalLineRO(models.Model):
+    purchase_reversal = models.ForeignKey(
+        PurchaseReversalRO, on_delete=models.DO_NOTHING,
+        related_name='lines', db_constraint=False
+    )
+    product = models.ForeignKey(
+        ProductRO, null=True, blank=True,
+        on_delete=models.DO_NOTHING, db_constraint=False
+    )
+    batch_no = models.CharField(max_length=100, blank=True)
+    expiry_month = models.CharField(max_length=7, blank=True)
+    quantity = models.IntegerField()
+    purchase_rate = models.DecimalField(max_digits=10, decimal_places=2)
+    mrp = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    tax_percent = models.DecimalField(max_digits=5, decimal_places=2)
+    taxable_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    cgst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    sgst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    igst_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    line_total = models.DecimalField(max_digits=10, decimal_places=2)
+    created_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'purchase_reversal_purchasereversalline'
+
+
 class StockMovementRO(models.Model):
     product = models.ForeignKey(
         ProductRO, on_delete=models.DO_NOTHING, db_constraint=False
