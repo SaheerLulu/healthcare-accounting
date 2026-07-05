@@ -6,6 +6,10 @@ from .views import (
     GSTSetoffPreviewView, GSTR9View, GSTR9CView, GSTLateFeeView, EWayBillViewSet,
 )
 from .grand_summary import GSTGrandSummaryView
+from .register_views import (
+    B2BRegisterView, B2CSummaryView, CreditNoteRegisterView,
+    GSTWorkingPapersView,
+)
 
 router = DefaultRouter()
 router.register(r'gstr1', GSTR1EntryViewSet, basename='gstr1-entry')
@@ -22,4 +26,12 @@ router.register(r'eway-bills', EWayBillViewSet, basename='eway-bill')
 
 urlpatterns = router.urls + [
     path('grand-summary/', GSTGrandSummaryView.as_view(), name='gst-grand-summary'),
+    path('reports/b2b-register/', B2BRegisterView.as_view(),
+         name='gst-b2b-register'),
+    path('reports/b2c-summary/', B2CSummaryView.as_view(),
+         name='gst-b2c-summary'),
+    path('reports/credit-notes/', CreditNoteRegisterView.as_view(),
+         name='gst-credit-note-register'),
+    path('working-papers/', GSTWorkingPapersView.as_view(),
+         name='gst-working-papers'),
 ]

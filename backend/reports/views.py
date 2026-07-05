@@ -2520,3 +2520,153 @@ class GSTFilingHealthView(APIView):
             'sections': sections,
             'total_issues': actionable,
         })
+
+
+# ─── Books registers (Purchase / Expense / Asset) ──────────────────────────
+
+def _parse_range_or_fy(request):
+    """start_date/end_date query params (ISO) with current-FY defaults.
+    Returns (start, end, error_response)."""
+    fy_start, fy_end = get_fy_dates()
+    start_raw = request.query_params.get('start_date')
+    end_raw = request.query_params.get('end_date')
+    try:
+        start = date.fromisoformat(start_raw) if start_raw else fy_start
+        end = date.fromisoformat(end_raw) if end_raw else fy_end
+    except ValueError:
+        return None, None, Response(
+            {'error': 'start_date/end_date must be YYYY-MM-DD'}, status=400)
+    if start > end:
+        return None, None, Response(
+            {'error': 'start_date must be on or before end_date'}, status=400)
+    return start, end, None
+
+
+def _register_export(request, filename_base, columns, row_values, title):
+    """?export=csv|xlsx handling shared by the three register views.
+    Returns an HttpResponse or None (JSON path)."""
+    fmt = request.query_params.get('export')
+    if fmt not in ('csv', 'xlsx'):
+        return None
+    from core.export_utils import csv_response, xlsx_response
+    if fmt == 'csv':
+        return csv_response(f'{filename_base}.csv', columns, row_values)
+    return xlsx_response(f'{filename_base}.xlsx',
+                         [(title, None, columns, row_values)])
+
+
+class PurchaseRegisterView(APIView):
+    """Supplier-invoice-wise purchase register (inventory purchases) with
+    GST split — registered and unregistered suppliers, transfers excluded."""
+
+    COLUMNS = ['Supplier GSTIN', 'Supplier Name', 'Invoice No', 'Invoice Date',
+               'Supply Type', 'Taxable Value', 'CGST', 'SGST', 'IGST',
+               'Invoice Value']
+
+    def get(self, request):
+        from gst_returns.registers import build_purchase_register, serialize_rows
+
+        start, end, err = _parse_range_or_fy(request)
+        if err:
+            return err
+        location = require_location_or_all_access(request)
+        data = build_purchase_register(start, end, location.id if location else None)
+        rows = serialize_rows(data['rows'])
+
+        export = _register_export(
+            request, f'Purchase_Register_{start}_{end}', self.COLUMNS,
+            [[r['supplier_gstin'], r['supplier_name'], r['invoice_no'],
+              r['invoice_date'], r['supply_type'], r['taxable_value'],
+              r['cgst'], r['sgst'], r['igst'], r['invoice_value']]
+             for r in rows],
+            'Purchase Register')
+        if export is not None:
+            return export
+        return Response({
+            'start_date': start.isoformat(), 'end_date': end.isoformat(),
+            'rows': rows, 'totals': data['totals'],
+            'registered_count': data['registered_count'],
+            'unregistered_count': data['unregistered_count'],
+        })
+
+
+class ExpenseRegisterView(APIView):
+    """Date-ordered register of direct expenses + vendor bills with GST/ITC
+    columns; expense heads joined per voucher."""
+
+    COLUMNS = ['Date', 'Voucher No', 'Source', 'Expense Head', 'Supplier',
+               'GSTIN', 'Taxable Value', 'CGST', 'SGST', 'IGST', 'Total',
+               'Paid Through']
+
+    def get(self, request):
+        from .registers import build_expense_register, serialize_rows
+
+        start, end, err = _parse_range_or_fy(request)
+        if err:
+            return err
+        location = require_location_or_all_access(request)
+        data = build_expense_register(start, end, location.id if location else None)
+        rows = serialize_rows(data['rows'])
+
+        export = _register_export(
+            request, f'Expense_Register_{start}_{end}', self.COLUMNS,
+            [[r['date'], r['voucher_no'], r['source'], r['head'],
+              r['party_name'], r['gstin'], r['taxable_value'], r['cgst'],
+              r['sgst'], r['igst'], r['total'], r['paid_through']]
+             for r in rows],
+            'Expense Register')
+        if export is not None:
+            return export
+        return Response({
+            'start_date': start.isoformat(), 'end_date': end.isoformat(),
+            'rows': rows, 'totals': data['totals'],
+            'voucher_count': data['voucher_count'],
+            'non_gst_count': data['non_gst_count'],
+        })
+
+
+class AssetRegisterView(APIView):
+    """Fixed-asset register with acquisition-time ITC split, accumulated
+    depreciation and net book value. Date range filters acquisitions;
+    omit both dates for the full register."""
+
+    COLUMNS = ['Asset No', 'Name', 'Class', 'Vendor', 'GSTIN',
+               'Acquisition Date', 'Acquisition Cost', 'CGST', 'SGST', 'IGST',
+               'Invoice Value', 'Accum. Depreciation', 'Net Book Value',
+               'Status']
+
+    def get(self, request):
+        from .registers import build_asset_register, serialize_rows
+
+        start_raw = request.query_params.get('start_date')
+        end_raw = request.query_params.get('end_date')
+        try:
+            start = date.fromisoformat(start_raw) if start_raw else None
+            end = date.fromisoformat(end_raw) if end_raw else None
+        except ValueError:
+            return Response(
+                {'error': 'start_date/end_date must be YYYY-MM-DD'}, status=400)
+        if start and end and start > end:
+            return Response(
+                {'error': 'start_date must be on or before end_date'}, status=400)
+        location = require_location_or_all_access(request)
+        data = build_asset_register(start, end, location.id if location else None)
+        rows = serialize_rows(data['rows'])
+
+        export = _register_export(
+            request,
+            f'Asset_Register_{start or "all"}_{end or "all"}', self.COLUMNS,
+            [[r['asset_no'], r['name'], r['asset_class'], r['party_name'],
+              r['gstin'], r['acquisition_date'], r['acquisition_cost'],
+              r['cgst'], r['sgst'], r['igst'], r['invoice_value'],
+              r['accumulated_depreciation'], r['net_book_value'], r['status']]
+             for r in rows],
+            'Asset Register')
+        if export is not None:
+            return export
+        return Response({
+            'start_date': start.isoformat() if start else None,
+            'end_date': end.isoformat() if end else None,
+            'rows': rows, 'totals': data['totals'],
+            'asset_count': data['asset_count'],
+        })

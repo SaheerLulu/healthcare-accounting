@@ -49,6 +49,12 @@ const GSTR3BPage = lazy(() => import('./pages/gst/GSTR3BPage'))
 const GstGrandSummaryPage = lazy(() => import('./pages/gst/GstGrandSummaryPage'))
 const ITCReconciliationPage = lazy(() => import('./pages/gst/ITCReconciliationPage'))
 const GSTFilingHealthPage = lazy(() => import('./pages/gst/GSTFilingHealthPage'))
+const B2BRegisterPage = lazy(() => import('./pages/gst/B2BRegisterPage'))
+const B2CSummaryPage = lazy(() => import('./pages/gst/B2CSummaryPage'))
+const CreditNoteRegisterPage = lazy(() => import('./pages/gst/CreditNoteRegisterPage'))
+const PurchaseRegisterPage = lazy(() => import('./pages/reports/PurchaseRegisterPage'))
+const ExpenseRegisterPage = lazy(() => import('./pages/reports/ExpenseRegisterPage'))
+const AssetRegisterPage = lazy(() => import('./pages/reports/AssetRegisterPage'))
 const TDSPage = lazy(() => import('./pages/TDSPage'))
 const TrialBalancePage = lazy(() => import('./pages/reports/TrialBalancePage'))
 const ProfitLossPage = lazy(() => import('./pages/reports/ProfitLossPage'))
@@ -150,6 +156,9 @@ export default function App() {
           <Route path="gst/grand-summary" element={<GstGrandSummaryPage />} />
           <Route path="gst/itc-reconciliation" element={<ITCReconciliationPage />} />
           <Route path="gst/filing-health" element={<GSTFilingHealthPage />} />
+          <Route path="gst/b2b-register" element={<B2BRegisterPage />} />
+          <Route path="gst/b2c-summary" element={<B2CSummaryPage />} />
+          <Route path="gst/credit-notes" element={<CreditNoteRegisterPage />} />
           <Route path="tds" element={<TDSPage />} />
           <Route path="reports/trial-balance" element={<TrialBalancePage />} />
           <Route path="reports/profit-loss" element={<ProfitLossPage />} />
@@ -157,6 +166,9 @@ export default function App() {
           <Route path="reports/gst-computation" element={<GSTComputationPage />} />
           <Route path="reports/hsn-summary" element={<HSNSummaryPage />} />
           <Route path="reports/party-outstanding" element={<PartyOutstandingPage />} />
+          <Route path="reports/purchase-register" element={<PurchaseRegisterPage />} />
+          <Route path="reports/expense-register" element={<ExpenseRegisterPage />} />
+          <Route path="reports/asset-register" element={<AssetRegisterPage />} />
           <Route path="reports/bank-book" element={<BankBookPage />} />
           <Route path="reports/cash-book" element={<CashBookPage />} />
           <Route path="reports/daybook" element={<DaybookPage />} />

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Loader2, RefreshCw } from 'lucide-react'
+import { FileSpreadsheet, Loader2, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
-import { generateGSTR3B, getGSTR3BSummaries, type GSTR3BSummary } from '../../lib/api'
+import api, { generateGSTR3B, getGSTR3BSummaries, type GSTR3BSummary } from '../../lib/api'
 import { formatCurrency, formatDate, getCurrentPeriod } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import { PeriodPicker } from '../../components/ui/period-picker'
@@ -100,6 +100,7 @@ export default function GSTR3BPage() {
   const [summaries, setSummaries] = useState<GSTR3BSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [period, setPeriod] = useState(getCurrentPeriod())
   const { activeLocationId } = useLocation()
 
@@ -136,11 +137,41 @@ export default function GSTR3BPage() {
     }
   }
 
+  async function downloadWorkingPapers() {
+    setExporting(true)
+    try {
+      const res = await api.get('/gst/working-papers/', {
+        params: { period }, responseType: 'blob',
+      })
+      const url = URL.createObjectURL(res.data as Blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `GST_Working_Papers_${period}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error('Failed to build working papers')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>GSTR-3B</h1>
-        <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Monthly summary return</p>
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>GSTR-3B</h1>
+          <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Monthly summary return</p>
+        </div>
+        <Button
+          variant="secondary"
+          onClick={downloadWorkingPapers}
+          disabled={exporting}
+          title="One Excel workbook with GSTR-3B, B2B/B2C registers, HSN, documents issued, credit notes, purchase and expense registers"
+        >
+          {exporting ? <Loader2 size={15} className="animate-spin" /> : <FileSpreadsheet size={15} />}
+          Working Papers
+        </Button>
       </div>
 
       {/* Controls */}

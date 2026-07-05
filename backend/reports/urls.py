@@ -30,4 +30,10 @@ urlpatterns = [
          name='financial-ratios'),
     path('bank-recon-summary/', views.BankReconciliationSummaryView.as_view(),
          name='bank-recon-summary'),
+    path('purchase-register/', views.PurchaseRegisterView.as_view(),
+         name='purchase-register'),
+    path('expense-register/', views.ExpenseRegisterView.as_view(),
+         name='expense-register'),
+    path('asset-register/', views.AssetRegisterView.as_view(),
+         name='asset-register'),
 ]

@@ -1529,6 +1529,89 @@ export async function getPartyOutstanding(params?: Record<string, string>) {
   return res.data as { party_type: string; as_of_date: string; rows: PartyOutstandingRow[]; total_outstanding: string }
 }
 
+// GST registers (FRS screens) — rate-wise rows computed live from inventory
+
+export interface RegisterTotals {
+  taxable_value: string
+  cgst: string
+  sgst: string
+  igst: string
+  total_tax: string
+  [key: string]: string
+}
+
+export interface B2BRegisterRow {
+  gstin: string
+  party_name: string
+  invoice_no: string
+  invoice_date: string
+  invoice_value: string
+  place_of_supply: string
+  supply_type: string
+  rate: string
+  taxable_value: string
+  cgst: string
+  sgst: string
+  igst: string
+  source: string
+  location_id: number
+}
+
+export async function getB2BRegister(period: string) {
+  const res = await api.get('/gst/reports/b2b-register/', { params: { period } })
+  return res.data as {
+    period: string; rows: B2BRegisterRow[]; totals: RegisterTotals
+    invoice_count: number
+  }
+}
+
+export interface B2CSummaryRow {
+  place_of_supply: string
+  supply_type: string
+  rate: string
+  taxable_value: string
+  cgst: string
+  sgst: string
+  igst: string
+  total_tax: string
+}
+
+export async function getB2CSummary(period: string) {
+  const res = await api.get('/gst/reports/b2c-summary/', { params: { period } })
+  return res.data as {
+    period: string; rows: B2CSummaryRow[]; totals: RegisterTotals
+    b2cl_excluded: number
+  }
+}
+
+export interface CreditNoteRegisterRow {
+  gstin: string
+  party_name: string
+  note_no: string
+  note_date: string
+  original_invoice_no: string
+  original_invoice_date: string | null
+  note_type: string
+  supply_type: string
+  rate: string
+  taxable_value: string
+  cgst: string
+  sgst: string
+  igst: string
+  total: string
+  is_time_barred: boolean
+  reason: string
+  location_id: number
+}
+
+export async function getCreditNoteRegister(period: string) {
+  const res = await api.get('/gst/reports/credit-notes/', { params: { period } })
+  return res.data as {
+    period: string; rows: CreditNoteRegisterRow[]; totals: RegisterTotals
+    note_count: number
+  }
+}
+
 // ─── TDS ─────────────────────────────────────────────────────────────────────
 
 export interface TDSDeduction {
@@ -1800,6 +1883,88 @@ export async function getOpenSupplierInvoices(params?: Record<string, string>) {
 export async function getPayablesAging(params?: Record<string, string>) {
   const res = await api.get('/reports/payables-aging/', { params })
   return res.data as { rows: PayablesAgingRow[]; total_outstanding: string }
+}
+
+// Books registers — Purchase / Expense / Asset (FRS screens)
+
+export interface PurchaseRegisterRow {
+  supplier_gstin: string
+  supplier_name: string
+  registered: boolean
+  invoice_no: string
+  invoice_date: string
+  supply_type: string
+  taxable_value: string
+  cgst: string
+  sgst: string
+  igst: string
+  invoice_value: string
+  location_id: number
+}
+
+export async function getPurchaseRegister(params?: Record<string, string>) {
+  const res = await api.get('/reports/purchase-register/', { params })
+  return res.data as {
+    start_date: string; end_date: string
+    rows: PurchaseRegisterRow[]; totals: RegisterTotals
+    registered_count: number; unregistered_count: number
+  }
+}
+
+export interface ExpenseRegisterRow {
+  date: string
+  voucher_no: string
+  source: string
+  head: string
+  party_name: string
+  gstin: string
+  taxable_value: string
+  cgst: string
+  sgst: string
+  igst: string
+  total: string
+  paid_through: string
+  location_id: number | null
+}
+
+export async function getExpenseRegister(params?: Record<string, string>) {
+  const res = await api.get('/reports/expense-register/', { params })
+  return res.data as {
+    start_date: string; end_date: string
+    rows: ExpenseRegisterRow[]; totals: RegisterTotals
+    voucher_count: number; non_gst_count: number
+  }
+}
+
+export interface AssetRegisterRow {
+  asset_no: string
+  name: string
+  asset_class: string
+  party_name: string
+  gstin: string
+  acquisition_date: string
+  acquisition_cost: string
+  cgst: string
+  sgst: string
+  igst: string
+  invoice_value: string
+  accumulated_depreciation: string
+  net_book_value: string
+  status: string
+  location_id: number | null
+}
+
+export async function getAssetRegister(params?: Record<string, string>) {
+  const res = await api.get('/reports/asset-register/', { params })
+  return res.data as {
+    start_date: string | null; end_date: string | null
+    rows: AssetRegisterRow[]
+    totals: {
+      acquisition_cost: string; cgst: string; sgst: string; igst: string
+      accumulated_depreciation: string; net_book_value: string
+    }
+    asset_count: number
+  }
 }
 
 // ─── Payroll ────────────────────────────────────────────────────────────────
