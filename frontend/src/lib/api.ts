@@ -1888,6 +1888,7 @@ export async function getPayablesAging(params?: Record<string, string>) {
 // Books registers — Purchase / Expense / Asset (FRS screens)
 
 export interface PurchaseRegisterRow {
+  po_id: number
   supplier_gstin: string
   supplier_name: string
   registered: boolean
@@ -1908,6 +1909,34 @@ export async function getPurchaseRegister(params?: Record<string, string>) {
     start_date: string; end_date: string
     rows: PurchaseRegisterRow[]; totals: RegisterTotals
     registered_count: number; unregistered_count: number
+  }
+}
+
+export interface PurchaseLineRow {
+  product_name: string
+  hsn_code: string
+  batch_no: string
+  expiry_month: string
+  quantity: string
+  free_qty: string
+  purchase_rate: string
+  mrp: string
+  discount_percent: string
+  tax_percent: string
+  taxable_value: string
+  cgst: string
+  sgst: string
+  igst: string
+  line_total: string
+}
+
+export async function getPurchaseRegisterLines(poId: number) {
+  const res = await api.get('/reports/purchase-register/lines/', { params: { po_id: poId } })
+  return res.data as {
+    po_id: number; invoice_no: string; invoice_date: string | null
+    supplier_name: string; supplier_gstin: string; supply_type: string
+    lines: PurchaseLineRow[]
+    totals: { taxable_value: string; cgst: string; sgst: string; igst: string }
   }
 }
 

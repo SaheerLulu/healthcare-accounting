@@ -223,6 +223,58 @@ class RegisterEndpointTests(RegisterTestBase):
         self.assertEqual(row['cgst'], '60.00')
         self.assertEqual(row['invoice_value'], '1120.00')
 
+    def test_purchase_register_lines_drilldown(self):
+        supplier = SimpleNamespace(id=1, gst_no='27AABCS4321S1Z9',
+                                   company_name='PQR Supplies',
+                                   state='Maharashtra')
+        product = SimpleNamespace(name='Paracetamol 500', pharma_hsn_code='3004')
+        line = SimpleNamespace(
+            product=product, product_name='Paracetamol 500',
+            batch_no='B123', expiry_month='2027-05',
+            quantity=Decimal('10'), free_qty=Decimal('2'),
+            purchase_rate=Decimal('50'), mrp=Decimal('80'),
+            discount_percent=Decimal('10'), tax_percent=Decimal('12'))
+        po = SimpleNamespace(
+            id=77, supplier=supplier, supplier_id=1, bill_no='PB-77',
+            bill_date=date(2026, 6, 3), created_at=None, location_id=1,
+            lines=SimpleNamespace(all=lambda: [line]),
+        )
+        with fake_active_location(all_access=True), \
+             mock.patch('gst_returns.registers._fetch_purchase',
+                        lambda pk: po if pk == 77 else None):
+            res = self.client.get('/api/reports/purchase-register/lines/',
+                                  {'po_id': '77'}, HTTP_X_LOCATION_ID='1')
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.data['invoice_no'], 'PB-77')
+            row = res.data['lines'][0]
+            # (10 + 2 free) x 50 x 90% = 540 @12% intra → 32.40 + 32.40
+            self.assertEqual(row['taxable_value'], '540.00')
+            self.assertEqual(row['cgst'], '32.40')
+            self.assertEqual(row['hsn_code'], '3004')
+            self.assertEqual(row['batch_no'], 'B123')
+            self.assertEqual(res.data['totals']['taxable_value'], '540.00')
+
+            # Lines must foot to the register row for the same PO
+            with mock.patch('gst_returns.registers._fetch_purchases',
+                            lambda *a, **k: [po]):
+                reg = self.client.get(
+                    '/api/reports/purchase-register/',
+                    {'start_date': '2026-06-01', 'end_date': '2026-06-30'},
+                    HTTP_X_LOCATION_ID='1')
+            self.assertEqual(reg.data['rows'][0]['po_id'], 77)
+            self.assertEqual(reg.data['rows'][0]['taxable_value'],
+                             res.data['totals']['taxable_value'])
+
+            # Another store's PO must not be readable
+            other = self.client.get('/api/reports/purchase-register/lines/',
+                                    {'po_id': '77'}, HTTP_X_LOCATION_ID='2')
+            self.assertEqual(other.status_code, 404)
+
+            # Bad / missing po_id
+            bad = self.client.get('/api/reports/purchase-register/lines/',
+                                  HTTP_X_LOCATION_ID='1')
+            self.assertEqual(bad.status_code, 400)
+
     def test_regular_user_without_header_is_refused(self):
         from core.tests.utils import make_user
         client = APIClient()

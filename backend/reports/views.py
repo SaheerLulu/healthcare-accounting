@@ -2670,3 +2670,28 @@ class AssetRegisterView(APIView):
             'rows': rows, 'totals': data['totals'],
             'asset_count': data['asset_count'],
         })
+
+
+class PurchaseRegisterLinesView(APIView):
+    """Drill-down for one purchase register row: the purchase-entry line
+    items (product, HSN, batch, expiry, qty, free qty, rate, MRP, discount,
+    GST rate) with taxable/tax derived identically to the register row."""
+
+    def get(self, request):
+        from gst_returns.registers import build_purchase_lines, serialize_rows
+
+        po_id = request.query_params.get('po_id')
+        try:
+            po_id = int(po_id)
+        except (TypeError, ValueError):
+            return Response({'error': 'po_id (integer) is required'}, status=400)
+
+        location = require_location_or_all_access(request)
+        data = build_purchase_lines(po_id, location.id if location else None)
+        if data is None:
+            return Response({'error': 'Purchase not found'}, status=404)
+
+        data['lines'] = serialize_rows(data['lines'])
+        data['invoice_date'] = (
+            data['invoice_date'].isoformat() if data['invoice_date'] else None)
+        return Response(data)

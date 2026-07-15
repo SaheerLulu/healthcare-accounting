@@ -165,6 +165,12 @@ def _fetch_purchases(start_date, end_date, location_id=None):
     return list(qs)
 
 
+def _fetch_purchase(po_id):
+    from inventory_reader.models import PurchaseOrderRO
+    return PurchaseOrderRO.objects.filter(pk=po_id).select_related(
+        'supplier').prefetch_related('lines__product').first()
+
+
 # ─── B2B register (GSTR-1 Table 4) ───────────────────────────────────────
 
 def build_b2b_register(period, location_id=None):
@@ -492,6 +498,7 @@ def build_purchase_register(start_date, end_date, location_id=None):
         else:
             unregistered += 1
         rows.append({
+            'po_id': po.id,
             'supplier_gstin': supplier_gstin or 'Unregistered',
             'supplier_name': supplier_name,
             'registered': bool(supplier_gstin),
@@ -511,6 +518,76 @@ def build_purchase_register(start_date, end_date, location_id=None):
     totals['invoice_value'] = str(_q2(sum(_dec(r['invoice_value']) for r in rows)))
     return {'rows': rows, 'totals': totals,
             'registered_count': registered, 'unregistered_count': unregistered}
+
+
+def build_purchase_lines(po_id, location_id=None):
+    """Line-item drill-down for one purchase register row — the same fields
+    as the pharmacy purchase entry (product, HSN, batch, expiry, qty, free
+    qty, rate, MRP, discount, GST rate) with the taxable/tax values derived
+    by the SAME per-line arithmetic as build_purchase_register, so the lines
+    foot to the register row exactly. Returns None when the PO doesn't exist
+    or belongs to a store the caller isn't scoped to."""
+    po = _fetch_purchase(po_id)
+    if po is None:
+        return None
+    if location_id and po.location_id != location_id:
+        return None
+
+    supplier = po.supplier
+    supplier_gstin = (supplier.gst_no or '') if supplier else ''
+    supplier_state = state_name_to_code(supplier.state or '') if supplier else ''
+    biz = _FilerCache().get(po.location_id)
+    supply_type = detect_supply_type(
+        biz.gstin, supplier_gstin, biz.state_code, supplier_state)
+
+    lines = []
+    totals = _new_bucket()
+    for line in po.lines.all():
+        qty = _dec(line.quantity) + _dec(line.free_qty)
+        discount_factor = (Decimal('100') - _dec(line.discount_percent)) / Decimal('100')
+        taxable = qty * _dec(line.purchase_rate) * discount_factor
+        split = compute_tax_split(taxable, _dec(line.tax_percent), supply_type)
+        totals['taxable'] += taxable
+        totals['cgst'] += split['cgst']
+        totals['sgst'] += split['sgst']
+        totals['igst'] += split['igst']
+        product = getattr(line, 'product', None)
+        lines.append({
+            'product_name': (getattr(line, 'product_name', '') or
+                             (product.name if product else '')),
+            'hsn_code': (product.pharma_hsn_code or '') if product else '',
+            'batch_no': getattr(line, 'batch_no', '') or '',
+            'expiry_month': getattr(line, 'expiry_month', '') or '',
+            'quantity': _dec(line.quantity),
+            'free_qty': _dec(line.free_qty),
+            'purchase_rate': _q2(line.purchase_rate),
+            'mrp': _q2(getattr(line, 'mrp', 0)),
+            'discount_percent': _rate(line.discount_percent),
+            'tax_percent': _rate(line.tax_percent),
+            'taxable_value': _q2(taxable),
+            'cgst': split['cgst'],
+            'sgst': split['sgst'],
+            'igst': split['igst'],
+            'line_total': _q2(taxable + split['cgst'] + split['sgst'] + split['igst']),
+        })
+
+    totals = _finalize_bucket(totals)
+    return {
+        'po_id': po.id,
+        'invoice_no': po.bill_no or f'PO-{po.id}',
+        'invoice_date': po.bill_date or (po.created_at.date() if po.created_at else None),
+        'supplier_name': (supplier.company_name if supplier
+                          else f'Supplier #{po.supplier_id}'),
+        'supplier_gstin': supplier_gstin,
+        'supply_type': supply_type,
+        'lines': lines,
+        'totals': {
+            'taxable_value': str(totals['taxable']),
+            'cgst': str(totals['cgst']),
+            'sgst': str(totals['sgst']),
+            'igst': str(totals['igst']),
+        },
+    }
 
 
 # ─── shared totals / serialization ───────────────────────────────────────

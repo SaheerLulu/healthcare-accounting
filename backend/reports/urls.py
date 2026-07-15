@@ -32,6 +32,8 @@ urlpatterns = [
          name='bank-recon-summary'),
     path('purchase-register/', views.PurchaseRegisterView.as_view(),
          name='purchase-register'),
+    path('purchase-register/lines/', views.PurchaseRegisterLinesView.as_view(),
+         name='purchase-register-lines'),
     path('expense-register/', views.ExpenseRegisterView.as_view(),
          name='expense-register'),
     path('asset-register/', views.AssetRegisterView.as_view(),
