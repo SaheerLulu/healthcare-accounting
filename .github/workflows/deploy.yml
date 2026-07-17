@@ -1,0 +1,167 @@
+# ============================================================
+# Build & Deploy — one pipeline for all four environments.
+#
+#   develop      → biloop-dev    https://dev.accounting.biloop.ai
+#   main         → biloop-prod   https://accounting.biloop.ai
+#   dev-seefmed  → seefmed-dev   https://devaccounting.seefmed.com
+#   prod-seefmed → seefmed-prod  https://accounting.seefmed.com
+#
+# CI builds the backend + frontend Docker images once, pushes
+# them to GHCR, then the target server pulls them and rolls its
+# stack via deploy/scripts/remote-deploy.sh.
+#
+# Each accounting environment MUST deploy to the same server as
+# its pharmacy counterpart — the two apps share one PostgreSQL
+# database per environment.
+#
+# Server credentials come from GitHub Environments (created
+# automatically on first run). A secret not defined on the
+# environment falls back to the repository-level secret, so one
+# set of EC2_* secrets deploys everything to one server; point
+# an environment at another server by overriding its secrets.
+# ============================================================
+name: Build & Deploy
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+      - dev-seefmed
+      - prod-seefmed
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  config:
+    name: Map branch to environment
+    runs-on: ubuntu-latest
+    outputs:
+      env_name: ${{ steps.map.outputs.env_name }}
+      domain: ${{ steps.map.outputs.domain }}
+    steps:
+      - name: Resolve branch mapping
+        id: map
+        run: |
+          case "$GITHUB_REF_NAME" in
+            develop)      env_name=biloop-dev;   domain=dev.accounting.biloop.ai ;;
+            main)         env_name=biloop-prod;  domain=accounting.biloop.ai ;;
+            dev-seefmed)  env_name=seefmed-dev;  domain=devaccounting.seefmed.com ;;
+            prod-seefmed) env_name=seefmed-prod; domain=accounting.seefmed.com ;;
+            *) echo "::error::No deployment mapping for branch '$GITHUB_REF_NAME'"; exit 1 ;;
+          esac
+          echo "env_name=$env_name" >> "$GITHUB_OUTPUT"
+          echo "domain=$domain"     >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build & push images
+    runs-on: ubuntu-latest
+    outputs:
+      backend_image: ${{ steps.img.outputs.backend }}
+      frontend_image: ${{ steps.img.outputs.frontend }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Compute image names
+        id: img
+        run: |
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "prefix=$prefix"                            >> "$GITHUB_OUTPUT"
+          echo "backend=${prefix}-backend:${GITHUB_SHA}"   >> "$GITHUB_OUTPUT"
+          echo "frontend=${prefix}-frontend:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.img.outputs.backend }}
+            ${{ steps.img.outputs.prefix }}-backend:${{ github.ref_name }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build & push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.img.outputs.frontend }}
+            ${{ steps.img.outputs.prefix }}-frontend:${{ github.ref_name }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  deploy:
+    name: Deploy ${{ needs.config.outputs.env_name }}
+    needs: [config, build]
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ needs.config.outputs.env_name }}
+      url: https://${{ needs.config.outputs.domain }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Copy deploy config to server
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
+          source: "deploy"
+          target: "/opt/accounting/repo-${{ needs.config.outputs.env_name }}"
+          rm: true
+          overwrite: true
+
+      - name: Roll the stack on the server
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          ENV_NAME: ${{ needs.config.outputs.env_name }}
+          DOMAIN: ${{ needs.config.outputs.domain }}
+          BACKEND_IMAGE: ${{ needs.build.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ needs.build.outputs.frontend_image }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          CERTBOT_EMAIL: ${{ vars.CERTBOT_EMAIL }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_SSH_PORT || 22 }}
+          script_stop: true
+          envs: ENV_NAME,DOMAIN,BACKEND_IMAGE,FRONTEND_IMAGE,REGISTRY_USER,REGISTRY_TOKEN,DATABASE_URL,DJANGO_SECRET_KEY,POSTGRES_PASSWORD,CERTBOT_EMAIL
+          script: |
+            export ENV_NAME DOMAIN BACKEND_IMAGE FRONTEND_IMAGE REGISTRY_USER REGISTRY_TOKEN DATABASE_URL DJANGO_SECRET_KEY POSTGRES_PASSWORD CERTBOT_EMAIL
+            bash "/opt/accounting/repo-${ENV_NAME}/deploy/scripts/remote-deploy.sh"
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "::error::Deployment to ${{ needs.config.outputs.env_name }} failed — check the logs above."

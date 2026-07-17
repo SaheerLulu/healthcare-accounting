@@ -1,19 +1,24 @@
 # -------------------------------------------------------
-# DEV bootstrap – HTTP only (use until certbot creates SSL certs)
-# Run: sudo certbot --nginx -d devaccounting.seefmed.com
-# Then redeploy to switch to dev.conf
+# Host-nginx vhost (HTTP only) — used before a Let's Encrypt
+# certificate exists so the ACME webroot challenge can pass.
+# Rendered by remote-deploy.sh via:
+#   envsubst '${DOMAIN} ${FRONTEND_PORT}'
+# Replaced by site.conf.template once certbot succeeds.
 # -------------------------------------------------------
 
 server {
     listen 80;
-    server_name devaccounting.seefmed.com;
+    server_name ${DOMAIN};
 
+    # Let's Encrypt challenge
     location /.well-known/acme-challenge/ {
         root /var/www/certbot;
     }
 
+    client_max_body_size 100M;
+
     location / {
-        proxy_pass http://127.0.0.1:3003;
+        proxy_pass http://127.0.0.1:${FRONTEND_PORT};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -21,10 +26,8 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+        proxy_connect_timeout 900s;
+        proxy_send_timeout 900s;
+        proxy_read_timeout 900s;
     }
-
-    gzip on;
-    gzip_vary on;
-    gzip_min_length 1024;
-    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
 }

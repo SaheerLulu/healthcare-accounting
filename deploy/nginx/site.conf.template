@@ -1,27 +1,29 @@
 # -------------------------------------------------------
-# Nginx reverse-proxy – PROD environment
-# accounting.seefmed.com  →  accounting-prod-frontend:3000
+# Host-nginx vhost (HTTPS) — rendered by remote-deploy.sh
+# via: envsubst '${DOMAIN} ${FRONTEND_PORT}'
+# Installed as /etc/nginx/sites-available/${DOMAIN}.conf
 # -------------------------------------------------------
 
 server {
     listen 80;
-    server_name accounting.seefmed.com;
+    server_name ${DOMAIN};
+
+    # Let's Encrypt challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
 
     location / {
         return 301 https://$host$request_uri;
-    }
-
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
     }
 }
 
 server {
     listen 443 ssl http2;
-    server_name accounting.seefmed.com;
+    server_name ${DOMAIN};
 
-    ssl_certificate     /etc/letsencrypt/live/accounting.seefmed.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/accounting.seefmed.com/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
 
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
@@ -34,7 +36,7 @@ server {
     client_max_body_size 100M;
 
     location / {
-        proxy_pass http://127.0.0.1:3004;
+        proxy_pass http://127.0.0.1:${FRONTEND_PORT};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
