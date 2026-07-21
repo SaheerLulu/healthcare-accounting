@@ -76,11 +76,15 @@ fi
 
 # ---- 2. PostgreSQL on the host (idempotent) ----------------
 # The accounting app shares the pharmacy app's database. Postgres
-# itself is installed by the pharmacy deploy; here we only make
-# sure the role and database exist (first-on-a-fresh-env case).
-DB_NAME="${DATABASE_URL##*/}"
+# itself is installed by the pharmacy deploy, which also creates
+# the role and database. We only bootstrap them on a genuinely
+# fresh env — and never let that step fail the deploy, since the
+# app's own connection is the real source of truth.
+DB_NAME="${DATABASE_URL##*/}"; DB_NAME="${DB_NAME%%\?*}"
 DB_USER="$(echo "$DATABASE_URL" | sed -E 's|^[a-z]+://([^:/@]+).*|\1|')"
 DB_PASS="$(echo "$DATABASE_URL" | sed -E 's|^[a-z]+://[^:]+:([^@]*)@.*|\1|')"
+DB_PORT="$(echo "$DATABASE_URL" | sed -nE 's|^[a-z]+://[^@]+@[^:/]+:([0-9]+)/.*|\1|p')"
+DB_PORT="${DB_PORT:-5432}"
 
 case "$DATABASE_URL" in
   *host.docker.internal*|*localhost*|*127.0.0.1*)
@@ -89,15 +93,31 @@ case "$DATABASE_URL" in
       log "The accounting app shares the pharmacy database — deploy the pharmacy app first."
       exit 1
     fi
-    if ! sudo -n -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1; then
-      log "Creating PostgreSQL role ${DB_USER}"
-      sudo -n -u postgres psql -v ON_ERROR_STOP=1 <<SQL
+    # If the app role can already reach its database, it's provisioned
+    # (the pharmacy deploy owns it) — nothing for us to bootstrap. This
+    # is the same TCP connection Django makes, so it's the real test.
+    if PGPASSWORD="$DB_PASS" psql -h 127.0.0.1 -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -tAc 'SELECT 1' >/dev/null 2>&1; then
+      log "Database ${DB_NAME} reachable as ${DB_USER} — skipping superuser bootstrap"
+    elif sudo -n -u postgres psql -tAc 'SELECT 1' >/dev/null 2>&1; then
+      # Fresh env: we can act as the postgres superuser, so create them.
+      if ! sudo -n -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}'" | grep -q 1; then
+        log "Creating PostgreSQL role ${DB_USER}"
+        sudo -n -u postgres psql -v ON_ERROR_STOP=1 <<SQL
 CREATE ROLE "${DB_USER}" LOGIN PASSWORD '${DB_PASS//\'/\'\'}';
 SQL
-    fi
-    if ! sudo -n -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1; then
-      log "Creating database ${DB_NAME}"
-      sudo -n -u postgres createdb -O "$DB_USER" "$DB_NAME"
+      fi
+      if ! sudo -n -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1; then
+        log "Creating database ${DB_NAME}"
+        sudo -n -u postgres createdb -O "$DB_USER" "$DB_NAME"
+      fi
+    else
+      # Neither the app role nor the postgres superuser could connect
+      # (superuser login is commonly disabled for hardening). Assume the
+      # pharmacy deploy already provisioned the role/database; the app's
+      # own DB connection below will surface any real problem.
+      log "WARNING: cannot reach ${DB_NAME} as ${DB_USER} and the postgres"
+      log "         superuser is unavailable — assuming the pharmacy deploy"
+      log "         already provisioned the role/database, continuing."
     fi
     ;;
   *)
