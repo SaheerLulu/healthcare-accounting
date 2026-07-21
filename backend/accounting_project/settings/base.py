@@ -13,16 +13,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 # Security
 # ---------------------------------------------------------------------------
 _SECRET_KEY_ENV = os.environ.get('DJANGO_SECRET_KEY')
-# WARNING: Set DJANGO_SECRET_KEY environment variable in production.
-# The fallback below is intentionally insecure and must NOT be used in prod.
-if not _SECRET_KEY_ENV:
-    import warnings
-    warnings.warn(
-        "DJANGO_SECRET_KEY environment variable is not set. "
-        "Using insecure fallback key – this is only safe in local development.",
-        stacklevel=2,
+# Fail fast in production; use the shared dev-only fallback (identical across
+# every clinic app so JWT SSO works locally) only when DJANGO_DEBUG is on.
+if _SECRET_KEY_ENV:
+    SECRET_KEY = _SECRET_KEY_ENV
+elif os.environ.get('DJANGO_DEBUG', 'True').lower() in ('1', 'true', 'yes'):
+    SECRET_KEY = 'django-insecure--3fejku$$i93u7o15lm79*vl1tve0*tsl8em6hx1x8y4@=k4hr'
+else:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        'DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is off. All clinic apps '
+        'must share the same key for JWT SSO; refusing to boot with the insecure '
+        'dev fallback.'
     )
-SECRET_KEY = _SECRET_KEY_ENV or 'django-insecure--3fejku$$i93u7o15lm79*vl1tve0*tsl8em6hx1x8y4@=k4hr'
 
 # Comma-separated env override; '*' stays the local-development default.
 # dev.py narrows this when DJANGO_DEBUG=False and prod.py supplies its own

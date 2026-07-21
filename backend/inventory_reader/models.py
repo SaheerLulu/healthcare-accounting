@@ -665,7 +665,8 @@ class FeeCollectionRO(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     payment_mode = models.CharField(max_length=20)
     payment_status = models.CharField(max_length=20)
-    receipt_number = models.CharField(max_length=20, blank=True)
+    # FO widened this column to 40 for composite invoice receipts ('INV-…/n').
+    receipt_number = models.CharField(max_length=40, blank=True)
     collected_at = models.DateTimeField(null=True, blank=True)
     location = models.ForeignKey(
         LocationRO, on_delete=models.DO_NOTHING, db_constraint=False
