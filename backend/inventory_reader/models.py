@@ -593,6 +593,47 @@ class OpeningStockLineRO(models.Model):
         db_table = 'inventory_openingstockline'
 
 
+class OpeningStockCorrectionRO(models.Model):
+    """Read-only proxy onto an edit request for an opening-stock entry.
+
+    The pharmacy applies approved corrections to its lines and stock; the
+    accounting sync reads the old→new snapshots here to post a delta JV
+    (the original OpeningStock JV is never rewritten)."""
+    opening_stock = models.ForeignKey(
+        OpeningStockRO, on_delete=models.DO_NOTHING, db_constraint=False,
+        related_name='corrections',
+    )
+    location = models.ForeignKey(
+        LocationRO, on_delete=models.DO_NOTHING, db_constraint=False
+    )
+    status = models.CharField(max_length=20)  # pending / approved / rejected
+    reason = models.TextField(blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'inventory_openingstockcorrection'
+
+
+class OpeningStockCorrectionLineRO(models.Model):
+    """Old→new value snapshot for one corrected opening-stock line."""
+    correction = models.ForeignKey(
+        OpeningStockCorrectionRO, on_delete=models.DO_NOTHING, db_constraint=False,
+        related_name='lines',
+    )
+    old_quantity = models.IntegerField(default=0)
+    old_purchase_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    old_tax_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    new_quantity = models.IntegerField(default=0)
+    new_purchase_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    new_tax_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        managed = False
+        db_table = 'inventory_openingstockcorrectionline'
+
+
 # ─── User / Role / Location Assignment (read-only from inventory) ────────────
 
 class RoleRO(models.Model):

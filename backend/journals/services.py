@@ -12,6 +12,7 @@ from inventory_reader.models import (
     PurchaseReversalRO,
     OpeningStockRO,
     OpeningStockLineRO,
+    OpeningStockCorrectionRO,
     StockMovementRO,
     PettyCashTxnRO,
     FeeCollectionRO,
@@ -435,6 +436,95 @@ class JournalAutoGenerationService:
             credit=total_value + total_tax,
             narration='Opening balance equity',
         )
+        entry.post()
+        return entry
+
+    def generate_opening_stock_correction(self, correction_id):
+        """Post the DELTA of an approved opening-stock correction.
+
+        The pharmacy applies approved corrections to its lines/stock, but the
+        original OpeningStock JV must never be rewritten — so this books only
+        the difference the correction made: inventory-value delta on 1190,
+        input-GST delta on 1140/1150 (same 50/50 intra split as the opening
+        JV), balanced against 3300 Opening Balance Equity. Direction flips
+        with the sign (an over-keyed quantity corrected down credits stock
+        and debits equity). Batch/expiry/MRP-only edits net to zero and post
+        nothing. Idempotent via reference_type='OpeningStockCorrection'.
+        """
+        if self._entry_exists('OpeningStockCorrection', correction_id):
+            return None
+
+        corr = OpeningStockCorrectionRO.objects.select_related(
+            'location', 'opening_stock').get(id=correction_id)
+        if corr.status != 'approved':
+            return None
+
+        delta_value = Decimal('0.00')
+        delta_tax = Decimal('0.00')
+        for line in corr.lines.all():
+            old_v = (Decimal(str(line.old_quantity or 0))
+                     * Decimal(str(line.old_purchase_rate or 0)))
+            new_v = (Decimal(str(line.new_quantity or 0))
+                     * Decimal(str(line.new_purchase_rate or 0)))
+            delta_value += (new_v - old_v).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            delta_tax += (Decimal(str(line.new_tax_value or 0))
+                          - Decimal(str(line.old_tax_value or 0)))
+        delta_tax = delta_tax.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        if delta_value == 0 and delta_tax == 0:
+            return None
+
+        entry_date = (corr.reviewed_at or corr.created_at).date()
+        loc = corr.location_id
+        entry = JournalEntry.objects.create(
+            date=entry_date,
+            narration=(f'Opening Stock Correction #{correction_id} '
+                       f'(Opening Stock #{corr.opening_stock_id}, {corr.location.name})'),
+            voucher_type='JOURNAL',
+            reference_type='OpeningStockCorrection',
+            reference_id=correction_id,
+            location_id=loc,
+        )
+        if delta_value > 0:
+            JournalEntryLine.objects.create(
+                entry=entry, account=self._acct('CLOSING_STOCK', loc),
+                debit=delta_value,
+                narration='Opening stock correction — inventory value increased',
+            )
+        elif delta_value < 0:
+            JournalEntryLine.objects.create(
+                entry=entry, account=self._acct('CLOSING_STOCK', loc),
+                credit=-delta_value,
+                narration='Opening stock correction — inventory value decreased',
+            )
+        if delta_tax != 0:
+            tax_abs = abs(delta_tax)
+            cgst = (tax_abs / 2).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            sgst = tax_abs - cgst
+            side = 'debit' if delta_tax > 0 else 'credit'
+            if cgst > 0:
+                JournalEntryLine.objects.create(
+                    entry=entry, account=self._acct('INPUT_CGST', loc),
+                    narration='Opening stock correction — input CGST delta',
+                    **{side: cgst},
+                )
+            if sgst > 0:
+                JournalEntryLine.objects.create(
+                    entry=entry, account=self._acct('INPUT_SGST', loc),
+                    narration='Opening stock correction — input SGST delta',
+                    **{side: sgst},
+                )
+        net = delta_value + delta_tax
+        if net > 0:
+            JournalEntryLine.objects.create(
+                entry=entry, account=self._acct('OPENING_BALANCE_EQUITY', loc),
+                credit=net, narration='Opening balance equity',
+            )
+        elif net < 0:
+            JournalEntryLine.objects.create(
+                entry=entry, account=self._acct('OPENING_BALANCE_EQUITY', loc),
+                debit=-net, narration='Opening balance equity',
+            )
         entry.post()
         return entry
 

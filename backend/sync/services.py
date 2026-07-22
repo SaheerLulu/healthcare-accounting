@@ -7,7 +7,8 @@ from django.db import transaction, connection
 from inventory_reader.models import (
     PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO,
     PurchaseReversalRO,
-    OpeningStockRO, StockMovementRO, PettyCashTxnRO, FeeCollectionRO,
+    OpeningStockRO, OpeningStockCorrectionRO, StockMovementRO, PettyCashTxnRO,
+    FeeCollectionRO,
 )
 from journals.models import JournalEntry
 from journals.services import JournalAutoGenerationService
@@ -273,6 +274,41 @@ class InventorySyncService:
         self._record_metrics('opening_stock', started, errors_before)
         return count
 
+    def sync_opening_stock_corrections(self, since_id: int = 0) -> int:
+        """Post delta JVs for opening-stock corrections APPROVED upstream.
+
+        The pharmacy rewrites the entry's lines and stock on approval; the
+        original OpeningStock JV is idempotent and never re-posted, so the
+        books would silently drift without this. Runs right after
+        sync_opening_stocks so a correction always follows its original.
+        (sync_type is 'os_correction' — SyncLog.sync_type is max_length=20.)
+        """
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='os_correction', resolved=False).count()
+        already_synced = self._synced_ids('OpeningStockCorrection')
+        corrections = OpeningStockCorrectionRO.objects.filter(
+            status='approved',
+        ).exclude(id__in=already_synced).order_by('id')
+
+        count = 0
+        last_id = since_id
+        for corr in corrections:
+            try:
+                entry = self.journal_service.generate_opening_stock_correction(corr.id)
+                if entry:
+                    count += 1
+                self._resolve_error('os_correction', corr.id)
+                last_id = max(last_id, corr.id)
+            except Exception as e:
+                self._log_error('os_correction', corr.id, e)
+
+        SyncLog.objects.update_or_create(
+            sync_type='os_correction',
+            defaults={'last_synced_id': last_id, 'records_processed': count}
+        )
+        self._record_metrics('os_correction', started, errors_before)
+        return count
+
     def sync_purchase_returns(self, since_id: int = 0) -> int:
         """Sync purchase returns from inventory system (Phase 4A)."""
         started = time.monotonic()
@@ -498,6 +534,8 @@ class InventorySyncService:
             try:
                 if error.sync_type == 'opening_stock':
                     self.journal_service.generate_opening_stock(error.source_id)
+                elif error.sync_type == 'os_correction':
+                    self.journal_service.generate_opening_stock_correction(error.source_id)
                 elif error.sync_type == 'purchase':
                     self.journal_service.generate_purchase(error.source_id)
                 elif error.sync_type == 'pos':
@@ -630,7 +668,7 @@ class InventorySyncService:
                 return {
                     'skipped': True,
                     'reason': 'another sync is already running',
-                    'opening_stocks': 0, 'purchases': 0, 'pos': 0, 'b2b': 0,
+                    'opening_stocks': 0, 'os_corrections': 0, 'purchases': 0, 'pos': 0, 'b2b': 0,
                     'returns': 0, 'purchase_returns': 0,
                     'stock_writeoffs': 0, 'stock_adjustments': 0, 'petty_cash': 0,
                     'stock_transfers': 0, 'fee_collections': 0,
@@ -674,6 +712,7 @@ class InventorySyncService:
             coa_bootstrapped = {'locations': 0, 'accounts': 0, 'mappings': 0}
 
         opening_stock_count = self.sync_opening_stocks(SyncLog.get_last_id('opening_stock'))
+        os_correction_count = self.sync_opening_stock_corrections(SyncLog.get_last_id('os_correction'))
         purchase_count = self.sync_purchases(SyncLog.get_last_id('purchase'))
         pos_count = self.sync_pos(SyncLog.get_last_id('pos'))
         b2b_count = self.sync_b2b(SyncLog.get_last_id('b2b'))
@@ -690,7 +729,8 @@ class InventorySyncService:
         # was cancelled upstream so the books don't drift from inventory.
         reversed_cancelled = self.reverse_cancelled()
 
-        total = (opening_stock_count + purchase_count + pos_count + b2b_count
+        total = (opening_stock_count + os_correction_count + purchase_count
+                 + pos_count + b2b_count
                  + return_count + purchase_return_count + purchase_reversal_count
                  + writeoff_count + adjustment_count + petty_cash_count
                  + stock_transfer_count + fee_collection_count)
@@ -702,6 +742,7 @@ class InventorySyncService:
 
         return {
             'opening_stocks': opening_stock_count,
+            'os_corrections': os_correction_count,
             'purchases': purchase_count,
             'pos': pos_count,
             'b2b': b2b_count,
@@ -723,7 +764,7 @@ class InventorySyncService:
 # Reference types that come from the inventory pipeline. Hand-edited 'Manual'
 # JVs are NOT in this list and never get touched by full re-sync.
 AUTO_GEN_REF_TYPES = (
-    'OpeningStock',
+    'OpeningStock', 'OpeningStockCorrection',
     'PurchaseOrder', 'POSOrder', 'B2BSalesOrder',
     'SalesReturn', 'PurchaseReturn', 'PurchaseReversal',
     'StockWriteOff', 'StockAdjustment',
