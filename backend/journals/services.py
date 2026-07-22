@@ -879,10 +879,12 @@ class JournalAutoGenerationService:
         if igst > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_IGST', loc), debit=igst)
 
-        # Credit side mirrors the original sale's settlement account:
+        # Credit side settles the refund:
         #   - Returns of Credit sales reverse the customer's receivable.
-        #   - Otherwise the refund leaves the account the money landed in:
-        #     Bank for UPI/Card/Cheque-paid originals, Cash for cash sales
+        #   - Otherwise the operator's refund_method on the return (cash drawer
+        #     vs bank — same pattern as generate_receipt's receipt_mode) wins;
+        #     legacy returns without one mirror the account the money landed
+        #     in: Bank for UPI/Card/Cheque-paid originals, Cash for cash sales
         #     (and when the original order is unknown — conservative default).
         # Tagging party_type='Customer' on receivable returns keeps AR aging accurate
         # (reports/views.py:545 scopes aging to account_subtype='Receivable').
@@ -902,8 +904,13 @@ class JournalAutoGenerationService:
                 )
         else:
             if total > 0:
+                refund_method = (getattr(ret, 'refund_method', '') or '').strip().lower()
+                if refund_method in ('cash', 'bank'):
+                    refund_ac = self._acct('BANK' if refund_method == 'bank' else 'CASH', loc)
+                else:
+                    refund_ac = self._refund_account(orig_payment_type, loc)
                 JournalEntryLine.objects.create(
-                    entry=entry, account=self._refund_account(orig_payment_type, loc),
+                    entry=entry, account=refund_ac,
                     credit=total,
                 )
 

@@ -363,6 +363,9 @@ class SalesReturnRO(models.Model):
     reason = models.TextField(blank=True)
     remarks = models.TextField(blank=True)
     status = models.CharField(max_length=20)
+    # Operator-selected refund route ('cash' | 'bank' | '') for non-credit
+    # originals; blank = derive from the original order's payment_type.
+    refund_method = models.CharField(max_length=10, blank=True)
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField(null=True, blank=True)
 
