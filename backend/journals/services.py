@@ -369,7 +369,11 @@ class JournalAutoGenerationService:
         """Convert an inventory-side OpeningStock batch into a balanced JV.
 
         Books `Dr 1190 Closing Stock / Cr 3300 Opening Balance Equity` for
-        the sum of (qty × purchase_rate) across all lines in the batch.
+        the sum of (qty × purchase_rate) across all lines in the batch. When
+        the lines carry a GST tax_value, the input credit comes onto the
+        books too: `Dr 1140 Input CGST + Dr 1150 Input SGST` (split 50/50 —
+        opening stock has no supply-type, and go-live inventory is assumed
+        locally purchased) with the equity credit grossed up to match.
         Idempotent via reference_type='OpeningStock' so re-running sync
         won't double-post.
         """
@@ -382,10 +386,15 @@ class JournalAutoGenerationService:
         lines = list(os_header.lines.all())
 
         total_value = Decimal('0.00')
+        total_tax = Decimal('0.00')
         for line in lines:
             qty = Decimal(str(line.quantity or 0))
             rate = Decimal(str(line.purchase_rate or 0))
             total_value += (qty * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            # getattr: rows synced before the pharmacy added tax_value (and
+            # legacy fixtures) simply contribute 0.
+            total_tax += Decimal(str(getattr(line, 'tax_value', 0) or 0))
+        total_tax = total_tax.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
         if total_value <= 0:
             # Nothing to book — empty batch or all zero-value lines.
@@ -406,9 +415,24 @@ class JournalAutoGenerationService:
             debit=total_value,
             narration='Opening stock — bring inventory onto the books',
         )
+        if total_tax > 0:
+            # cgst + sgst must foot to total_tax exactly — quantize one half
+            # and take the remainder for the other so odd paise don't unbalance.
+            cgst = (total_tax / 2).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            sgst = total_tax - cgst
+            JournalEntryLine.objects.create(
+                entry=entry, account=self._acct('INPUT_CGST', loc),
+                debit=cgst,
+                narration='Opening stock — input CGST carried in',
+            )
+            JournalEntryLine.objects.create(
+                entry=entry, account=self._acct('INPUT_SGST', loc),
+                debit=sgst,
+                narration='Opening stock — input SGST carried in',
+            )
         JournalEntryLine.objects.create(
             entry=entry, account=self._acct('OPENING_BALANCE_EQUITY', loc),
-            credit=total_value,
+            credit=total_value + total_tax,
             narration='Opening balance equity',
         )
         entry.post()

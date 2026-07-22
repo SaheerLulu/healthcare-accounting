@@ -582,6 +582,10 @@ class OpeningStockLineRO(models.Model):
     quantity = models.IntegerField()
     purchase_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     mrp = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # GST on the purchase value (qty × rate), captured at entry time so the
+    # opening JV can bring the input tax credit onto the books.
+    tax_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    tax_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at = models.DateTimeField()
 
     class Meta:

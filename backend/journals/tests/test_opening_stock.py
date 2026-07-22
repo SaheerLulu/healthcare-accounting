@@ -1,6 +1,8 @@
 """Opening-stock auto-post: every OpeningStock batch on the inventory side
 should generate a balanced JV (Dr 1190 Closing Stock / Cr 3300 Opening
 Balance Equity) the first time sync sees it, and a no-op on every re-run.
+Lines carrying a GST tax_value additionally bring the input credit onto the
+books (Dr 1140 Input CGST + Dr 1150 Input SGST, equity grossed up).
 """
 from decimal import Decimal
 from types import SimpleNamespace
@@ -15,13 +17,17 @@ from journals.services import JournalAutoGenerationService
 
 def _make_opening_stock(*, batch_id=701, location_id=1,
                        lines=((10, '10.00'), (5, '20.00'))):
-    """Build a mock OpeningStockRO with given (qty, rate) line tuples."""
+    """Build a mock OpeningStockRO with (qty, rate) or (qty, rate, tax_value)
+    line tuples. 2-tuples get no tax_value attribute at all — mirroring rows
+    from before the pharmacy added the column."""
     from datetime import datetime, date
-    line_objs = [
-        SimpleNamespace(product_id=100 + i, quantity=q,
-                        purchase_rate=Decimal(r), batch_no=f'B{i}')
-        for i, (q, r) in enumerate(lines, start=1)
-    ]
+    line_objs = []
+    for i, spec in enumerate(lines, start=1):
+        line = SimpleNamespace(product_id=100 + i, quantity=spec[0],
+                               purchase_rate=Decimal(spec[1]), batch_no=f'B{i}')
+        if len(spec) > 2:
+            line.tax_value = Decimal(spec[2])
+        line_objs.append(line)
 
     class _LinesMgr:
         def all(self):
@@ -95,3 +101,51 @@ class OpeningStockJVTests(TestCase):
         batch = _make_opening_stock(batch_id=703, lines=((0, '10.00'), (0, '20.00')))
         result = self._run_generate(batch)
         self.assertIsNone(result)
+
+
+class OpeningStockInputGSTTests(OpeningStockJVTests):
+    """Lines with a tax_value must bring the input GST credit onto the books."""
+
+    def test_tax_value_posts_input_cgst_sgst_and_grosses_up_equity(self):
+        # value = 10×₹100 + 5×₹200 = ₹2000; tax = 120 + 120 = ₹240
+        batch = _make_opening_stock(
+            batch_id=711,
+            lines=((10, '100.00', '120.00'), (5, '200.00', '120.00')),
+        )
+        entry = self._run_generate(batch)
+
+        self.assertIsNotNone(entry)
+        codes = {l.account.account_code: (l.debit, l.credit) for l in entry.lines.all()}
+        self.assertEqual(codes['1190'], (Decimal('2000.00'), Decimal('0')),
+                         'inventory stays at the ex-tax purchase value')
+        self.assertEqual(codes['1140'], (Decimal('120.00'), Decimal('0')),
+                         'half the tax lands in Input CGST')
+        self.assertEqual(codes['1150'], (Decimal('120.00'), Decimal('0')),
+                         'half the tax lands in Input SGST')
+        self.assertEqual(codes['3300'], (Decimal('0'), Decimal('2240.00')),
+                         'equity credit must gross up to value + tax')
+
+    def test_odd_paise_tax_still_balances(self):
+        # tax = ₹100.01 → CGST 50.01 (half-up) + SGST 50.00
+        batch = _make_opening_stock(
+            batch_id=712, lines=((1, '1000.00', '100.01'),))
+        entry = self._run_generate(batch)
+
+        codes = {l.account.account_code: (l.debit, l.credit) for l in entry.lines.all()}
+        self.assertEqual(codes['1140'][0], Decimal('50.01'))
+        self.assertEqual(codes['1150'][0], Decimal('50.00'))
+        total_debits = sum(l.debit for l in entry.lines.all())
+        total_credits = sum(l.credit for l in entry.lines.all())
+        self.assertEqual(total_debits, total_credits, 'JV must foot')
+
+    def test_zero_tax_batch_posts_no_input_gst_lines(self):
+        # Legacy shape (2-tuples, no tax_value attribute at all).
+        batch = _make_opening_stock(batch_id=713, lines=((10, '10.00'),))
+        entry = self._run_generate(batch)
+
+        codes = {l.account.account_code for l in entry.lines.all()}
+        self.assertNotIn('1140', codes)
+        self.assertNotIn('1150', codes)
+        by_code = {l.account.account_code: (l.debit, l.credit) for l in entry.lines.all()}
+        self.assertEqual(by_code['3300'], (Decimal('0'), Decimal('100.00')),
+                         'no tax → equity credit equals plain inventory value')
