@@ -53,9 +53,12 @@ function SummaryCard({ summary }: { summary: GSTR3BSummary }) {
           <div className="flex flex-col gap-2">
             <Row label="Taxable Value" value={summary.outward_taxable}
               title="3.1(a) — taxable value of outward supplies, net of credit notes" />
-            <Row label="IGST" value={summary.outward_igst} indent />
-            <Row label="CGST" value={summary.outward_cgst} indent />
-            <Row label="SGST" value={summary.outward_sgst} indent />
+            <Row label="IGST" value={summary.outward_igst}
+              title="IGST on 3.1(a) outward supplies" />
+            <Row label="CGST" value={summary.outward_cgst}
+              title="CGST on 3.1(a) outward supplies" />
+            <Row label="SGST" value={summary.outward_sgst}
+              title="SGST on 3.1(a) outward supplies" />
             <Row label="Zero Rated" value={summary.outward_zero_rated}
               title="3.1(b) — zero-rated outward supplies (exports/SEZ)" />
             <Row label="Exempt / Nil-rated" value={summary.outward_exempt}
