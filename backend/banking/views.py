@@ -6,8 +6,29 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 
 from audit.utils import log_action
-from core.mixins import LocationFilterMixin, get_active_location
+from core.mixins import LocationFilterMixin, get_active_location, user_can_access_location
+from core.middleware import _has_all_location_access
 from journals.models import JournalEntry
+
+
+def _assert_bank_account_access(request, account):
+    """Refuse acting on a bank account outside the caller's active store.
+
+    Detail routes get this via LocationFilterMixin.get_queryset(); this is
+    for endpoints that take the bank account as a payload field and would
+    otherwise accept any store's account.
+    """
+    from rest_framework.exceptions import PermissionDenied
+    location = get_active_location(request)
+    if location is not None:
+        if account.location_id is not None and account.location_id != location.id:
+            raise PermissionDenied('Bank account belongs to another store.')
+        return
+    if _has_all_location_access(request.user):
+        return
+    if account.location_id is not None and not user_can_access_location(
+            request.user, account.location_id):
+        raise PermissionDenied('Bank account belongs to another store.')
 
 from .models import BankAccount, BankTransaction, Cheque, PettyCashFloat, PettyCashTransaction
 from .serializers import (
@@ -111,7 +132,9 @@ class BankTransactionViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         return qs.order_by('-date', '-id')
 
     def perform_create(self, serializer):
-        # Manual single transaction
+        # Manual single transaction. The mixin scopes reads via the owning
+        # account; creates must apply the same store check to the payload FK.
+        _assert_bank_account_access(self.request, serializer.validated_data['bank_account'])
         instance = serializer.save(
             source='manual',
             created_by=self.request.user if self.request.user.is_authenticated else None,
@@ -154,6 +177,7 @@ class BankTransactionViewSet(LocationFilterMixin, viewsets.ModelViewSet):
             return Response({'detail': 'bank_account is required.'},
                             status=status.HTTP_400_BAD_REQUEST)
         account = get_object_or_404(BankAccount, pk=bank_account_id)
+        _assert_bank_account_access(request, account)
         upload = request.FILES.get('file')
         if not upload:
             return Response({'detail': 'file is required.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -265,6 +289,35 @@ class ChequeViewSet(LocationFilterMixin, viewsets.ModelViewSet):
         )
         log_action('CREATE', 'Cheque', instance.pk, str(instance), request=self.request)
 
+    # Once a cheque leaves 'pending' its financial identity is settled —
+    # the same immutability contract as posted journal entries. Only the
+    # bookkeeping annotations may still change.
+    FROZEN_AFTER_PENDING = ('cheque_no', 'kind', 'bank_account', 'cheque_date', 'amount')
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if instance.status != 'pending':
+            from rest_framework.exceptions import ValidationError
+            for field in self.FROZEN_AFTER_PENDING:
+                if field in serializer.validated_data and \
+                        serializer.validated_data[field] != getattr(instance, field):
+                    raise ValidationError(
+                        f'Cheque is {instance.status} — {field} can no longer change.')
+        instance = serializer.save()
+        log_action('UPDATE', 'Cheque', instance.pk, str(instance), request=self.request)
+
+    def perform_destroy(self, instance):
+        from rest_framework.exceptions import ValidationError
+        if instance.status != 'pending':
+            raise ValidationError(
+                f'Cheque is {instance.status} and part of the register history '
+                f'— it cannot be deleted.')
+        if instance.journal_entry_id or instance.bounce_journal_entry_id:
+            raise ValidationError(
+                'Cheque is linked to journal entries — cancel it instead of deleting.')
+        log_action('DELETE', 'Cheque', instance.pk, str(instance), request=self.request)
+        instance.delete()
+
     @action(detail=True, methods=['post'], url_path='clear')
     def clear(self, request, pk=None):
         cheque = self.get_object()
@@ -292,6 +345,21 @@ class ChequeViewSet(LocationFilterMixin, viewsets.ModelViewSet):
                    f'Cheque {cheque.cheque_no} bounced',
                    request=request,
                    extra={'reason': cheque.bounce_reason})
+        return Response(ChequeSerializer(cheque).data)
+
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel(self, request, pk=None):
+        cheque = self.get_object()
+        try:
+            services.mark_cheque_cancelled(
+                cheque,
+                reason=request.data.get('reason', ''),
+                user=request.user if request.user.is_authenticated else None,
+            )
+        except DjangoValidationError as e:
+            return Response({'detail': e.messages[0]}, status=status.HTTP_400_BAD_REQUEST)
+        log_action('UPDATE', 'Cheque', cheque.pk,
+                   f'Cheque {cheque.cheque_no} cancelled', request=request)
         return Response(ChequeSerializer(cheque).data)
 
 

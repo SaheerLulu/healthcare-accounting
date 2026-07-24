@@ -2567,6 +2567,10 @@ export async function bounceCheque(id: number, reason: string, bank_charge?: str
                              { reason, ...(bank_charge ? { bank_charge } : {}) })
   return res.data as Cheque
 }
+export async function cancelCheque(id: number, reason?: string) {
+  const res = await api.post(`/banking/cheques/${id}/cancel/`, { reason: reason || '' })
+  return res.data as Cheque
+}
 
 // ─── Wave 6 — Petty Cash ────────────────────────────────────────────────────
 

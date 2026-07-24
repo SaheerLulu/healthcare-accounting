@@ -24,6 +24,45 @@ class BankAccountSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
 
+    def validate(self, attrs):
+        chart = attrs.get('chart_account')
+        if chart is not None:
+            acct_type = attrs.get('account_type',
+                                  getattr(self.instance, 'account_type', 'bank'))
+            # Journals may only post to active leaves, and the GL backing must
+            # carry the subtype the Cash/Bank Books and GSTR flows key on.
+            if not chart.is_leaf:
+                raise serializers.ValidationError(
+                    {'chart_account': f'{chart.account_code} is a group account — '
+                                      f'pick a leaf account.'})
+            if not chart.is_active:
+                raise serializers.ValidationError(
+                    {'chart_account': f'{chart.account_code} is inactive.'})
+            expected = 'Cash' if acct_type == 'cash' else 'Bank'
+            if chart.account_subtype != expected:
+                raise serializers.ValidationError(
+                    {'chart_account': f'{chart.account_code} has subtype '
+                                      f'"{chart.account_subtype or "—"}" — a '
+                                      f'{acct_type} account must be backed by a '
+                                      f'{expected}-subtype GL account.'})
+            # One GL leaf per bank account: sharing a GL makes book_balance and
+            # reconciliation attribute both accounts' entries to each other.
+            dup = BankAccount.objects.filter(chart_account=chart)
+            if self.instance:
+                dup = dup.exclude(pk=self.instance.pk)
+            if dup.exists():
+                raise serializers.ValidationError(
+                    {'chart_account': f'{chart.account_code} already backs bank '
+                                      f'account "{dup.first().name}".'})
+            # Repointing the GL under existing statement lines silently
+            # re-bases every balance — same contract as a matched txn's fields.
+            if self.instance and chart.pk != self.instance.chart_account_id \
+                    and self.instance.transactions.exists():
+                raise serializers.ValidationError(
+                    {'chart_account': 'Account already has statement transactions '
+                                      '— the backing GL can no longer change.'})
+        return attrs
+
     def get_book_balance(self, obj):
         from . import services
         return str(services.book_balance(obj))
@@ -65,6 +104,11 @@ class BankTransactionSerializer(serializers.ModelSerializer):
 
     def get_abs_amount(self, obj):
         return str(obj.abs_amount)
+
+    def validate_amount(self, value):
+        if value == 0:
+            raise serializers.ValidationError('Amount cannot be zero.')
+        return value
 
 
 class CategorizePayloadSerializer(serializers.Serializer):
@@ -108,6 +152,11 @@ class ChequeSerializer(serializers.ModelSerializer):
                             'bounce_journal_entry', 'bounce_entry_no',
                             'created_at', 'updated_at']
 
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError('Cheque amount must be greater than zero.')
+        return value
+
 
 class PettyCashFloatSerializer(serializers.ModelSerializer):
     chart_account_code = serializers.CharField(source='chart_account.account_code', read_only=True)
@@ -123,6 +172,20 @@ class PettyCashFloatSerializer(serializers.ModelSerializer):
                   'current_balance', 'needs_replenishment',
                   'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate_chart_account(self, chart):
+        # The float's GL is a Cash leaf — same contract as BankAccount's
+        # backing GL, and what petty_cash_balance / the Cash Book key on.
+        if not chart.is_leaf:
+            raise serializers.ValidationError(
+                f'{chart.account_code} is a group account — pick a leaf account.')
+        if not chart.is_active:
+            raise serializers.ValidationError(f'{chart.account_code} is inactive.')
+        if chart.account_subtype != 'Cash':
+            raise serializers.ValidationError(
+                f'{chart.account_code} has subtype "{chart.account_subtype or "—"}" '
+                f'— a petty-cash float must be backed by a Cash-subtype GL account.')
+        return chart
 
     def get_current_balance(self, obj):
         from .services import petty_cash_balance

@@ -13,6 +13,33 @@ from journals.services import JournalAutoGenerationService
 
 from .models import BankAccount, BankTransaction
 
+# Optional/memorandum vouchers sit outside the books (Tally semantics) —
+# every balance and reconciliation here must ignore them, matching the GL
+# reports in reports.views.
+ON_BOOKS = dict(entry__is_posted=True, entry__is_optional=False,
+                entry__is_memorandum=False)
+
+
+def _assert_account_usable(account, location_id, *, role: str):
+    """Shared guard for accounts picked over the banking API.
+
+    Journal lines may only hit active LEAF accounts, and a store's voucher
+    may not post to another store's per-store clone (location_id NULL =
+    shared/template accounts, usable everywhere).
+    """
+    if not account.is_leaf:
+        raise ValidationError(
+            f'{account.account_code} is a group account — post the {role} '
+            f'to a leaf account.')
+    if not account.is_active:
+        raise ValidationError(
+            f'{account.account_code} {account.account_name} is inactive.')
+    if (account.location_id is not None and location_id is not None
+            and account.location_id != location_id):
+        raise ValidationError(
+            f'{account.account_code} belongs to another store — pick an '
+            f'account from this store\'s chart.')
+
 
 # ─── CSV import ─────────────────────────────────────────────────────────────
 
@@ -178,11 +205,16 @@ def find_match_suggestions(txn: BankTransaction, *, days_window: int = 7, limit:
 
     candidates = (
         JournalEntryLine.objects
-        .filter(line_filter, entry__is_posted=True,
-                entry__date__gte=start, entry__date__lte=end)
+        .filter(line_filter, entry__date__gte=start, entry__date__lte=end,
+                **ON_BOOKS)
         .exclude(entry_id__in=matched_je_ids)
         .select_related('entry', 'entry__created_by')
     )
+    # Store isolation — never suggest another store's entries for this
+    # account's reconciliation.
+    if txn.bank_account.location_id is not None:
+        candidates = candidates.filter(
+            entry__location_id=txn.bank_account.location_id)
 
     seen = {}
     for line in candidates:
@@ -213,6 +245,16 @@ def match_transaction(txn: BankTransaction, journal_entry: JournalEntry):
         raise ValidationError('Transaction is excluded — un-exclude first.')
     if not journal_entry.is_posted:
         raise ValidationError('Cannot match to a draft journal entry.')
+    if journal_entry.is_optional or journal_entry.is_memorandum:
+        raise ValidationError(
+            'Optional/memorandum vouchers sit outside the books and cannot '
+            'reconcile a bank transaction.')
+    if (txn.bank_account.location_id is not None
+            and journal_entry.location_id is not None
+            and journal_entry.location_id != txn.bank_account.location_id):
+        raise ValidationError(
+            f'{journal_entry.entry_no} belongs to another store — refusing '
+            f'to match it against this account.')
     # Sanity: the JE must touch the bank account on the right side
     bank_acct = txn.bank_account.chart_account
     abs_amt = abs(txn.amount)
@@ -283,7 +325,12 @@ def categorize_transaction(txn: BankTransaction, *, account_id: int,
         raise ValidationError('Excluded — un-exclude first to categorize.')
 
     from core.models import ChartOfAccount
-    other = ChartOfAccount.objects.get(pk=account_id)
+    try:
+        other = ChartOfAccount.objects.get(pk=account_id)
+    except ChartOfAccount.DoesNotExist:
+        raise ValidationError('Selected account does not exist.')
+    _assert_account_usable(other, txn.bank_account.location_id,
+                           role='category')
     bank_gl = txn.bank_account.chart_account
     abs_amt = abs(txn.amount)
 
@@ -339,6 +386,57 @@ def mark_cheque_cleared(cheque, *, clear_date=None):
     return cheque
 
 
+def _reverse_cheque_entry(cheque, *, narration: str, user=None):
+    """Post the reversal of a cheque's linked JE, with the mis-link guard.
+
+    Only reverses an entry that actually involves THIS cheque's bank account
+    for THIS cheque's amount. Without this, a mis-linked JE (e.g. an
+    unrelated sales receipt) would be fully reversed against books that
+    have nothing to do with the cheque. Returns the reversal JE, or None if
+    the original was already reversed for some other reason.
+    """
+    original = cheque.journal_entry
+    bank_acct = cheque.bank_account.chart_account
+    touches_bank = original.lines.filter(account=bank_acct).filter(
+        Q(debit=cheque.amount) | Q(credit=cheque.amount)
+    ).exists()
+    if not touches_bank:
+        raise ValidationError(
+            f"Cheque {cheque.cheque_no}'s linked entry {original.entry_no} has no "
+            f"{cheque.amount} line on {bank_acct.account_code} — refusing to reverse it."
+        )
+    if hasattr(original, 'reversal_entry'):
+        # Already reversed for some other reason — don't double-reverse
+        return None
+    reversal = JournalEntry.objects.create(
+        date=date_cls.today(),
+        narration=narration,
+        voucher_type=original.voucher_type,
+        reference_type='Manual',
+        location_id=original.location_id,
+        reversal_of=original,
+        created_by=user,
+    )
+    for line in original.lines.all():
+        JournalEntryLine.objects.create(
+            entry=reversal, account=line.account,
+            debit=line.credit, credit=line.debit,
+            narration=line.narration,
+            party_type=line.party_type, party_id=line.party_id,
+        )
+    reversal.post()
+
+    # Roll back BillPayment if linked
+    if cheque.bill_payment_id:
+        bp = cheque.bill_payment
+        bp.bill.amount_paid = max(
+            (bp.bill.amount_paid or Decimal('0')) - bp.amount, Decimal('0'),
+        )
+        bp.bill.status = bp.bill.recalc_status()
+        bp.bill.save(update_fields=['amount_paid', 'status', 'updated_at'])
+    return reversal
+
+
 @transaction.atomic
 def mark_cheque_bounced(cheque, *, reason: str = '', bank_charge=None,
                        reverse_je: bool = True, user=None):
@@ -355,52 +453,12 @@ def mark_cheque_bounced(cheque, *, reason: str = '', bank_charge=None,
     cheque.bounce_charge = Decimal(str(bank_charge)) if bank_charge else None
 
     if reverse_je and cheque.journal_entry_id and cheque.journal_entry.is_posted:
-        original = cheque.journal_entry
-        # Only reverse an entry that actually involves THIS cheque's bank account
-        # for THIS cheque's amount. Without this, a mis-linked JE (e.g. an
-        # unrelated sales receipt) would be fully reversed against books that
-        # have nothing to do with the cheque.
-        bank_acct = cheque.bank_account.chart_account
-        touches_bank = original.lines.filter(account=bank_acct).filter(
-            Q(debit=cheque.amount) | Q(credit=cheque.amount)
-        ).exists()
-        if not touches_bank:
-            raise ValidationError(
-                f"Cheque {cheque.cheque_no}'s linked entry {original.entry_no} has no "
-                f"{cheque.amount} line on {bank_acct.account_code} — refusing to reverse it."
-            )
-        if hasattr(original, 'reversal_entry'):
-            # Already reversed for some other reason — don't double-reverse
-            pass
-        else:
-            reversal = JournalEntry.objects.create(
-                date=date_cls.today(),
-                narration=f'Cheque {cheque.cheque_no} bounced: '
-                          f'{reason or "no reason given"}',
-                voucher_type=original.voucher_type,
-                reference_type='Manual',
-                location_id=original.location_id,
-                reversal_of=original,
-                created_by=user,
-            )
-            for line in original.lines.all():
-                JournalEntryLine.objects.create(
-                    entry=reversal, account=line.account,
-                    debit=line.credit, credit=line.debit,
-                    narration=line.narration,
-                    party_type=line.party_type, party_id=line.party_id,
-                )
-            reversal.post()
-            cheque.bounce_journal_entry = reversal
-
-            # Roll back BillPayment if linked
-            if cheque.bill_payment_id:
-                bp = cheque.bill_payment
-                bp.bill.amount_paid = max(
-                    (bp.bill.amount_paid or Decimal('0')) - bp.amount, Decimal('0'),
-                )
-                bp.bill.status = bp.bill.recalc_status()
-                bp.bill.save(update_fields=['amount_paid', 'status', 'updated_at'])
+        cheque.bounce_journal_entry = _reverse_cheque_entry(
+            cheque,
+            narration=f'Cheque {cheque.cheque_no} bounced: '
+                      f'{reason or "no reason given"}',
+            user=user,
+        )
 
     # Bounce charge — every minute activity must hit a JV.
     # Dr Bank Charges (5450) / Cr Bank — for bank-deducted bounce fees.
@@ -418,31 +476,62 @@ def mark_cheque_bounced(cheque, *, reason: str = '', bank_charge=None,
                          if cheque.bank_account_id and cheque.bank_account.chart_account_id
                          else AccountMapping.get_account('BANK', location_id=loc))
         except (ValueError, AttributeError):
-            bank_charges_acct = None
-            bank_acct = None
-        if bank_charges_acct and bank_acct:
-            charge_je = JournalEntry.objects.create(
-                date=date_cls.today(),
-                narration=f'Bounce charge for cheque {cheque.cheque_no}',
-                voucher_type='PAYMENT',
-                reference_type='Manual',
-                location_id=loc,
-                created_by=user,
+            # Silently skipping would swallow a real charge the bank already
+            # debited — refuse instead so the books never quietly drift.
+            raise ValidationError(
+                'BANK_CHARGES account mapping is not configured — either '
+                'configure it in account mappings or bounce without a charge.'
             )
-            JournalEntryLine.objects.create(
-                entry=charge_je, account=bank_charges_acct,
-                debit=cheque.bounce_charge, credit=Decimal('0'),
-                narration=f'Bounce charge — cheque {cheque.cheque_no}',
-            )
-            JournalEntryLine.objects.create(
-                entry=charge_je, account=bank_acct,
-                debit=Decimal('0'), credit=cheque.bounce_charge,
-                narration=f'Bounce charge — cheque {cheque.cheque_no}',
-            )
-            charge_je.post()
+        charge_je = JournalEntry.objects.create(
+            date=date_cls.today(),
+            narration=f'Bounce charge for cheque {cheque.cheque_no}',
+            voucher_type='PAYMENT',
+            reference_type='Manual',
+            location_id=loc,
+            created_by=user,
+        )
+        JournalEntryLine.objects.create(
+            entry=charge_je, account=bank_charges_acct,
+            debit=cheque.bounce_charge, credit=Decimal('0'),
+            narration=f'Bounce charge — cheque {cheque.cheque_no}',
+        )
+        JournalEntryLine.objects.create(
+            entry=charge_je, account=bank_acct,
+            debit=Decimal('0'), credit=cheque.bounce_charge,
+            narration=f'Bounce charge — cheque {cheque.cheque_no}',
+        )
+        charge_je.post()
 
     cheque.save(update_fields=['status', 'bounce_reason', 'bounce_charge',
                                'bounce_journal_entry', 'updated_at'])
+    return cheque
+
+
+@transaction.atomic
+def mark_cheque_cancelled(cheque, *, reason: str = '', user=None):
+    """Cancel a pending cheque (stop payment / never presented / voided).
+
+    The model always promised a 'cancelled' status but nothing could reach
+    it. If a posted JE is linked, it is reversed with the same mis-link
+    guard as a bounce — the money never moved, so the books must back out.
+    """
+    if cheque.status != 'pending':
+        raise ValidationError(f'Cheque is {cheque.status}, cannot cancel.')
+
+    cheque.status = 'cancelled'
+    if reason:
+        cheque.notes = (cheque.notes + '\n' if cheque.notes else '') + f'Cancelled: {reason}'
+
+    if cheque.journal_entry_id and cheque.journal_entry.is_posted:
+        cheque.bounce_journal_entry = _reverse_cheque_entry(
+            cheque,
+            narration=f'Cheque {cheque.cheque_no} cancelled: '
+                      f'{reason or "no reason given"}',
+            user=user,
+        )
+
+    cheque.save(update_fields=['status', 'notes', 'bounce_journal_entry',
+                               'updated_at'])
     return cheque
 
 
@@ -457,6 +546,13 @@ def post_petty_cash_spend(*, float_obj, date, amount, expense_account,
     amount = Decimal(str(amount))
     if amount <= 0:
         raise ValidationError('Amount must be positive.')
+    if expense_account.account_type != 'EXPENSE':
+        raise ValidationError(
+            f'{expense_account.account_code} {expense_account.account_name} is a '
+            f'{expense_account.account_type} account — petty-cash spends must '
+            f'debit an EXPENSE account.')
+    _assert_account_usable(expense_account, float_obj.location_id,
+                           role='expense')
 
     je = JournalEntry.objects.create(
         date=date,
@@ -511,8 +607,9 @@ def petty_cash_balance(float_obj) -> Decimal:
     """Current cash on hand for this float."""
     from django.db.models import Sum
     agg = JournalEntryLine.objects.filter(
-        account=float_obj.chart_account, entry__is_posted=True,
+        account=float_obj.chart_account,
         entry__location_id=float_obj.location_id,
+        **ON_BOOKS,
     ).aggregate(d=Sum('debit'), c=Sum('credit'))
     return (agg['d'] or Decimal('0')) - (agg['c'] or Decimal('0'))
 
@@ -559,9 +656,7 @@ def cash_in_hand_balance(location_id) -> Decimal:
         cash_acct = AccountMapping.get_account('CASH', location_id=location_id)
     except Exception:
         return Decimal('0.00')
-    qs = JournalEntryLine.objects.filter(
-        account=cash_acct, entry__is_posted=True,
-    )
+    qs = JournalEntryLine.objects.filter(account=cash_acct, **ON_BOOKS)
     if location_id:
         qs = qs.filter(entry__location_id=location_id)
     agg = qs.aggregate(d=Sum('debit'), c=Sum('credit'))
@@ -577,14 +672,18 @@ def book_balance(account: BankAccount) -> Decimal:
     """
     from django.db.models import Sum
     agg = JournalEntryLine.objects.filter(
-        account=account.chart_account, entry__is_posted=True
+        account=account.chart_account, **ON_BOOKS,
     ).aggregate(dr=Sum('debit'), cr=Sum('credit'))
     return (account.opening_balance or Decimal('0.00')) \
         + (agg['dr'] or Decimal('0.00')) - (agg['cr'] or Decimal('0.00'))
 
 
 def statement_balance(account: BankAccount) -> Decimal:
-    """Sum of all imported transactions on this account (running)."""
+    """Sum of statement transactions on this account (running).
+
+    Excluded rows are duplicates / not-ours by definition — counting them
+    permanently skewed the statement side of the books-vs-statement tiles.
+    """
     from django.db.models import Sum
-    agg = account.transactions.aggregate(s=Sum('amount'))
+    agg = account.transactions.exclude(status='excluded').aggregate(s=Sum('amount'))
     return (account.opening_balance or Decimal('0.00')) + (agg['s'] or Decimal('0.00'))
