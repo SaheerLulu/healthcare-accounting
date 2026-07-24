@@ -581,7 +581,7 @@ function ListView({
               {a.documents_count ? (
                 <Link
                   to={`/reports/ledger/${a.account_code}`}
-                  className="text-slate-700 hover:underline hover:text-teal-700"
+                  className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
                   title="Open ledger"
                 >
                   {a.documents_count}
@@ -730,7 +730,7 @@ function AccountTreeRow({
         <Link
           to={`/reports/ledger/${acc.account_code}`}
           onClick={(e) => e.stopPropagation()}
-          className="text-xs text-slate-400 hover:text-teal-700 tabular-nums"
+          className="text-xs text-blue-600 underline underline-offset-2 hover:text-blue-800 tabular-nums"
           title="Open ledger"
         >
           {acc.documents_count} docs

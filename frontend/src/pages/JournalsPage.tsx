@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Plus, Loader2, Search, Banknote, Receipt, ArrowLeftRight,
   X, Calendar, ChevronDown,
@@ -59,7 +59,9 @@ export default function JournalsPage() {
   const [draftCount, setDraftCount] = useState(0)
   const [loading, setLoading] = useState(true)
 
-  const [search, setSearch] = useState('')
+  // Ledger / Day Book link here with ?search=<voucher no> — seed the box from the URL.
+  const [searchParams] = useSearchParams()
+  const [search, setSearch] = useState(searchParams.get('search') ?? '')
   const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'posted'>('all')
   const [voucherType, setVoucherType] = useState<string>('all')
   const [dateFrom, setDateFrom] = useState('')
@@ -72,7 +74,7 @@ export default function JournalsPage() {
     setLoading(true)
     try {
       const params: Record<string, string> = {}
-      if (search) params.narration = search
+      if (search) params.q = search
       if (statusFilter !== 'all') params.is_posted = String(statusFilter === 'posted')
       if (voucherType !== 'all') params.voucher_type = voucherType
       if (dateFrom) params.date_from = dateFrom
@@ -152,7 +154,7 @@ export default function JournalsPage() {
         <div className="relative flex-1 min-w-[220px] max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
           <Input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search narration…" className="pl-9" />
+            placeholder="Search voucher no. or narration…" className="pl-9" />
         </div>
         <select value={voucherType} onChange={(e) => setVoucherType(e.target.value)}
           className="h-9 px-3 text-sm rounded-md outline-none"

@@ -39,6 +39,9 @@ class JournalEntryFilter(django_filters.FilterSet):
     is_posted = django_filters.BooleanFilter(field_name='is_posted')
     narration = django_filters.CharFilter(field_name='narration', lookup_expr='icontains')
     entry_no = django_filters.CharFilter(field_name='entry_no', lookup_expr='icontains')
+    # One search box on the journals page matches either the voucher number
+    # or the narration — ANDing the two separate filters would return nothing.
+    q = django_filters.CharFilter(method='filter_q')
     # WP 619 — extra filters
     account = django_filters.NumberFilter(method='filter_account')
     party_type = django_filters.CharFilter(method='filter_party')
@@ -52,6 +55,10 @@ class JournalEntryFilter(django_filters.FilterSet):
         fields = ['date_from', 'date_to', 'voucher_type', 'reference_type', 'is_posted',
                   'narration', 'entry_no', 'account', 'party_type', 'party_id',
                   'amount_min', 'amount_max', 'cost_center']
+
+    def filter_q(self, qs, name, value):
+        from django.db.models import Q
+        return qs.filter(Q(entry_no__icontains=value) | Q(narration__icontains=value))
 
     def filter_account(self, qs, name, value):
         return qs.filter(lines__account_id=value).distinct()

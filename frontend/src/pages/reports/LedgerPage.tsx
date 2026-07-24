@@ -92,7 +92,7 @@ export default function LedgerPage() {
     : null
 
   return (
-    <div className="w-full space-y-4">
+    <div className="max-w-7xl mx-auto space-y-4">
       <button
         onClick={() => navigate('/accounts')}
         className="inline-flex items-center gap-1 text-sm hover:opacity-80"
