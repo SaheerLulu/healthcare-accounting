@@ -8,9 +8,33 @@ import { PeriodPicker } from '../../components/ui/period-picker'
 import { Card, CardHeader, CardContent } from '../../components/ui/card'
 import { useLocation } from '../../contexts/LocationContext'
 
+function Row({ label, value, title, indent, strong }: {
+  label: string
+  value: string | number
+  title?: string
+  indent?: boolean
+  strong?: boolean
+}) {
+  return (
+    <div className="flex justify-between text-sm">
+      <span className={indent ? 'text-slate-400 pl-3' : 'text-slate-500'} title={title}>{label}</span>
+      <span className={strong ? 'font-mono font-semibold text-slate-900' : 'font-mono font-medium text-slate-900'}>
+        {formatCurrency(value)}
+      </span>
+    </div>
+  )
+}
+
 function SummaryCard({ summary }: { summary: GSTR3BSummary }) {
   const netPayable = Number(summary.total_net_payable)
   const totalITC = Number(summary.total_itc)
+  const rcmLiability = Number(summary.rcm_igst) + Number(summary.rcm_cgst) + Number(summary.rcm_sgst)
+  const rcmITC = Number(summary.rcm_itc_igst) + Number(summary.rcm_itc_cgst) + Number(summary.rcm_itc_sgst)
+  // Table 4(A) per head = 4(A)(5) all-other + 4(A)(3) RCM — this is what the
+  // net payable was computed against, so the card reconciles line by line.
+  const itcIgst = Number(summary.itc_igst) + Number(summary.rcm_itc_igst)
+  const itcCgst = Number(summary.itc_cgst) + Number(summary.rcm_itc_cgst)
+  const itcSgst = Number(summary.itc_sgst) + Number(summary.rcm_itc_sgst)
 
   return (
     <Card>
@@ -27,21 +51,22 @@ function SummaryCard({ summary }: { summary: GSTR3BSummary }) {
         <div>
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Outward Supplies</p>
           <div className="flex flex-col gap-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">Taxable Supplies</span>
-              <span className="font-mono font-medium text-slate-900">{formatCurrency(summary.outward_taxable)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">Zero Rated</span>
-              <span className="font-mono font-medium text-slate-900">{formatCurrency(summary.outward_zero_rated)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500" title="3.1(c) — exempt/nil-rated outward supplies (consultation income etc.)">Exempt / Nil-rated</span>
-              <span className="font-mono font-medium text-slate-900">{formatCurrency(summary.outward_exempt)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">Total Outward GST</span>
-              <span className="font-mono font-medium text-slate-900">{formatCurrency(summary.total_outward_gst)}</span>
+            <Row label="Taxable Value" value={summary.outward_taxable}
+              title="3.1(a) — taxable value of outward supplies, net of credit notes" />
+            <Row label="IGST" value={summary.outward_igst} indent />
+            <Row label="CGST" value={summary.outward_cgst} indent />
+            <Row label="SGST" value={summary.outward_sgst} indent />
+            <Row label="Zero Rated" value={summary.outward_zero_rated}
+              title="3.1(b) — zero-rated outward supplies (exports/SEZ)" />
+            <Row label="Exempt / Nil-rated" value={summary.outward_exempt}
+              title="3.1(c) — exempt/nil-rated outward supplies (consultation income etc.)" />
+            {rcmLiability > 0 && (
+              <Row label="RCM Inward GST" value={rcmLiability}
+                title="3.1(d) — inward supplies liable to reverse charge; payable in cash, claimable as ITC under 4(A)(3)" />
+            )}
+            <div className="border-t border-slate-200 pt-2 mt-1">
+              <Row label="Total Outward GST" value={summary.total_outward_gst} strong
+                title="IGST + CGST + SGST on 3.1(a) outward supplies" />
             </div>
           </div>
         </div>
@@ -50,20 +75,15 @@ function SummaryCard({ summary }: { summary: GSTR3BSummary }) {
         <div>
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Input Tax Credit (ITC)</p>
           <div className="flex flex-col gap-2">
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">IGST</span>
-              <span className="font-mono font-medium text-slate-900">{formatCurrency(summary.itc_igst)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">CGST</span>
-              <span className="font-mono font-medium text-slate-900">{formatCurrency(summary.itc_cgst)}</span>
-            </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-slate-500">SGST</span>
-              <span className="font-mono font-medium text-slate-900">{formatCurrency(summary.itc_sgst)}</span>
-            </div>
+            <Row label="IGST" value={itcIgst} />
+            <Row label="CGST" value={itcCgst} />
+            <Row label="SGST" value={itcSgst} />
+            {rcmITC > 0 && (
+              <Row label="of which RCM ITC" value={rcmITC} indent
+                title="4(A)(3) — ITC on inward supplies liable to reverse charge, included in the head-wise figures above" />
+            )}
             <div className="flex justify-between text-sm border-t border-slate-200 pt-2 mt-1">
-              <span className="text-slate-500 font-medium">Total ITC</span>
+              <span className="text-slate-500 font-medium" title="Table 4(A) — ITC available (all other ITC + RCM ITC)">Total ITC</span>
               <span className="font-mono font-semibold text-emerald-700">{formatCurrency(totalITC)}</span>
             </div>
           </div>

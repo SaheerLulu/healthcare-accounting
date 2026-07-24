@@ -157,3 +157,42 @@ class GSTR3BCloneAccountITCTests(TestCase):
         summary = GSTR3BSummary.objects.get(period='2026-05', location_id=1)
         self.assertEqual(summary.itc_cgst, Decimal('60.00'),
                          'clone-account ITC must aggregate under the base head')
+
+    def test_itc_excludes_optional_and_memorandum_vouchers(self):
+        from datetime import date
+        from decimal import Decimal
+        from core.models import ChartOfAccount
+        from journals.models import JournalEntry, JournalEntryLine
+        from gst_returns.services import GSTR3BGenerator
+        from gst_returns.models import GSTR3BSummary
+
+        cgst_in = ChartOfAccount.objects.get(account_code='1140')
+        stock = ChartOfAccount.objects.get(account_code='1190')
+        ap = ChartOfAccount.objects.get(account_code='2110')
+
+        def make_entry(narration, cgst_amt, **flags):
+            entry = JournalEntry.objects.create(
+                date=date(2026, 5, 12), narration=narration,
+                voucher_type='PURCHASE', location_id=1, **flags,
+            )
+            JournalEntryLine.objects.create(entry=entry, account=stock,
+                                            debit=Decimal('500.00'))
+            JournalEntryLine.objects.create(entry=entry, account=cgst_in,
+                                            debit=cgst_amt)
+            JournalEntryLine.objects.create(entry=entry, account=ap,
+                                            credit=Decimal('500.00') + cgst_amt)
+            entry.post()
+
+        make_entry('Real purchase', Decimal('30.00'))
+        make_entry('Optional voucher', Decimal('70.00'), is_optional=True)
+        make_entry('Memorandum voucher', Decimal('90.00'), is_memorandum=True)
+
+        from unittest.mock import patch
+        with patch('gst_returns.services.GSTR1Generator.generate'), \
+             patch('gst_returns.services.GSTR2BGenerator.generate'):
+            GSTR3BGenerator().generate('2026-05', 1)
+        summary = GSTR3BSummary.objects.get(period='2026-05', location_id=1)
+        self.assertEqual(
+            summary.itc_cgst, Decimal('30.00'),
+            'optional/memorandum vouchers sit outside the books and must not '
+            'count toward 3B ITC (TB ≡ 3B identity)')

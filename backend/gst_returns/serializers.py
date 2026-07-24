@@ -52,7 +52,9 @@ class GSTR3BSummarySerializer(serializers.ModelSerializer):
             'id', 'period', 'location_id',
             'outward_taxable', 'outward_igst', 'outward_cgst', 'outward_sgst',
             'outward_zero_rated', 'outward_exempt', 'total_outward_gst',
-            'itc_igst', 'itc_cgst', 'itc_sgst', 'total_itc',
+            'rcm_taxable', 'rcm_igst', 'rcm_cgst', 'rcm_sgst',
+            'itc_igst', 'itc_cgst', 'itc_sgst',
+            'rcm_itc_igst', 'rcm_itc_cgst', 'rcm_itc_sgst', 'total_itc',
             'net_payable_igst', 'net_payable_cgst', 'net_payable_sgst', 'total_net_payable',
             'status', 'status_display', 'filed_date',
             'created_at', 'updated_at',
@@ -63,7 +65,11 @@ class GSTR3BSummarySerializer(serializers.ModelSerializer):
         return obj.outward_igst + obj.outward_cgst + obj.outward_sgst
 
     def get_total_itc(self, obj):
-        return obj.itc_igst + obj.itc_cgst + obj.itc_sgst
+        # Portal Table 4(A) "ITC Available" = 4(A)(5) all other + 4(A)(3) RCM.
+        # Net payable is computed against this combined figure, so the card
+        # only reconciles (outward + RCM − ITC = payable) when RCM is included.
+        return (obj.itc_igst + obj.itc_cgst + obj.itc_sgst
+                + obj.rcm_itc_igst + obj.rcm_itc_cgst + obj.rcm_itc_sgst)
 
     def get_total_net_payable(self, obj):
         return obj.net_payable_igst + obj.net_payable_cgst + obj.net_payable_sgst

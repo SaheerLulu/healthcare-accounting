@@ -1299,9 +1299,16 @@ export interface GSTR3BSummary {
   outward_zero_rated: string
   outward_exempt: string
   total_outward_gst: string
+  rcm_taxable: string
+  rcm_igst: string
+  rcm_cgst: string
+  rcm_sgst: string
   itc_igst: string
   itc_cgst: string
   itc_sgst: string
+  rcm_itc_igst: string
+  rcm_itc_cgst: string
+  rcm_itc_sgst: string
   total_itc: string
   net_payable_igst: string
   net_payable_cgst: string

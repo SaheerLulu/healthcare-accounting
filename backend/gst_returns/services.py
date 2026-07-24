@@ -722,9 +722,14 @@ class GSTR3BGenerator:
         for c in input_codes:
             code_q |= _Q(account__account_code=c) | _Q(
                 account__account_code__startswith=f'{c}-')
+        # Optional / memorandum vouchers sit outside the books (Tally
+        # semantics) and are excluded from every GL report — exclude them here
+        # too or the §7 TB ≡ 3B-ITC identity breaks.
         itc_rows = JournalEntryLine.objects.filter(
             code_q,
             entry__is_posted=True,
+            entry__is_optional=False,
+            entry__is_memorandum=False,
             entry__date__year=year,
             entry__date__month=month,
             entry__location_id=location_id,
@@ -753,6 +758,8 @@ class GSTR3BGenerator:
             exempt_acct = AccountMapping.get_account('CONSULTATION_INCOME', location_id=location_id)
             row = JournalEntryLine.objects.filter(
                 entry__is_posted=True,
+                entry__is_optional=False,
+                entry__is_memorandum=False,
                 entry__date__year=year,
                 entry__date__month=month,
                 entry__location_id=location_id,
