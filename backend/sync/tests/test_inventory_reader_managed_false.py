@@ -6,7 +6,7 @@ from inventory_reader.models import (
     PurchaseOrderRO, SupplierRO, SalesReturnRO, PurchaseReturnRO,
     StockMovementRO, RoleRO, UserProfileRO, UserLocationAssignmentRO,
     PurchaseOrderLineRO, POSOrderLineRO, B2BSalesOrderLineRO,
-    SalesReturnLineRO, PurchaseReturnLineRO,
+    SalesReturnLineRO, PurchaseReturnLineRO, PurchaseAmendmentRO,
 )
 
 
@@ -15,7 +15,7 @@ READ_ONLY_MODELS = [
     PurchaseOrderRO, SupplierRO, SalesReturnRO, PurchaseReturnRO,
     StockMovementRO, RoleRO, UserProfileRO, UserLocationAssignmentRO,
     PurchaseOrderLineRO, POSOrderLineRO, B2BSalesOrderLineRO,
-    SalesReturnLineRO, PurchaseReturnLineRO,
+    SalesReturnLineRO, PurchaseReturnLineRO, PurchaseAmendmentRO,
 ]
 
 

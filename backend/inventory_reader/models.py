@@ -524,6 +524,31 @@ class PurchaseReversalLineRO(models.Model):
         db_table = 'purchase_reversal_purchasereversalline'
 
 
+class PurchaseAmendmentRO(models.Model):
+    """Read-only proxy for purchase amendments (in-place correction of a
+    confirmed purchase that went back through approval). Once `applied`, the
+    sync must reverse the stale purchase JE and repost it from the PO's
+    corrected values — see sync_purchase_amendments."""
+    purchase_order = models.ForeignKey(
+        PurchaseOrderRO, on_delete=models.DO_NOTHING,
+        related_name='amendments', db_constraint=False,
+    )
+    status = models.CharField(max_length=20)  # pending / applied / rejected / cancelled
+    prev_state = models.CharField(max_length=50, blank=True)
+    reason = models.TextField(blank=True)
+    original_data = models.JSONField(null=True, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField()
+    updated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'purchase_entry_purchaseamendment'
+
+    def __str__(self):
+        return f"AMD#{self.id} PO {self.purchase_order_id} ({self.status})"
+
+
 class StockMovementRO(models.Model):
     product = models.ForeignKey(
         ProductRO, on_delete=models.DO_NOTHING, db_constraint=False

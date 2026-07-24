@@ -22,6 +22,7 @@ class JournalEntry(models.Model):
         ('SalesReturn', 'Sales Return'),
         ('PurchaseReturn', 'Purchase Return'),
         ('PurchaseReversal', 'Purchase Reversal'),
+        ('PurchaseAmendment', 'Purchase Amendment'),
         ('StockWriteOff', 'Stock Write-off'),
         ('StockAdjustment', 'Stock Audit Adjustment'),
         ('RCM', 'RCM Entry'),

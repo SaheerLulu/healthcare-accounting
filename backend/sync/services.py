@@ -6,7 +6,7 @@ from decimal import Decimal
 from django.db import transaction, connection
 from inventory_reader.models import (
     PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO,
-    PurchaseReversalRO,
+    PurchaseReversalRO, PurchaseAmendmentRO,
     OpeningStockRO, OpeningStockCorrectionRO, StockMovementRO, PettyCashTxnRO,
     FeeCollectionRO,
 )
@@ -366,6 +366,92 @@ class InventorySyncService:
         self._record_metrics('purchase_reversal', started, errors_before)
         return count
 
+    def sync_purchase_amendments(self, since_id: int = 0) -> int:
+        """Apply purchase amendments to the books.
+
+        A confirmed purchase that was edited and re-approved (pharmacy
+        PurchaseAmendment, status='applied') has a stale purchase JE posted
+        from the pre-edit values. Swap it: post a balanced reversal of the
+        stale entry, then regenerate the purchase JE from the PO's corrected
+        values. The original entry is never deleted — the ledger shows
+        original → reversal → corrected, the standard amendment trail.
+
+        Idempotency: the swap JE carries reference_type='PurchaseAmendment' /
+        reference_id=<amendment id>, so processed amendments are excluded by
+        the standard anti-join. Amendments whose live purchase JE was created
+        AFTER they were approved (or that have no JE yet) need no swap — the
+        purchase sync posts the corrected values directly — and are skipped
+        by the timestamp guard, which also makes them terminal.
+        """
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='purchase_amendment', resolved=False).count()
+        already_synced = self._synced_ids('PurchaseAmendment')
+        try:
+            amendments = list(
+                PurchaseAmendmentRO.objects.filter(
+                    status='applied',
+                ).exclude(id__in=already_synced)
+                .select_related('purchase_order').order_by('id')
+            )
+        except Exception as e:
+            # The amendment table ships with the pharmacy app — during a deploy
+            # window where accounting is updated first it may not exist yet.
+            # Skip quietly; the anti-join self-heals on a later run.
+            logger.warning('purchase_amendment sync skipped — source unavailable: %s', e)
+            return 0
+
+        count = 0
+        last_id = since_id
+        for am in amendments:
+            try:
+                # A follow-up amendment already put the PO back into approval:
+                # leave the books on the original until it settles; the swap
+                # then happens once, against the final values.
+                if am.purchase_order.state not in ('confirmed', 'done', 'approved'):
+                    continue
+                live = (
+                    JournalEntry.objects.filter(
+                        reference_type='PurchaseOrder',
+                        reference_id=am.purchase_order_id,
+                        is_posted=True,
+                        reversal_of__isnull=True,
+                        reversal_entry__isnull=True,
+                    ).order_by('-id').first()
+                )
+                if live is None or (am.approved_at and live.created_at >= am.approved_at):
+                    continue
+                with transaction.atomic():
+                    self._reverse_entry(
+                        live,
+                        reference_type='PurchaseAmendment',
+                        reference_id=am.id,
+                        narration=(
+                            f'Purchase amendment #{am.id} — reverses {live.entry_no} '
+                            f'(values superseded by re-approved correction)'
+                        ),
+                    )
+                    fresh = self.journal_service.generate_purchase(
+                        am.purchase_order_id, force=True,
+                    )
+                    if fresh is None:
+                        # Never leave a reversed purchase without its corrected
+                        # replacement — roll the swap back and surface the error.
+                        raise ValueError(
+                            f'Regeneration produced no entry for PO {am.purchase_order_id}'
+                        )
+                count += 1
+                self._resolve_error('purchase_amendment', am.id)
+                last_id = max(last_id, am.id)
+            except Exception as e:
+                self._log_error('purchase_amendment', am.id, e)
+
+        SyncLog.objects.update_or_create(
+            sync_type='purchase_amendment',
+            defaults={'last_synced_id': last_id, 'records_processed': count}
+        )
+        self._record_metrics('purchase_amendment', started, errors_before)
+        return count
+
     def sync_stock_writeoffs(self, since_id: int = 0) -> int:
         """Post a loss JV for every inventory write-off (damage/wastage/expiry).
 
@@ -575,21 +661,28 @@ class InventorySyncService:
 
         return results
 
-    def _reverse_entry(self, original: JournalEntry) -> JournalEntry:
+    def _reverse_entry(self, original: JournalEntry, *, reference_type=None,
+                       reference_id=None, narration=None) -> JournalEntry:
         """Post a balanced reversal of `original` (debits/credits swapped),
         linked via reversal_of so it can never be reversed twice. The swap also
-        backs out the COGS / stock-relief legs automatically."""
+        backs out the COGS / stock-relief legs automatically.
+
+        The reversal normally carries the original's reference; the amendment
+        sync overrides it (reference_type='PurchaseAmendment') so the swap
+        doubles as that amendment's processed marker."""
         from datetime import date as date_cls
         from journals.models import JournalEntryLine
         with transaction.atomic():
             reversal = JournalEntry.objects.create(
                 date=date_cls.today(),
-                narration=f'Auto-reversal — {original.reference_type} '
-                          f'#{original.reference_id} cancelled upstream '
-                          f'(reverses {original.entry_no})',
+                narration=narration or (
+                    f'Auto-reversal — {original.reference_type} '
+                    f'#{original.reference_id} cancelled upstream '
+                    f'(reverses {original.entry_no})'
+                ),
                 voucher_type=original.voucher_type,
-                reference_type=original.reference_type,
-                reference_id=original.reference_id,
+                reference_type=reference_type or original.reference_type,
+                reference_id=reference_id if reference_id is not None else original.reference_id,
                 location_id=original.location_id,
                 reversal_of=original,
             )
@@ -669,7 +762,7 @@ class InventorySyncService:
                     'skipped': True,
                     'reason': 'another sync is already running',
                     'opening_stocks': 0, 'os_corrections': 0, 'purchases': 0, 'pos': 0, 'b2b': 0,
-                    'returns': 0, 'purchase_returns': 0,
+                    'returns': 0, 'purchase_returns': 0, 'purchase_amendments': 0,
                     'stock_writeoffs': 0, 'stock_adjustments': 0, 'petty_cash': 0,
                     'stock_transfers': 0, 'fee_collections': 0,
                     'reversed_cancelled': 0,
@@ -719,6 +812,7 @@ class InventorySyncService:
         return_count = self.sync_returns(SyncLog.get_last_id('return'))
         purchase_return_count = self.sync_purchase_returns(SyncLog.get_last_id('purchase_return'))
         purchase_reversal_count = self.sync_purchase_reversals(SyncLog.get_last_id('purchase_reversal'))
+        purchase_amendment_count = self.sync_purchase_amendments(SyncLog.get_last_id('purchase_amendment'))
         writeoff_count = self.sync_stock_writeoffs(SyncLog.get_last_id('stock_writeoff'))
         adjustment_count = self.sync_stock_adjustments(SyncLog.get_last_id('stock_adjustment'))
         petty_cash_count = self.sync_petty_cash(SyncLog.get_last_id('petty_cash'))
@@ -732,6 +826,7 @@ class InventorySyncService:
         total = (opening_stock_count + os_correction_count + purchase_count
                  + pos_count + b2b_count
                  + return_count + purchase_return_count + purchase_reversal_count
+                 + purchase_amendment_count
                  + writeoff_count + adjustment_count + petty_cash_count
                  + stock_transfer_count + fee_collection_count)
         SyncLog.objects.create(
@@ -749,6 +844,7 @@ class InventorySyncService:
             'returns': return_count,
             'purchase_returns': purchase_return_count,
             'purchase_reversals': purchase_reversal_count,
+            'purchase_amendments': purchase_amendment_count,
             'stock_writeoffs': writeoff_count,
             'stock_adjustments': adjustment_count,
             'petty_cash': petty_cash_count,
@@ -766,7 +862,7 @@ class InventorySyncService:
 AUTO_GEN_REF_TYPES = (
     'OpeningStock', 'OpeningStockCorrection',
     'PurchaseOrder', 'POSOrder', 'B2BSalesOrder',
-    'SalesReturn', 'PurchaseReturn', 'PurchaseReversal',
+    'SalesReturn', 'PurchaseReturn', 'PurchaseReversal', 'PurchaseAmendment',
     'StockWriteOff', 'StockAdjustment',
     'PettyCash', 'StockTransferIn', 'StockTransferOut', 'FeeCollection',
 )

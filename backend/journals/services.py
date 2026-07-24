@@ -529,9 +529,13 @@ class JournalAutoGenerationService:
         return entry
 
     @transaction.atomic
-    def generate_purchase(self, po_id):
-        """Generate journal entry for a purchase order with proper IGST support."""
-        if self._entry_exists('PurchaseOrder', po_id):
+    def generate_purchase(self, po_id, force=False):
+        """Generate journal entry for a purchase order with proper IGST support.
+
+        ``force=True`` skips the already-synced guard — used by the amendment
+        sync, which has just reversed the stale entry and needs a fresh one
+        posted from the PO's corrected values."""
+        if not force and self._entry_exists('PurchaseOrder', po_id):
             return None
 
         po = PurchaseOrderRO.objects.select_related('supplier').prefetch_related('lines').get(id=po_id)
