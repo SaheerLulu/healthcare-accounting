@@ -1010,6 +1010,7 @@ class DaybookView(APIView):
                 entry_lines.append({
                     'account_code': line.account.account_code,
                     'account_name': line.account.account_name,
+                    'account_subtype': line.account.account_subtype,
                     'debit': str(line.debit),
                     'credit': str(line.credit),
                 })

@@ -92,7 +92,7 @@ export default function LedgerPage() {
     : null
 
   return (
-    <div className="max-w-6xl mx-auto space-y-4">
+    <div className="w-full space-y-4">
       <button
         onClick={() => navigate('/accounts')}
         className="inline-flex items-center gap-1 text-sm hover:opacity-80"
@@ -147,6 +147,7 @@ export default function LedgerPage() {
           </div>
 
           <Card className="overflow-hidden p-0">
+            <div className="overflow-x-auto">
             <Table>
               <Thead>
                 <Tr>
@@ -192,7 +193,7 @@ export default function LedgerPage() {
                         title="Pharmacy source document this entry was generated from">
                         {t.reference_type ? `${t.reference_type}${t.reference_id ? ` #${t.reference_id}` : ''}` : '—'}
                       </Td>
-                      <Td className="text-sm truncate max-w-xs" style={{ color: 'var(--ink)' }}>{t.narration || '—'}</Td>
+                      <Td className="text-sm truncate max-w-lg" style={{ color: 'var(--ink)' }}>{t.narration || '—'}</Td>
                       <Td className="text-right mono px-3" style={{ color: dr > 0 ? 'var(--ink)' : 'var(--ink-3)' }}>
                         {dr > 0 ? formatCurrency(dr) : '—'}
                       </Td>
@@ -214,6 +215,7 @@ export default function LedgerPage() {
                 )}
               </Tbody>
             </Table>
+            </div>
           </Card>
 
           {total > 0 && (

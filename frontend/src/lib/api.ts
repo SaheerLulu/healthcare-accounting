@@ -2142,7 +2142,7 @@ export interface DaybookEntry {
   narration: string
   reference_type?: string
   reference_id?: number | null
-  lines: { account_code: string; account_name: string; debit: string; credit: string }[]
+  lines: { account_code: string; account_name: string; account_subtype?: string; debit: string; credit: string }[]
 }
 
 export interface DaybookDay {

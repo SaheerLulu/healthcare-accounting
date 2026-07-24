@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Loader2, ChevronDown, ChevronRight, Filter } from 'lucide-react'
+import { Loader2, ChevronDown, ChevronRight, Filter, Landmark, Banknote } from 'lucide-react'
 import { toast } from 'sonner'
 import { getDaybook, type DaybookDay, type DaybookEntry } from '../../lib/api'
 import { formatCurrency, formatDate, cn } from '../../lib/utils'
@@ -29,6 +29,9 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
   const [expanded, setExpanded] = useState(false)
   const totalDebit = entry.lines.reduce((s, l) => s + Number(l.debit), 0)
   const totalCredit = entry.lines.reduce((s, l) => s + Number(l.credit), 0)
+  // Cash/Bank involvement, surfaced at the header level so money-movement
+  // entries are spottable without expanding the lines.
+  const modes = [...new Set(entry.lines.map((l) => l.account_subtype).filter((s) => s === 'Cash' || s === 'Bank'))] as string[]
 
   return (
     <div className="border-b last:border-b-0" style={{ borderColor: 'var(--line)' }}>
@@ -52,6 +55,21 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
           style={{ minWidth: 92, textAlign: 'center' }}
         >
           {voucherLabel(entry.voucher_type)}
+        </span>
+        <span className="inline-flex gap-1" style={{ minWidth: 48 }}>
+          {modes.map((m) => (
+            <span
+              key={m}
+              className={cn(
+                'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium',
+                m === 'Bank' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'
+              )}
+              title={`Entry touches a ${m.toLowerCase()} account`}
+            >
+              {m === 'Bank' ? <Landmark size={10} /> : <Banknote size={10} />}
+              {m}
+            </span>
+          ))}
         </span>
         <span className="text-sm flex-1 truncate" style={{ color: 'var(--ink)' }}>{entry.narration || '—'}</span>
         {entry.reference_type ? (
@@ -310,6 +328,7 @@ export default function DaybookPage() {
               <span className="w-4" />
               <span className="w-36">Entry No</span>
               <span style={{ minWidth: 92 }}>Type</span>
+              <span style={{ minWidth: 48 }}>Via</span>
               <span className="flex-1">Narration</span>
               <span className="w-28 text-right">Debit</span>
               <span className="w-28 text-right">Credit</span>
