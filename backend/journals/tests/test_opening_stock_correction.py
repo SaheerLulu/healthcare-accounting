@@ -17,9 +17,12 @@ from journals.services import JournalAutoGenerationService
 
 
 def _make_correction(*, corr_id=901, status='approved', location_id=1,
-                     lines=(((10, '50.00', '60.00'), (10, '50.00', '60.00')),)):
+                     lines=(((10, '50.00', '60.00'), (10, '50.00', '60.00')),),
+                     supply_type=None):
     """Mock OpeningStockCorrectionRO. Each entry in `lines` is a pair of
-    (qty, rate, tax_value) tuples: (old, new)."""
+    (qty, rate, tax_value) tuples: (old, new). `supply_type=None` omits the
+    `opening_stock` relation entirely (legacy mock shape — exercises the
+    service's getattr fallback); pass 'intra'/'inter' to attach a parent."""
     line_objs = []
     for i, (old, new) in enumerate(lines, start=1):
         line_objs.append(SimpleNamespace(
@@ -34,7 +37,7 @@ def _make_correction(*, corr_id=901, status='approved', location_id=1,
         def all(self):
             return line_objs
 
-    return SimpleNamespace(
+    corr = SimpleNamespace(
         id=corr_id, status=status,
         opening_stock_id=701, location_id=location_id,
         location=SimpleNamespace(id=location_id, name='Test Store'),
@@ -42,6 +45,9 @@ def _make_correction(*, corr_id=901, status='approved', location_id=1,
         created_at=datetime(2026, 4, 5, 9, 0),
         lines=_LinesMgr(),
     )
+    if supply_type is not None:
+        corr.opening_stock = SimpleNamespace(id=701, supply_type=supply_type)
+    return corr
 
 
 class OpeningStockCorrectionJVTests(TestCase):
@@ -148,3 +154,40 @@ class OpeningStockCorrectionJVTests(TestCase):
             ).count(),
             1,
         )
+
+    def test_inter_parent_positive_tax_delta_debits_input_igst(self):
+        # Parent entry was inter-state → the whole +180 delta hits 1160.
+        corr = _make_correction(corr_id=908, supply_type='inter', lines=(
+            ((100, '50.00', '600.00'), (130, '50.00', '780.00')),
+        ))
+        entry = self._run(corr)
+
+        codes = self._codes(entry)
+        self.assertEqual(codes['1160'], (Decimal('180.00'), Decimal('0')))
+        self.assertNotIn('1140', codes)
+        self.assertNotIn('1150', codes)
+        self.assertEqual(codes['1190'], (Decimal('1500.00'), Decimal('0')))
+        self.assertEqual(codes['3300'], (Decimal('0'), Decimal('1680.00')))
+
+    def test_inter_parent_negative_tax_delta_credits_input_igst(self):
+        corr = _make_correction(corr_id=909, supply_type='inter', lines=(
+            ((100, '50.00', '600.00'), (80, '50.00', '480.00')),
+        ))
+        entry = self._run(corr)
+
+        codes = self._codes(entry)
+        self.assertEqual(codes['1160'], (Decimal('0'), Decimal('120.00')))
+        self.assertNotIn('1140', codes)
+        self.assertNotIn('1150', codes)
+
+    def test_intra_parent_keeps_cgst_sgst_split(self):
+        # Explicit intra parent — same split as the legacy no-parent mocks.
+        corr = _make_correction(corr_id=910, supply_type='intra', lines=(
+            ((100, '50.00', '600.00'), (130, '50.00', '780.00')),
+        ))
+        entry = self._run(corr)
+
+        codes = self._codes(entry)
+        self.assertEqual(codes['1140'], (Decimal('90.00'), Decimal('0')))
+        self.assertEqual(codes['1150'], (Decimal('90.00'), Decimal('0')))
+        self.assertNotIn('1160', codes)

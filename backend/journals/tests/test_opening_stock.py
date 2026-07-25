@@ -16,10 +16,13 @@ from journals.services import JournalAutoGenerationService
 
 
 def _make_opening_stock(*, batch_id=701, location_id=1,
-                       lines=((10, '10.00'), (5, '20.00'))):
+                       lines=((10, '10.00'), (5, '20.00')),
+                       supply_type=None):
     """Build a mock OpeningStockRO with (qty, rate) or (qty, rate, tax_value)
     line tuples. 2-tuples get no tax_value attribute at all — mirroring rows
-    from before the pharmacy added the column."""
+    from before the pharmacy added the column. Likewise `supply_type=None`
+    omits the attribute entirely (pre-column shape); pass 'intra'/'inter'
+    to include it."""
     from datetime import datetime, date
     line_objs = []
     for i, spec in enumerate(lines, start=1):
@@ -33,13 +36,16 @@ def _make_opening_stock(*, batch_id=701, location_id=1,
         def all(self):
             return line_objs
 
-    return SimpleNamespace(
+    batch = SimpleNamespace(
         id=batch_id, location_id=location_id,
         location=SimpleNamespace(id=location_id, name='Test Store'),
         opening_date=date(2026, 4, 1),
         created_at=datetime(2026, 4, 1, 9, 0),
         lines=_LinesMgr(),
     )
+    if supply_type is not None:
+        batch.supply_type = supply_type
+    return batch
 
 
 class OpeningStockJVTests(TestCase):
@@ -149,3 +155,40 @@ class OpeningStockInputGSTTests(OpeningStockJVTests):
         by_code = {l.account.account_code: (l.debit, l.credit) for l in entry.lines.all()}
         self.assertEqual(by_code['3300'], (Decimal('0'), Decimal('100.00')),
                          'no tax → equity credit equals plain inventory value')
+
+    def test_inter_batch_posts_full_tax_to_input_igst(self):
+        # value = 10×₹100 + 5×₹200 = ₹2000; tax = 120 + 120 = ₹240 all IGST
+        batch = _make_opening_stock(
+            batch_id=714, supply_type='inter',
+            lines=((10, '100.00', '120.00'), (5, '200.00', '120.00')),
+        )
+        entry = self._run_generate(batch)
+
+        self.assertIsNotNone(entry)
+        codes = {l.account.account_code: (l.debit, l.credit) for l in entry.lines.all()}
+        self.assertEqual(codes['1160'], (Decimal('240.00'), Decimal('0')),
+                         'inter batch → whole tax lands in Input IGST')
+        self.assertNotIn('1140', codes)
+        self.assertNotIn('1150', codes)
+        self.assertEqual(codes['3300'], (Decimal('0'), Decimal('2240.00')),
+                         'equity credit still grosses up to value + tax')
+
+    def test_explicit_intra_batch_keeps_cgst_sgst_split(self):
+        batch = _make_opening_stock(
+            batch_id=715, supply_type='intra',
+            lines=((1, '1000.00', '100.00'),),
+        )
+        entry = self._run_generate(batch)
+
+        codes = {l.account.account_code: (l.debit, l.credit) for l in entry.lines.all()}
+        self.assertEqual(codes['1140'], (Decimal('50.00'), Decimal('0')))
+        self.assertEqual(codes['1150'], (Decimal('50.00'), Decimal('0')))
+        self.assertNotIn('1160', codes)
+
+    def test_inter_batch_with_zero_tax_posts_no_gst_line(self):
+        batch = _make_opening_stock(batch_id=716, supply_type='inter',
+                                    lines=((10, '10.00'),))
+        entry = self._run_generate(batch)
+
+        codes = {l.account.account_code for l in entry.lines.all()}
+        self.assertNotIn('1160', codes)

@@ -585,6 +585,9 @@ class OpeningStockRO(models.Model):
     )
     opening_date = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
+    # 'intra' / 'inter' — RAW pharmacy column value, NOT this repo's
+    # 'intra_state'/'inter_state' vocabulary (core/gst_utils). Do not normalize.
+    supply_type = models.CharField(max_length=10, blank=True)
     created_by_id = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField()
 

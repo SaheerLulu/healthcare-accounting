@@ -372,11 +372,11 @@ class JournalAutoGenerationService:
         Books `Dr 1190 Closing Stock / Cr 3300 Opening Balance Equity` for
         the sum of (qty × purchase_rate) across all lines in the batch. When
         the lines carry a GST tax_value, the input credit comes onto the
-        books too: `Dr 1140 Input CGST + Dr 1150 Input SGST` (split 50/50 —
-        opening stock has no supply-type, and go-live inventory is assumed
-        locally purchased) with the equity credit grossed up to match.
-        Idempotent via reference_type='OpeningStock' so re-running sync
-        won't double-post.
+        books too: intra (default) → `Dr 1140 Input CGST + Dr 1150 Input
+        SGST` split 50/50; header supply_type == 'inter' → `Dr 1160 Input
+        IGST` for the full tax. The equity credit is grossed up to match
+        either way. Idempotent via reference_type='OpeningStock' so
+        re-running sync won't double-post.
         """
         if self._entry_exists('OpeningStock', opening_stock_id):
             return None
@@ -417,20 +417,31 @@ class JournalAutoGenerationService:
             narration='Opening stock — bring inventory onto the books',
         )
         if total_tax > 0:
-            # cgst + sgst must foot to total_tax exactly — quantize one half
-            # and take the remainder for the other so odd paise don't unbalance.
-            cgst = (total_tax / 2).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            sgst = total_tax - cgst
-            JournalEntryLine.objects.create(
-                entry=entry, account=self._acct('INPUT_CGST', loc),
-                debit=cgst,
-                narration='Opening stock — input CGST carried in',
-            )
-            JournalEntryLine.objects.create(
-                entry=entry, account=self._acct('INPUT_SGST', loc),
-                debit=sgst,
-                narration='Opening stock — input SGST carried in',
-            )
+            # Pharmacy stores 'intra'/'inter' (raw column value — not the
+            # 'intra_state'/'inter_state' this service derives from GSTINs
+            # for purchases; opening stock has no supplier to derive from).
+            # getattr keeps pre-column rows and legacy fixtures on intra.
+            if (getattr(os_header, 'supply_type', '') or '') == 'inter':
+                JournalEntryLine.objects.create(
+                    entry=entry, account=self._acct('INPUT_IGST', loc),
+                    debit=total_tax,
+                    narration='Opening stock — input IGST carried in',
+                )
+            else:
+                # cgst + sgst must foot to total_tax exactly — quantize one half
+                # and take the remainder for the other so odd paise don't unbalance.
+                cgst = (total_tax / 2).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                sgst = total_tax - cgst
+                JournalEntryLine.objects.create(
+                    entry=entry, account=self._acct('INPUT_CGST', loc),
+                    debit=cgst,
+                    narration='Opening stock — input CGST carried in',
+                )
+                JournalEntryLine.objects.create(
+                    entry=entry, account=self._acct('INPUT_SGST', loc),
+                    debit=sgst,
+                    narration='Opening stock — input SGST carried in',
+                )
         JournalEntryLine.objects.create(
             entry=entry, account=self._acct('OPENING_BALANCE_EQUITY', loc),
             credit=total_value + total_tax,
@@ -445,8 +456,9 @@ class JournalAutoGenerationService:
         The pharmacy applies approved corrections to its lines/stock, but the
         original OpeningStock JV must never be rewritten — so this books only
         the difference the correction made: inventory-value delta on 1190,
-        input-GST delta on 1140/1150 (same 50/50 intra split as the opening
-        JV), balanced against 3300 Opening Balance Equity. Direction flips
+        input-GST delta on 1140/1150 (50/50 intra split) or on 1160 when the
+        parent entry's supply_type is 'inter' — mirroring the opening JV,
+        balanced against 3300 Opening Balance Equity. Direction flips
         with the sign (an over-keyed quantity corrected down credits stock
         and debits equity). Batch/expiry/MRP-only edits net to zero and post
         nothing. Idempotent via reference_type='OpeningStockCorrection'.
@@ -499,21 +511,32 @@ class JournalAutoGenerationService:
             )
         if delta_tax != 0:
             tax_abs = abs(delta_tax)
-            cgst = (tax_abs / 2).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-            sgst = tax_abs - cgst
             side = 'debit' if delta_tax > 0 else 'credit'
-            if cgst > 0:
+            # Branch on the PARENT entry's supply type (corrections cannot
+            # change it). Double getattr: legacy fixtures/mocks may lack the
+            # relation or the column — both fall back to the intra split.
+            parent = getattr(corr, 'opening_stock', None)
+            if (getattr(parent, 'supply_type', '') or '') == 'inter':
                 JournalEntryLine.objects.create(
-                    entry=entry, account=self._acct('INPUT_CGST', loc),
-                    narration='Opening stock correction — input CGST delta',
-                    **{side: cgst},
+                    entry=entry, account=self._acct('INPUT_IGST', loc),
+                    narration='Opening stock correction — input IGST delta',
+                    **{side: tax_abs},
                 )
-            if sgst > 0:
-                JournalEntryLine.objects.create(
-                    entry=entry, account=self._acct('INPUT_SGST', loc),
-                    narration='Opening stock correction — input SGST delta',
-                    **{side: sgst},
-                )
+            else:
+                cgst = (tax_abs / 2).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                sgst = tax_abs - cgst
+                if cgst > 0:
+                    JournalEntryLine.objects.create(
+                        entry=entry, account=self._acct('INPUT_CGST', loc),
+                        narration='Opening stock correction — input CGST delta',
+                        **{side: cgst},
+                    )
+                if sgst > 0:
+                    JournalEntryLine.objects.create(
+                        entry=entry, account=self._acct('INPUT_SGST', loc),
+                        narration='Opening stock correction — input SGST delta',
+                        **{side: sgst},
+                    )
         net = delta_value + delta_tax
         if net > 0:
             JournalEntryLine.objects.create(
