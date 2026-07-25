@@ -192,3 +192,37 @@ class OpeningStockInputGSTTests(OpeningStockJVTests):
 
         codes = {l.account.account_code for l in entry.lines.all()}
         self.assertNotIn('1160', codes)
+
+
+class OpeningStockLooseValueTests(OpeningStockJVTests):
+    """Lines carrying loose units add loose × rate / qty_per_pack to the
+    inventory value; legacy lines without the columns are unaffected."""
+
+    def test_loose_units_join_the_inventory_value(self):
+        # 10 packs × ₹100 + 5 loose × ₹100/10 = 1000 + 50 = ₹1050; tax ₹126
+        batch = _make_opening_stock(batch_id=721, lines=((10, '100.00', '126.00'),))
+        line = batch.lines.all()[0]
+        line.qty_per_pack = 10
+        line.loose_quantity = 5
+        entry = self._run_generate(batch)
+
+        codes = {l.account.account_code: (l.debit, l.credit) for l in entry.lines.all()}
+        self.assertEqual(codes['1190'], (Decimal('1050.00'), Decimal('0')))
+        self.assertEqual(codes['3300'], (Decimal('0'), Decimal('1176.00')))
+
+    def test_zero_qty_per_pack_treated_as_one(self):
+        # Defensive: loose with qpp=0 must not divide by zero; values as packs.
+        batch = _make_opening_stock(batch_id=722, lines=((10, '100.00'),))
+        line = batch.lines.all()[0]
+        line.qty_per_pack = 0
+        line.loose_quantity = 5
+        entry = self._run_generate(batch)
+
+        codes = {l.account.account_code: (l.debit, l.credit) for l in entry.lines.all()}
+        self.assertEqual(codes['1190'], (Decimal('1500.00'), Decimal('0')))  # 1000 + 5×100/1
+
+    def test_legacy_lines_without_columns_unchanged(self):
+        batch = _make_opening_stock(batch_id=723, lines=((10, '10.00'),))
+        entry = self._run_generate(batch)
+        codes = {l.account.account_code: (l.debit, l.credit) for l in entry.lines.all()}
+        self.assertEqual(codes['1190'], (Decimal('100.00'), Decimal('0')))

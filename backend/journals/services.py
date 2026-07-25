@@ -391,7 +391,15 @@ class JournalAutoGenerationService:
         for line in lines:
             qty = Decimal(str(line.quantity or 0))
             rate = Decimal(str(line.purchase_rate or 0))
-            total_value += (qty * rate).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            line_value = qty * rate
+            # Loose units carried in with the packs are valued at their
+            # per-unit share of the pack rate. getattr: rows synced before
+            # the pharmacy added the columns (and legacy fixtures) have none.
+            loose = Decimal(str(getattr(line, 'loose_quantity', 0) or 0))
+            if loose > 0:
+                qpp = int(getattr(line, 'qty_per_pack', 1) or 1)
+                line_value += loose * rate / Decimal(max(qpp, 1))
+            total_value += line_value.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             # getattr: rows synced before the pharmacy added tax_value (and
             # legacy fixtures) simply contribute 0.
             total_tax += Decimal(str(getattr(line, 'tax_value', 0) or 0))

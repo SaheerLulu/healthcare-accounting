@@ -614,6 +614,10 @@ class OpeningStockLineRO(models.Model):
     # opening JV can bring the input tax credit onto the books.
     tax_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     tax_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # Strip size for the batch and loose units carried in on top of the whole
+    # packs — loose value = loose × rate / qty_per_pack joins the opening JV.
+    qty_per_pack = models.IntegerField(null=True)
+    loose_quantity = models.IntegerField(null=True)
     created_at = models.DateTimeField()
 
     class Meta:
