@@ -2318,6 +2318,11 @@ class GSTFilingHealthView(APIView):
                 pos_lines = pos_lines.filter(pos_order__location_id=loc_id)
                 b2b_lines = b2b_lines.filter(sales_order__location_id=loc_id)
             for line in list(pos_lines) + list(b2b_lines):
+                # A clinical service line has no product master to fix — it carries
+                # a SAC snapshotted from the service master. Flagging it here would
+                # tell the operator to correct a product that does not exist.
+                if getattr(line, 'is_service', False):
+                    continue
                 p = line.product
                 if p is None:
                     continue

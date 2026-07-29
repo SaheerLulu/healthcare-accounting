@@ -346,6 +346,13 @@ class JournalAutoGenerationService:
             return Decimal('0')
         total = Decimal('0')
         for line in lines:
+            # A clinical service was never stocked, so there is nothing to relieve.
+            # This is only *accidentally* safe without the guard —
+            # _product_avg_cost(None) aggregates to zero and the value check below
+            # skips it — and relying on that would break the moment the cost lookup
+            # changes shape.
+            if getattr(line, 'is_service', False) or not line.product_id:
+                continue
             qty = self._pack_equivalent_qty(line)
             if qty <= 0:
                 continue
@@ -724,7 +731,13 @@ class JournalAutoGenerationService:
                 pass
 
         # Aggregate per-line: each line's line_total is tax-inclusive at line.tax_percent.
+        #
+        # Exempt clinical services are split out rather than folded into
+        # `sales_amount`. Booking them to the goods sales head would make GSTR-3B
+        # read them as taxable-at-0% (zero-rated) outward supplies instead of
+        # *exempt* ones — a different box on the return, and a misstatement.
         sales_amount = Decimal('0.00')
+        exempt_amount = Decimal('0.00')
         cgst = Decimal('0.00')
         sgst = Decimal('0.00')
         igst = Decimal('0.00')
@@ -733,7 +746,15 @@ class JournalAutoGenerationService:
             line_total = Decimal(str(line.line_total or 0))
             line_taxable = back_calculate_taxable(line_total, line.tax_percent)
             line_tax = line_total - line_taxable
-            sales_amount += line_taxable
+
+            is_exempt_service = (
+                getattr(line, 'is_service', False)
+                and getattr(line, 'taxability_class', '') != 'taxable'
+            )
+            if is_exempt_service:
+                exempt_amount += line_taxable
+            else:
+                sales_amount += line_taxable
 
             if supply_type == 'inter_state':
                 igst += line_tax
@@ -745,6 +766,7 @@ class JournalAutoGenerationService:
                 sgst += line_tax - half
 
         sales_amount = sales_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        exempt_amount = exempt_amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         cgst = cgst.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         sgst = sgst.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
         igst = igst.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
@@ -753,10 +775,17 @@ class JournalAutoGenerationService:
         order_discount = Decimal(str(pos.discount_amount or 0))
 
         loc = pos.location_id
+        is_service_doc = getattr(pos, 'doc_type', 'goods') == 'service'
         entry = JournalEntry.objects.create(
             date=pos.sale_date.date() if hasattr(pos.sale_date, 'date') else pos.sale_date,
-            narration=f"POS Sale: {pos.invoice_no}",
+            narration=(f"Service Bill: {pos.invoice_no}" if is_service_doc
+                       else f"POS Sale: {pos.invoice_no}"),
             voucher_type='SALE',
+            # Deliberately still 'POSOrder': both documents are pos_posorder rows with
+            # distinct PKs, so _entry_exists() already dedupes them and
+            # reverse_cancelled's existing ('POSOrder', POSOrderRO, 'status') spec
+            # covers a cancelled service bill for free. A new reference_type would
+            # need parallel entries in five places for no benefit.
             reference_type='POSOrder',
             reference_id=pos_id,
             location_id=loc,
@@ -768,7 +797,25 @@ class JournalAutoGenerationService:
                     JournalEntryLine.objects.create(
                         entry=entry, account=debit_ac, debit=leg_amount, **ar_party)
         if sales_amount > 0:
-            JournalEntryLine.objects.create(entry=entry, account=self._acct('SALES_POS', loc), credit=sales_amount)
+            # A taxable clinical service is revenue, but not *pharmacy* revenue —
+            # it has no COGS and belongs under its own head. Fall back to SALES_POS
+            # when the mapping is absent so an un-migrated accounting deploy still
+            # balances rather than raising.
+            if is_service_doc:
+                sales_acct = (self._acct_or_none('SERVICE_INCOME', loc)
+                              or self._acct('SALES_POS', loc))
+            else:
+                sales_acct = self._acct('SALES_POS', loc)
+            JournalEntryLine.objects.create(entry=entry, account=sales_acct, credit=sales_amount)
+        if exempt_amount > 0:
+            # Same head reception's FeeCollection uses, so GSTR-3B 3.1(c) — which is
+            # derived from posted credits on this account — picks up clinical revenue
+            # collected at the pharmacy counter with no further change.
+            JournalEntryLine.objects.create(
+                entry=entry, account=self._acct('CONSULTATION_INCOME', loc),
+                credit=exempt_amount,
+                narration='Clinical service income (exempt)',
+            )
         if cgst > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('OUTPUT_CGST', loc), credit=cgst)
         if sgst > 0:
@@ -810,8 +857,11 @@ class JournalAutoGenerationService:
                 )
                 discount_posted += loyalty_redeemed
 
-        # Round-off absorbs the remaining sub-rupee drift.
-        diff = (total + discount_posted) - (sales_amount + cgst + sgst + igst)
+        # Round-off absorbs the remaining sub-rupee drift. `exempt_amount` MUST be
+        # in this equation: it is a credit leg like any other, and leaving it out
+        # would make every service bill look off by its full value — either posting
+        # a nonsense round-off or, past ₹1, silently posting an unbalanced entry.
+        diff = (total + discount_posted) - (sales_amount + exempt_amount + cgst + sgst + igst)
         if diff != Decimal('0.00') and abs(diff) < Decimal('1.00'):
             round_off_ac = self._acct_or_none('ROUND_OFF', loc)
             if round_off_ac:
@@ -821,7 +871,10 @@ class JournalAutoGenerationService:
                     JournalEntryLine.objects.create(entry=entry, account=round_off_ac, debit=abs(diff))
 
         # Relieve stock and post COGS in the same JE (perpetual inventory).
-        self._post_cogs(entry=entry, lines=pos.lines.all())
+        # A service bill has no stock to relieve; _post_cogs also guards per line,
+        # so this is belt-and-braces plus two saved aggregate queries per line.
+        if not is_service_doc:
+            self._post_cogs(entry=entry, lines=pos.lines.all())
 
         entry.post()
         return entry
