@@ -98,7 +98,7 @@ export default function BankAccountPage() {
       </button>
 
       {/* Header */}
-      <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between mb-5 gap-3 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{account.name}</h1>
           <div className="text-sm text-slate-500 mt-0.5">
@@ -117,7 +117,7 @@ export default function BankAccountPage() {
       </div>
 
       {/* Balances */}
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <Card className="p-4">
           <div className="text-xs text-slate-500 uppercase tracking-wider">Books</div>
           <div className="text-xl font-semibold text-slate-900 mt-1 font-mono">{formatCurrency(account.book_balance)}</div>
@@ -232,7 +232,7 @@ function TxnRow({ txn, glAccounts, suppliers, customers, onChange }: {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-slate-900 truncate">
+            <span className="text-sm font-medium text-slate-900 truncate min-w-0 lg:min-w-[auto]">
               {txn.description || '(no description)'}
             </span>
             {txn.source === 'manual' && <Badge variant="default">Manual</Badge>}
@@ -371,7 +371,7 @@ function MatchDialog({ txn, open, onClose, onMatched }: {
             {suggestions.map((s) => (
               <li key={s.entry_id} className="p-3 hover:bg-slate-50 flex items-center justify-between gap-3">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-mono text-xs text-teal-700">{s.entry_no}</span>
                     <Badge variant="info">{s.voucher_type}</Badge>
                     <span className="text-xs text-slate-400">{formatDate(s.date)}</span>
@@ -390,8 +390,8 @@ function MatchDialog({ txn, open, onClose, onMatched }: {
           </ul>
         )}
 
-        <form onSubmit={pickManual} className="border-t border-slate-100 pt-3 flex items-end gap-2">
-          <label className="flex-1 block text-xs">
+        <form onSubmit={pickManual} className="border-t border-slate-100 pt-3 flex flex-wrap items-end gap-2">
+          <label className="flex-1 min-w-[9rem] block text-xs">
             <span className="text-slate-500 block mb-1">Or match by Journal Entry ID</span>
             <Input value={manualId} onChange={(e) => setManualId(e.target.value)} type="number"
               placeholder="e.g. 42" />
@@ -471,7 +471,7 @@ function CategorizeSheet({ txn, open, onClose, glAccounts, suppliers, customers,
               </Field>
 
               <Field label="Tag a party" hint="Optional — for outstanding tracking">
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <select value={partyType} onChange={(e) => { setPartyType(e.target.value as typeof partyType); setPartyId('') }}
                     className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white">
                     <option value="">— None —</option>
@@ -559,7 +559,7 @@ function DepositCashDialog({ bankAccount, onDeposited }: { bankAccount: BankAcco
           )}
         </p>
         <form onSubmit={submit} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Date" required>
               <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
             </Field>
@@ -700,13 +700,13 @@ function ManualTxnSheet({ bankAccount, onCreated }: { bankAccount: BankAccount; 
           <SheetBody>
             <div className="space-y-3">
               <Field label="Direction" required>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {[
                     { v: 'in' as const, label: 'Money In', cls: 'border-emerald-300 bg-emerald-50 text-emerald-700' },
                     { v: 'out' as const, label: 'Money Out', cls: 'border-rose-300 bg-rose-50 text-rose-700' },
                   ].map((opt) => (
                     <label key={opt.v} className={cn(
-                      'flex-1 flex items-center justify-center px-3 py-2 rounded-lg border cursor-pointer text-sm',
+                      'flex-1 min-w-[7rem] flex items-center justify-center px-3 py-2 rounded-lg border cursor-pointer text-sm',
                       direction === opt.v ? opt.cls : 'border-slate-200 text-slate-600'
                     )}>
                       <input type="radio" checked={direction === opt.v} onChange={() => setDirection(opt.v)}
@@ -716,7 +716,7 @@ function ManualTxnSheet({ bankAccount, onCreated }: { bankAccount: BankAccount; 
                   ))}
                 </div>
               </Field>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Date" required>
                   <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
                 </Field>
@@ -758,7 +758,7 @@ function Pill({ label, count, active, dot, onClick }: {
 }) {
   return (
     <button onClick={onClick} className={cn(
-      'inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors',
+      'inline-flex items-center gap-2 px-3 py-2 sm:py-1.5 rounded-full border text-xs font-medium transition-colors',
       active
         ? 'bg-teal-50 border-teal-200 text-teal-700'
         : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'

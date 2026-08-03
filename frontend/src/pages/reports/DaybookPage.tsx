@@ -86,31 +86,33 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
       </div>
       {expanded && (
         <div className="px-12 pb-3" style={{ background: 'var(--surface-1)' }}>
-          <table className="w-full text-xs">
-            <thead>
-              <tr style={{ color: 'var(--ink-2)' }}>
-                <th className="text-left pb-1 font-medium pt-1">Account</th>
-                <th className="text-right pb-1 font-medium">Debit</th>
-                <th className="text-right pb-1 font-medium">Credit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entry.lines.map((line, i) => (
-                <tr key={i}>
-                  <td className="py-0.5" style={{ color: 'var(--ink-2)' }}>
-                    <span className="font-mono mr-2" style={{ color: 'var(--ink-3)' }}>{line.account_code}</span>
-                    {line.account_name}
-                  </td>
-                  <td className="py-0.5 text-right font-mono" style={{ color: 'var(--ink)' }}>
-                    {Number(line.debit) > 0 ? formatCurrency(line.debit) : '—'}
-                  </td>
-                  <td className="py-0.5 text-right font-mono" style={{ color: 'var(--ink)' }}>
-                    {Number(line.credit) > 0 ? formatCurrency(line.credit) : '—'}
-                  </td>
+          <div className="table-scroll">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ color: 'var(--ink-2)' }}>
+                  <th className="text-left pb-1 font-medium pt-1">Account</th>
+                  <th className="text-right pb-1 font-medium">Debit</th>
+                  <th className="text-right pb-1 font-medium">Credit</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {entry.lines.map((line, i) => (
+                  <tr key={i}>
+                    <td className="py-0.5" style={{ color: 'var(--ink-2)' }}>
+                      <span className="font-mono mr-2" style={{ color: 'var(--ink-3)' }}>{line.account_code}</span>
+                      {line.account_name}
+                    </td>
+                    <td className="py-0.5 text-right font-mono" style={{ color: 'var(--ink)' }}>
+                      {Number(line.debit) > 0 ? formatCurrency(line.debit) : '—'}
+                    </td>
+                    <td className="py-0.5 text-right font-mono" style={{ color: 'var(--ink)' }}>
+                      {Number(line.credit) > 0 ? formatCurrency(line.credit) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="flex justify-end mt-2">
             <button
               type="button"
@@ -217,34 +219,34 @@ export default function DaybookPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Day Book</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Day Book</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>
           Chronological register of all transactions · F2 jumps to date · 1–8 toggle voucher filters
         </p>
       </div>
 
       {/* Date range */}
-      <div className="flex items-center gap-3 mb-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>From</label>
           <Input
             ref={dateFromRef}
             type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
-            className="w-auto px-2.5 py-1.5"
+            className="w-full sm:w-auto px-2.5 py-1.5"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>To</label>
           <Input
             type="date"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
-            className="w-auto px-2.5 py-1.5"
+            className="w-full sm:w-auto px-2.5 py-1.5"
           />
         </div>
-        <Button variant="secondary" onClick={load} disabled={loading}>
+        <Button variant="secondary" className="w-full sm:w-auto" onClick={load} disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
           Refresh
         </Button>
@@ -296,7 +298,7 @@ export default function DaybookPage() {
       </div>
 
       {fetched && (
-        <div className="flex items-center gap-6 text-sm" style={{ color: 'var(--ink-2)' }}>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm" style={{ color: 'var(--ink-2)' }}>
           <span>Entries: <span className="font-semibold" style={{ color: 'var(--ink)' }}>{filteredSummary.total_entries}</span></span>
           <span>Total Debit: <span className="font-mono font-semibold" style={{ color: 'var(--ink)' }}>{formatCurrency(filteredSummary.total_debit)}</span></span>
           <span>Total Credit: <span className="font-mono font-semibold" style={{ color: 'var(--ink)' }}>{formatCurrency(filteredSummary.total_credit)}</span></span>
@@ -317,26 +319,33 @@ export default function DaybookPage() {
 
       {filteredDays.map((day) => (
         <Card key={day.date} className="overflow-hidden p-0">
-          <div className="px-4 py-2.5 border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>{formatDate(day.date)}</span>
-              <Badge variant="default" className="text-xs">
-                {day.entries.length} {day.entries.length === 1 ? 'entry' : 'entries'}
-              </Badge>
-            </div>
-            <div className="flex gap-3 mt-1.5 text-[11px]" style={{ color: 'var(--ink-3)' }}>
-              <span className="w-4" />
-              <span className="w-36">Entry No</span>
-              <span style={{ minWidth: 92 }}>Type</span>
-              <span style={{ minWidth: 48 }}>Via</span>
-              <span className="flex-1">Narration</span>
-              <span className="w-28 text-right">Debit</span>
-              <span className="w-28 text-right">Credit</span>
+          {/* The entry rows are a fixed column grid — debit/credit have to line
+              up down the day — so narrow viewports scroll it sideways rather
+              than crushing the columns. */}
+          <div className="table-scroll">
+            <div className="min-w-[46rem]">
+              <div className="px-4 py-2.5 border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>{formatDate(day.date)}</span>
+                  <Badge variant="default" className="text-xs">
+                    {day.entries.length} {day.entries.length === 1 ? 'entry' : 'entries'}
+                  </Badge>
+                </div>
+                <div className="flex gap-3 mt-1.5 text-[11px]" style={{ color: 'var(--ink-3)' }}>
+                  <span className="w-4" />
+                  <span className="w-36">Entry No</span>
+                  <span style={{ minWidth: 92 }}>Type</span>
+                  <span style={{ minWidth: 48 }}>Via</span>
+                  <span className="flex-1">Narration</span>
+                  <span className="w-28 text-right">Debit</span>
+                  <span className="w-28 text-right">Credit</span>
+                </div>
+              </div>
+              {day.entries.map((entry) => (
+                <DaybookEntryRow key={entry.id} entry={entry} />
+              ))}
             </div>
           </div>
-          {day.entries.map((entry) => (
-            <DaybookEntryRow key={entry.id} entry={entry} />
-          ))}
         </Card>
       ))}
     </div>

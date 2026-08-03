@@ -92,7 +92,7 @@ export default function BillsListPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Bills</h1>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Bills</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
             <span className="mono">{counts?.total ?? 0}</span> bills · Outstanding{' '}
             <span className="font-medium mono" style={{ color: 'var(--warning)' }}>
@@ -122,21 +122,21 @@ export default function BillsListPage() {
 
       {/* Search + date range */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[220px] max-w-md">
+        <div className="relative flex-1 min-w-[12rem] sm:min-w-[220px] max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
           <Input value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Search bill #, vendor, notes…" className="pl-9" />
         </div>
         <div
-          className="flex items-center gap-1 px-2 h-9 rounded-md"
+          className="flex items-center gap-1 px-2 h-9 rounded-md w-full sm:w-auto"
           style={{ border: '1px solid var(--line)', background: 'var(--surface-0)' }}
         >
-          <Calendar size={13} style={{ color: 'var(--ink-3)' }} />
+          <Calendar size={13} className="flex-shrink-0" style={{ color: 'var(--ink-3)' }} />
           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="text-xs bg-transparent focus:outline-none" style={{ color: 'var(--ink)' }} />
-          <span className="text-xs" style={{ color: 'var(--ink-3)' }}>→</span>
+            className="text-xs bg-transparent focus:outline-none min-w-0 flex-1 sm:flex-initial" style={{ color: 'var(--ink)' }} />
+          <span className="text-xs flex-shrink-0" style={{ color: 'var(--ink-3)' }}>→</span>
           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="text-xs bg-transparent focus:outline-none" style={{ color: 'var(--ink)' }} />
+            className="text-xs bg-transparent focus:outline-none min-w-0 flex-1 sm:flex-initial" style={{ color: 'var(--ink)' }} />
         </div>
         {hasFilters && (
           <button onClick={() => { setSearch(''); setFilter('all'); setDateFrom(''); setDateTo('') }}
@@ -205,7 +205,7 @@ export default function BillsListPage() {
       )}
 
       {bills.length > 0 && (
-        <div className="text-xs flex items-center justify-end gap-4 px-2" style={{ color: 'var(--ink-2)' }}>
+        <div className="text-xs flex flex-wrap items-center justify-end gap-x-4 gap-y-1 px-2" style={{ color: 'var(--ink-2)' }}>
           <span>Total: <span className="mono font-medium" style={{ color: 'var(--ink)' }}>{formatCurrency(totals.total)}</span></span>
           <span>Paid: <span className="mono font-medium" style={{ color: 'var(--success)' }}>{formatCurrency(totals.paid)}</span></span>
           <span>Balance: <span className="mono font-medium" style={{ color: 'var(--warning)' }}>{formatCurrency(totals.balance)}</span></span>
@@ -225,7 +225,7 @@ function StatusPill({ label, count, active, dotColor, onClick }: {
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-2 px-3 h-8 rounded-full text-xs font-medium transition-colors"
+      className="inline-flex items-center gap-2 px-3 h-9 sm:h-8 rounded-full text-xs font-medium transition-colors"
       style={{
         background: active ? 'rgba(15,157,154,0.10)' : 'var(--surface-0)',
         border: `1px solid ${active ? 'rgba(15,157,154,0.35)' : 'var(--line)'}`,

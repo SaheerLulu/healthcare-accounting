@@ -68,7 +68,7 @@ export default function PartyListPage({ partyType }: { partyType: PartyType }) {
             description={search ? 'Try a different search term.' : `Sync inventory or add ${heading.toLowerCase()} to get started.`}
           />
         ) : (
-          <Card className="overflow-x-auto overflow-hidden p-0">
+          <Card className="overflow-hidden p-0">
             <Table>
               <Thead>
                 <Tr>

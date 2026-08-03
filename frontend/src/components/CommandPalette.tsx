@@ -165,7 +165,7 @@ export function CommandPalette() {
           style={{ background: 'rgba(12,30,37,0.45)' }}
         />
         <Dialog.Content
-          className="fixed left-1/2 top-[18vh] z-50 w-[92vw] max-w-2xl -translate-x-1/2 rounded-xl overflow-hidden animate-slideUp"
+          className="fixed left-1/2 top-[8vh] sm:top-[18vh] z-50 w-[calc(100vw-1.5rem)] sm:w-[92vw] max-w-2xl -translate-x-1/2 rounded-xl overflow-hidden animate-slideUp"
           style={{
             background: 'var(--surface-0)',
             border: '1px solid var(--line)',
@@ -181,7 +181,7 @@ export function CommandPalette() {
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onKey}
               placeholder="Type to search vouchers, reports, masters…"
-              className="w-full pl-11 pr-4 py-3.5 bg-transparent text-sm focus:outline-none"
+              className="w-full pl-11 pr-16 sm:pr-4 py-3.5 bg-transparent text-sm focus:outline-none"
               style={{ color: 'var(--ink)' }}
             />
             <kbd
@@ -191,7 +191,7 @@ export function CommandPalette() {
               Esc
             </kbd>
           </div>
-          <div className="max-h-[55vh] overflow-y-auto">
+          <div className="max-h-[60dvh] sm:max-h-[55vh] overflow-y-auto">
             {filtered.length === 0 ? (
               <div className="p-8 text-center text-sm" style={{ color: 'var(--ink-3)' }}>
                 No matches
@@ -214,21 +214,21 @@ export function CommandPalette() {
                         type="button"
                         onMouseEnter={() => setHighlight(idx)}
                         onMouseDown={(e) => { e.preventDefault(); commit(it) }}
-                        className="w-full px-4 py-2 flex items-center gap-3 text-sm text-left"
+                        className="w-full px-4 py-2.5 sm:py-2 flex items-center gap-3 text-sm text-left"
                         style={{
                           background: idx === highlight ? 'rgba(15,157,154,0.08)' : 'transparent',
                           color: 'var(--ink)',
                         }}
                       >
-                        <span className="flex-1 truncate">{it.label}</span>
+                        <span className="flex-1 min-w-0 truncate">{it.label}</span>
                         {it.hint && (
-                          <span className="text-xs truncate" style={{ color: 'var(--ink-3)' }}>
+                          <span className="hidden sm:block text-xs truncate" style={{ color: 'var(--ink-3)' }}>
                             {it.hint}
                           </span>
                         )}
                         {it.badge && (
                           <span
-                            className="mono text-[10px] font-bold px-1.5 py-0.5 rounded"
+                            className="mono text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0"
                             style={{
                               background: 'rgba(15,157,154,0.10)',
                               color: 'var(--brand)',
@@ -249,7 +249,7 @@ export function CommandPalette() {
             )}
           </div>
           <div
-            className="px-4 py-2 flex items-center gap-3 text-[11px] border-t"
+            className="px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] border-t"
             style={{ background: 'var(--surface-1)', color: 'var(--ink-3)', borderColor: 'var(--line)' }}
           >
             <span>↑↓ navigate</span>

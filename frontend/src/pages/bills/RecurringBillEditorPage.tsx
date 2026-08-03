@@ -194,8 +194,8 @@ export default function RecurringBillEditorPage() {
 
       <div className="mb-5">
         <div className="flex items-center gap-2 mb-1">
-          <Repeat size={18} className="text-teal-600" />
-          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
+          <Repeat size={18} className="text-teal-600 flex-shrink-0" />
+          <h1 className="text-lg sm:text-xl font-semibold min-w-0" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
             {editingId ? `Edit ${original?.profile_name || 'profile'}` : 'New Recurring Bill'}
           </h1>
         </div>
@@ -211,7 +211,7 @@ export default function RecurringBillEditorPage() {
               placeholder="e.g. Monthly office rent" />
           </Field>
           <Field label="Vendor" required hint="Pick a known supplier or enter a name">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select value={vendorId ?? ''}
                 onChange={(e) => {
                   if (e.target.value) pickVendor(Number(e.target.value))
@@ -274,11 +274,11 @@ export default function RecurringBillEditorPage() {
 
       {/* Line items */}
       <Card className="overflow-hidden p-0 mb-4">
-        <div className="px-5 py-3 border-b border-slate-100">
+        <div className="px-4 sm:px-5 py-3 border-b border-slate-100">
           <h2 className="text-sm font-semibold text-slate-900">Expense Lines</h2>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="table-scroll">
+          <table className="w-full text-sm min-w-[720px]">
             <thead className="bg-slate-50 border-b border-slate-100">
               <tr>
                 <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide" style={{ width: '34%' }}>Expense Account</th>
@@ -367,7 +367,11 @@ export default function RecurringBillEditorPage() {
         </Field>
       </Card>
 
-      <div className="sticky bottom-0 -mx-6 px-6 py-3 bg-white border-t border-slate-200 shadow-[0_-4px_12px_rgba(0,0,0,0.04)] flex items-center justify-end gap-2 mt-4">
+      {/* The negative margin has to track the <main> gutter, which narrows on
+          phones — otherwise the bar overhangs the viewport and scrolls the body. */}
+      <div
+        className="sticky bottom-0 -mx-3 sm:-mx-4 lg:-mx-6 px-3 sm:px-4 lg:px-6 py-3 bg-white border-t border-slate-200 shadow-[0_-4px_12px_rgba(0,0,0,0.04)] flex flex-wrap items-center justify-end gap-2 mt-4 safe-bottom"
+      >
         <Button variant="secondary" onClick={() => navigate('/bills/recurring')}>Cancel</Button>
         <Button onClick={handleSave} disabled={saving}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}

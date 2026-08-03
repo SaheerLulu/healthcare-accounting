@@ -18,7 +18,7 @@ import { SkeletonTable } from '../../components/ui/Skeletons'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 
 function DialogFooter({ children }: { children: React.ReactNode }) {
-  return <div className="flex gap-2 justify-end mt-4">{children}</div>
+  return <div className="flex flex-wrap gap-2 justify-end mt-4">{children}</div>
 }
 
 export default function FixedAssetsPage() {
@@ -49,14 +49,14 @@ export default function FixedAssetsPage() {
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             Fixed Assets
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
             <span className="mono">{assets.length}</span> assets · {classes.length} classes
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => setShowClassDialog(true)}>
             <Plus size={16} /> Asset Class
           </Button>
@@ -139,7 +139,7 @@ function AssetClassDialog({ open, onClose, onSaved }: any) {
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent>
         <DialogHeader><DialogTitle>New Asset Class</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Input placeholder="Code (e.g. COMP)" value={data.code} onChange={(e) => setData({ ...data, code: e.target.value })} />
           <Input placeholder="Name (e.g. Computers)" value={data.name} onChange={(e) => setData({ ...data, name: e.target.value })} />
           <select className="border rounded px-2 py-1.5" value={data.dep_method}
@@ -190,7 +190,7 @@ function AssetDialog({ open, classes, onClose, onSaved }: any) {
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent>
         <DialogHeader><DialogTitle>New Fixed Asset</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Input placeholder="Asset number" value={data.asset_no} onChange={(e) => setData({ ...data, asset_no: e.target.value })} />
           <Input placeholder="Name" value={data.name} onChange={(e) => setData({ ...data, name: e.target.value })} />
           <select className="border rounded px-2 py-1.5" value={data.asset_class}
@@ -261,7 +261,7 @@ function DisposeDialog({ asset, onClose, onDone }: any) {
   return (
     <Dialog open={!!asset} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Dispose {asset.asset_no} — {asset.name}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle className="min-w-0 break-words">Dispose {asset.asset_no} — {asset.name}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div className="text-sm" style={{ color: 'var(--ink-2)' }}>
             NBV: {formatCurrency(asset.net_book_value ?? asset.acquisition_cost)}

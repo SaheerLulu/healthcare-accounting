@@ -128,7 +128,7 @@ export function GstHelperPopup({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[70] flex items-start justify-center pt-24 px-4"
+      className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto overscroll-contain px-3 pt-6 pb-6 sm:px-4 sm:pt-24"
       style={{ background: 'rgba(0,0,0,0.35)' }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onOpenChange(false) }}
     >
@@ -136,7 +136,7 @@ export function GstHelperPopup({
         className="w-full max-w-lg rounded-xl border shadow-xl overflow-hidden"
         style={{ background: 'var(--surface-0)', borderColor: 'var(--line)' }}
       >
-        <div className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: 'var(--line)' }}>
+        <div className="flex items-center justify-between px-4 py-3 border-b sm:px-5" style={{ borderColor: 'var(--line)' }}>
           <h3 className="text-sm font-semibold inline-flex items-center gap-2" style={{ color: 'var(--ink)' }}>
             <Calculator size={15} style={{ color: 'var(--brand)' }} /> Add GST
           </h3>
@@ -145,7 +145,7 @@ export function GstHelperPopup({
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="p-4 space-y-4 sm:p-5">
           {/* Taxable amount */}
           <label className="block">
             <span className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>Taxable amount</span>
@@ -183,7 +183,7 @@ export function GstHelperPopup({
           </div>
 
           {/* Supply + side toggles */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Toggle
               label="Supply"
               options={[{ v: false, t: 'Intra (CGST+SGST)' }, { v: true, t: 'Inter (IGST)' }]}
@@ -220,23 +220,23 @@ export function GstHelperPopup({
             <div className="space-y-1 font-mono text-xs">
               {previewTax.map((p) => (
                 <div key={p.key} className="flex items-center justify-between gap-2">
-                  <span style={{ color: p.id == null ? 'var(--danger)' : 'var(--ink-2)' }}>
+                  <span className="min-w-0 break-words" style={{ color: p.id == null ? 'var(--danger)' : 'var(--ink-2)' }}>
                     {acctLabel(p.id) ?? `${p.label} — not mapped`}
                   </span>
-                  <span style={{ color: 'var(--ink)' }}>{taxSide} {p.amount.toFixed(2)}</span>
+                  <span className="shrink-0" style={{ color: 'var(--ink)' }}>{taxSide} {p.amount.toFixed(2)}</span>
                 </div>
               ))}
               {balanceAcct ? (
                 <div className="flex items-center justify-between gap-2">
-                  <span style={{ color: 'var(--ink-2)' }}>{acctLabel(Number(balanceAcct))}</span>
-                  <span style={{ color: 'var(--ink)' }}>{balSide} {gross.toFixed(2)}</span>
+                  <span className="min-w-0 break-words" style={{ color: 'var(--ink-2)' }}>{acctLabel(Number(balanceAcct))}</span>
+                  <span className="shrink-0" style={{ color: 'var(--ink)' }}>{balSide} {gross.toFixed(2)}</span>
                 </div>
               ) : null}
             </div>
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t" style={{ borderColor: 'var(--line)' }}>
+        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t sm:px-5" style={{ borderColor: 'var(--line)' }}>
           <Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={apply} disabled={!(base > 0) || !(rate > 0) || missing.length > 0}>
             <Calculator size={14} /> Insert lines

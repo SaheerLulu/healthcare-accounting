@@ -141,11 +141,11 @@ export default function JournalDetailPage() {
         <ArrowLeft size={14} /> Back to Journals
       </button>
 
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <FileText size={18} style={{ color: 'var(--ink-3)' }} />
-            <h1 className="text-xl font-semibold mono" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>{entry.entry_no}</h1>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <FileText size={18} className="flex-shrink-0" style={{ color: 'var(--ink-3)' }} />
+            <h1 className="text-lg sm:text-xl font-semibold mono break-all" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>{entry.entry_no}</h1>
             <Badge variant={entry.is_posted ? 'success' : 'warning'}>
               {entry.is_posted ? 'Posted' : 'Draft'}
             </Badge>
@@ -206,47 +206,49 @@ export default function JournalDetailPage() {
         <div className="px-5 py-3 border-b" style={{ borderColor: 'var(--line)' }}>
           <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Line Items</h2>
         </div>
-        <table className="w-full text-sm">
-          <thead style={{ background: 'var(--color-grey-light)', borderBottom: '1px solid var(--line)' }}>
-            <tr>
-              <th className="text-left text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Account</th>
-              <th className="text-left text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Description</th>
-              <th className="text-left text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Party</th>
-              <th className="text-right text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Debit</th>
-              <th className="text-right text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Credit</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entry.lines.map((l, i) => (
-              <tr key={i} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
-                <td className="px-4 py-2.5">
-                  <div className="font-medium" style={{ color: 'var(--ink)' }}>{l.account_name || `Account ${l.account}`}</div>
-                  {l.account_code && <div className="text-xs mono" style={{ color: 'var(--ink-3)' }}>{l.account_code}</div>}
-                </td>
-                <td className="px-4 py-2.5 text-sm" style={{ color: 'var(--ink-2)' }}>{l.narration || '—'}</td>
-                <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--ink-3)' }}>
-                  {(l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null })
-                    .party_type && (l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null }).party_type !== 'None'
-                    ? `${(l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null }).party_type} #${(l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null }).party_id}`
-                    : '—'}
-                </td>
-                <td className="px-4 py-2.5 text-right mono" style={{ color: 'var(--ink)' }}>
-                  {parseFloat(l.debit) > 0 ? formatCurrency(l.debit) : '—'}
-                </td>
-                <td className="px-4 py-2.5 text-right mono" style={{ color: 'var(--ink)' }}>
-                  {parseFloat(l.credit) > 0 ? formatCurrency(l.credit) : '—'}
-                </td>
+        <div className="table-scroll">
+          <table className="w-full text-sm min-w-[640px]">
+            <thead style={{ background: 'var(--color-grey-light)', borderBottom: '1px solid var(--line)' }}>
+              <tr>
+                <th className="text-left text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Account</th>
+                <th className="text-left text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Description</th>
+                <th className="text-left text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Party</th>
+                <th className="text-right text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Debit</th>
+                <th className="text-right text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Credit</th>
               </tr>
-            ))}
-          </tbody>
-          <tfoot style={{ background: 'var(--color-grey-light)', borderTop: '2px solid var(--line)' }}>
-            <tr>
-              <td colSpan={3} className="px-4 py-2.5 text-right text-sm font-semibold" style={{ color: 'var(--ink)' }}>Total</td>
-              <td className="px-4 py-2.5 text-right mono font-bold" style={{ color: 'var(--ink)' }}>{formatCurrency(totals.dr)}</td>
-              <td className="px-4 py-2.5 text-right mono font-bold" style={{ color: 'var(--ink)' }}>{formatCurrency(totals.cr)}</td>
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody>
+              {entry.lines.map((l, i) => (
+                <tr key={i} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
+                  <td className="px-4 py-2.5">
+                    <div className="font-medium" style={{ color: 'var(--ink)' }}>{l.account_name || `Account ${l.account}`}</div>
+                    {l.account_code && <div className="text-xs mono" style={{ color: 'var(--ink-3)' }}>{l.account_code}</div>}
+                  </td>
+                  <td className="px-4 py-2.5 text-sm" style={{ color: 'var(--ink-2)' }}>{l.narration || '—'}</td>
+                  <td className="px-4 py-2.5 text-xs" style={{ color: 'var(--ink-3)' }}>
+                    {(l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null })
+                      .party_type && (l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null }).party_type !== 'None'
+                      ? `${(l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null }).party_type} #${(l as JournalEntry['lines'][number] & { party_type?: string; party_id?: number | null }).party_id}`
+                      : '—'}
+                  </td>
+                  <td className="px-4 py-2.5 text-right mono" style={{ color: 'var(--ink)' }}>
+                    {parseFloat(l.debit) > 0 ? formatCurrency(l.debit) : '—'}
+                  </td>
+                  <td className="px-4 py-2.5 text-right mono" style={{ color: 'var(--ink)' }}>
+                    {parseFloat(l.credit) > 0 ? formatCurrency(l.credit) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot style={{ background: 'var(--color-grey-light)', borderTop: '2px solid var(--line)' }}>
+              <tr>
+                <td colSpan={3} className="px-4 py-2.5 text-right text-sm font-semibold" style={{ color: 'var(--ink)' }}>Total</td>
+                <td className="px-4 py-2.5 text-right mono font-bold" style={{ color: 'var(--ink)' }}>{formatCurrency(totals.dr)}</td>
+                <td className="px-4 py-2.5 text-right mono font-bold" style={{ color: 'var(--ink)' }}>{formatCurrency(totals.cr)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </Card>
 
       <div className="text-xs mono" style={{ color: 'var(--ink-3)' }}>

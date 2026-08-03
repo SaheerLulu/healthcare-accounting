@@ -51,9 +51,9 @@ export default function B2BRegisterPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>B2B Register</h1>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>B2B Register</h1>
           <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>
             GSTR-1 Table 4 — registered-buyer invoices, one row per GST rate — {invoiceCount} invoices
           </p>
@@ -65,7 +65,7 @@ export default function B2BRegisterPage() {
       </div>
 
       {/* Controls */}
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-3 mb-5 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500 font-medium">Period</label>
           <PeriodPicker value={period} onChange={setPeriod} />

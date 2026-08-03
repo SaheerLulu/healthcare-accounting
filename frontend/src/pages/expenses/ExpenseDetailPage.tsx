@@ -105,11 +105,11 @@ export default function ExpenseDetailPage() {
         <ArrowLeft size={14} /> Back to Expenses
       </button>
 
-      <div className="flex items-start justify-between mb-5 gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <FileText size={18} className="text-slate-400" />
-            <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
+      <div className="flex flex-col gap-3 mb-5 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <FileText size={18} className="text-slate-400 flex-shrink-0" />
+            <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
               {expense.vendor_name || `Expense #${expense.id}`}
             </h1>
             <Badge variant={expense.status === 'recorded' ? 'success' : 'default'}>
@@ -146,7 +146,7 @@ export default function ExpenseDetailPage() {
       </div>
 
       <Card className="p-4 mb-4">
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <div className="text-xs text-slate-500 uppercase tracking-wider">Subtotal</div>
             <div className="text-lg font-semibold text-slate-900 mt-1 font-mono">{formatCurrency(expense.subtotal)}</div>
@@ -165,7 +165,7 @@ export default function ExpenseDetailPage() {
       </Card>
 
       <Card className="overflow-hidden p-0 mb-4">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <h2 className="text-sm font-semibold text-slate-900">Line Items</h2>
           {expense.journal_entry_no && (
             <Link to={`/journals/${expense.journal_entry}`}
@@ -174,33 +174,35 @@ export default function ExpenseDetailPage() {
             </Link>
           )}
         </div>
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 border-b border-slate-100">
-            <tr>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Account</th>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Description</th>
-              <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {expense.items.map((it) => (
-              <tr key={it.id} className="border-b border-slate-100 last:border-0">
-                <td className="px-4 py-2.5">
-                  <div className="font-medium text-slate-900">{it.account_name}</div>
-                  <div className="text-xs text-slate-400 font-mono">{it.account_code}</div>
-                </td>
-                <td className="px-4 py-2.5 text-slate-600 text-sm">{it.description || '—'}</td>
-                <td className="px-4 py-2.5 text-right font-mono">{formatCurrency(it.amount)}</td>
+        <div className="table-scroll">
+          <table className="w-full min-w-[520px] text-sm">
+            <thead className="bg-slate-50 border-b border-slate-100">
+              <tr>
+                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Account</th>
+                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Description</th>
+                <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
               </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="bg-slate-50 border-t border-slate-200">
-              <td colSpan={2} className="px-4 py-2.5 text-right font-semibold text-slate-900">Total</td>
-              <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{formatCurrency(expense.total_amount)}</td>
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody>
+              {expense.items.map((it) => (
+                <tr key={it.id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-4 py-2.5">
+                    <div className="font-medium text-slate-900">{it.account_name}</div>
+                    <div className="text-xs text-slate-400 font-mono">{it.account_code}</div>
+                  </td>
+                  <td className="px-4 py-2.5 text-slate-600 text-sm">{it.description || '—'}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{formatCurrency(it.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-slate-50 border-t border-slate-200">
+                <td colSpan={2} className="px-4 py-2.5 text-right font-semibold text-slate-900">Total</td>
+                <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{formatCurrency(expense.total_amount)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </Card>
 
       <AttachmentsCard expense={expense} onChange={load} />
@@ -261,7 +263,7 @@ function AttachmentsCard({ expense, onChange }: { expense: Expense; onChange: ()
 
   return (
     <Card className="overflow-hidden p-0 mb-4">
-      <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+      <div className="px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
           <Paperclip size={14} className="text-slate-400" />
           Receipts & Attachments
@@ -323,12 +325,12 @@ function AttachmentsCard({ expense, onChange }: { expense: Expense; onChange: ()
                     </div>
                   </div>
                   <a href={a.file_url} download={a.original_name} target="_blank" rel="noreferrer"
-                     className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 opacity-0 group-hover:opacity-100"
+                     className="p-2.5 sm:p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 sm:opacity-0 sm:group-hover:opacity-100"
                      title="Download">
                     <Download size={14} />
                   </a>
                   <button onClick={() => handleDelete(a)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 opacity-0 group-hover:opacity-100"
+                    className="p-2.5 sm:p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 sm:opacity-0 sm:group-hover:opacity-100"
                     title="Remove">
                     <Trash2 size={14} />
                   </button>

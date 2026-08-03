@@ -95,9 +95,9 @@ export default function GatewayPage() {
   useEffect(() => { loadStock() }, [activeLocationId])
 
   return (
-    <div className="max-w-7xl mx-auto pb-20">
-      {/* Header */}
-      <div className="mb-6">
+    <div className="max-w-7xl mx-auto pb-8 md:pb-20">
+      {/* Header — keyboard-only guidance, so it tracks the HotkeyBar breakpoint. */}
+      <div className="hidden md:block mb-6">
         <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
           Press an F-key to start a voucher · Tab to navigate · Ctrl+A to save · Esc to back out
         </p>
@@ -107,7 +107,7 @@ export default function GatewayPage() {
         {/* Vouchers — most prominent column */}
         <div className="lg:col-span-7">
           <SectionTitle icon={Receipt}>Vouchers</SectionTitle>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {voucherList.map((v) => (
               <Link
                 key={v.type}
@@ -128,7 +128,7 @@ export default function GatewayPage() {
                       </div>
                     </div>
                     <span
-                      className="mono text-xs font-bold px-2 py-1 rounded flex-shrink-0"
+                      className="mono text-xs font-bold px-2 py-1 rounded flex-shrink-0 hidden md:inline"
                       style={{
                         background: 'rgba(15,157,154,0.10)',
                         color: 'var(--brand)',
@@ -160,7 +160,7 @@ export default function GatewayPage() {
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-3 gap-3 mb-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-3">
                     <Stat label="Books (1190)" value={formatCurrency(stockRecon.books_closing_stock)} />
                     <Stat label="Live Inventory" value={formatCurrency(stockRecon.inventory_value)} />
                     <Stat
@@ -223,7 +223,7 @@ export default function GatewayPage() {
                     <li key={e.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
                       <Link
                         to={`/journals/${e.id}`}
-                        className="flex items-center gap-3 px-4 py-2.5 hover:bg-[var(--color-hover-bg)] text-sm"
+                        className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:gap-x-3 sm:gap-y-3 px-3 sm:px-4 py-2.5 hover:bg-[var(--color-hover-bg)] text-sm"
                       >
                         <span className="text-xs mono w-20 flex-shrink-0" style={{ color: 'var(--ink-3)' }}>
                           {formatDate(e.date)}
@@ -231,10 +231,12 @@ export default function GatewayPage() {
                         <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-medium flex-shrink-0 ${VOUCHER_BG[e.voucher_type] || 'bg-slate-100 text-slate-600'}`}>
                           {voucherLabel(e.voucher_type)}
                         </span>
-                        <span className="truncate flex-1" style={{ color: 'var(--ink)' }}>
+                        {/* Below sm the amount drops to its own line rather than
+                            squeezing the narration down to a couple of letters. */}
+                        <span className="truncate flex-1 min-w-[6rem] sm:min-w-0" style={{ color: 'var(--ink)' }}>
                           {e.narration || e.entry_no}
                         </span>
-                        <span className="font-mono text-xs flex-shrink-0" style={{ color: 'var(--ink-2)' }}>
+                        <span className="font-mono text-xs flex-shrink-0 ml-auto" style={{ color: 'var(--ink-2)' }}>
                           {formatCurrency(entryAmount(e))}
                         </span>
                       </Link>
@@ -244,7 +246,7 @@ export default function GatewayPage() {
               )}
               <Link
                 to="/journals"
-                className="block px-4 py-2.5 text-xs hover:bg-[var(--color-hover-bg)] border-t"
+                className="block px-3 sm:px-4 py-2.5 text-xs hover:bg-[var(--color-hover-bg)] border-t"
                 style={{ color: 'var(--brand)', borderColor: 'var(--line)' }}
               >
                 View all journals <ArrowRight size={11} className="inline ml-0.5" />
@@ -281,7 +283,7 @@ export default function GatewayPage() {
                   <Link
                     key={r.to}
                     to={r.to}
-                    className="px-2 py-1.5 rounded text-sm hover:bg-[var(--color-hover-bg)]"
+                    className="px-2 py-2.5 sm:py-1.5 rounded text-sm hover:bg-[var(--color-hover-bg)]"
                     style={{ color: 'var(--ink)' }}
                   >
                     {r.label}

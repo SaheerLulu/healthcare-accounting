@@ -32,11 +32,11 @@ export default function GSTComputationPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>GST Computation</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>GST Computation</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Tax computation worksheet</p>
       </div>
 
-      <div className="flex items-center gap-3 mb-6 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-3 mb-6 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500 font-medium">Period</label>
           <PeriodPicker value={period} onChange={setPeriod} />
@@ -130,7 +130,7 @@ export default function GSTComputationPage() {
           <Card>
             <CardContent>
               <h2 className="text-sm font-semibold text-slate-900 mb-3">Input Tax Credit (Purchases)</h2>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                 <div className="text-center p-3 bg-emerald-50 rounded-lg">
                   <p className="text-xs text-slate-500">CGST</p>
                   <p className="text-lg font-bold text-emerald-700 font-mono">{formatCurrency(data.input_tax.cgst)}</p>
@@ -151,7 +151,7 @@ export default function GSTComputationPage() {
           <Card>
             <CardContent>
               <h2 className="text-sm font-semibold text-slate-900 mb-3">Net Tax Payable</h2>
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 {['cgst', 'sgst', 'igst'].map((key) => (
                   <div key={key} className="text-center p-3 bg-red-50 rounded-lg">
                     <p className="text-xs text-slate-500 uppercase">{key}</p>

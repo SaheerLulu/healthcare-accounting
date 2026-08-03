@@ -612,14 +612,14 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
 
       {allStores && (
         <div
-          className="mb-3 px-4 py-2.5 rounded-lg flex items-center gap-2.5 text-sm"
+          className="mb-3 px-4 py-2.5 rounded-lg flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm"
           style={{
             background: 'rgba(245, 158, 11, 0.08)',
             border: '1px solid rgba(245, 158, 11, 0.30)',
             color: 'var(--ink)',
           }}
         >
-          <Globe size={14} style={{ color: 'rgb(180,110,0)' }} />
+          <Globe size={14} className="flex-shrink-0" style={{ color: 'rgb(180,110,0)' }} />
           <span className="font-medium">All Stores is read-only.</span>
           <span style={{ color: 'var(--ink-2)' }}>
             Switch to a specific store from the selector at the top to record this voucher.
@@ -639,7 +639,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
           >
             {cfg.hotkeyLabel}
           </span>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             {editingId ? `Edit ${originalEntry?.entry_no ?? cfg.title}` : cfg.title}
           </h1>
           <span
@@ -664,7 +664,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
           only; the row's own narration is the only narration (no top-level
           duplicate). The 3-6-3 grid balances visual weight: Cost Centre
           gets first-class placement instead of being a one-off button. */}
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
           <div className="md:col-span-3">
             <Field label="Date" required>
@@ -674,7 +674,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
 
           <div className="md:col-span-6">
             <Field label={cfg.bankCashLabel} required hint={cfg.bankCashHint}>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <div className="flex gap-0.5 rounded-md border overflow-hidden" style={{ borderColor: 'var(--line)' }}>
                   <ModeBtn
                     icon={<Banknote size={12} />}
@@ -697,7 +697,9 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
                     }}
                   />
                 </div>
-                <div className="flex-1 min-w-0">
+                {/* Keeps a floor under the ledger picker so it drops to its own
+                    line on a narrow phone instead of shrinking to a stub. */}
+                <div className="flex-1 min-w-[10rem] sm:min-w-0">
                   <AccountPicker
                     accounts={paymentMode === 'bank' ? bankAccounts : cashAccounts}
                     value={bankCashId}
@@ -736,7 +738,10 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
       </Card>
 
       <Card className="overflow-hidden p-0">
-        <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--line)' }}>
+        <div
+          className="px-4 sm:px-5 py-3 border-b flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+          style={{ borderColor: 'var(--line)' }}
+        >
           <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>
             {mode === 'payment' ? 'Debit lines' : 'Credit lines'}
           </h2>
@@ -744,8 +749,10 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
             <span>{cfg.totalHint(bankCashAccount?.account_name || 'Bank/Cash')}</span>
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="table-scroll">
+          {/* Five live controls per line — below ~760px the columns crush
+              before they become unusable, so the rail takes over there. */}
+          <table className="w-full text-sm min-w-[760px]">
             <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
               <tr>
                 <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide" style={{ color: 'var(--ink-2)' }}>{cfg.rowLedgerLabel}</th>
@@ -803,10 +810,11 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
         </div>
       </Card>
 
+      {/* Sits on the F-key bar, which only exists from md up — below that the
+          bar owns the bottom edge and clears the iOS home indicator itself. */}
       <div
-        className="fixed left-0 right-0 z-20 px-6 py-3 flex items-center justify-end gap-2"
+        className="fixed left-0 right-0 bottom-0 md:bottom-9 z-20 px-4 sm:px-6 py-3 flex flex-wrap items-center justify-end gap-2 safe-bottom"
         style={{
-          bottom: 36,
           background: 'var(--surface-0)',
           borderTop: '1px solid var(--line)',
           boxShadow: '0 -4px 12px rgba(0,0,0,0.04)',

@@ -62,11 +62,11 @@ export default function ITCReconciliationPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>ITC Reconciliation</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>ITC Reconciliation</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Books vs GSTR-2B comparison</p>
       </div>
 
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-3 mb-5 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500 font-medium">Period</label>
           <PeriodPicker value={period} onChange={setPeriod} />
@@ -77,7 +77,7 @@ export default function ITCReconciliationPage() {
         </Button>
       </div>
 
-      <Card className="overflow-x-auto overflow-hidden">
+      <Card className="overflow-hidden">
         <Table>
           <Thead>
             <Tr className="bg-slate-50">

@@ -75,7 +75,7 @@ function EmployeesTab() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
         <p className="text-sm text-slate-500">{employees.length} employees</p>
         <Button size="sm" onClick={openNew}><Plus size={14} /> Add Employee</Button>
       </div>
@@ -105,9 +105,9 @@ function EmployeesTab() {
                 <Td className="text-sm text-slate-500">{emp.date_of_joining}</Td>
                 <Td><Badge variant={emp.is_active ? 'success' : 'warning'}>{emp.is_active ? 'Active' : 'Inactive'}</Badge></Td>
                 <Td>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => openEdit(emp)} className="p-1 text-slate-400 hover:text-teal-600"><Pencil size={14} /></button>
-                    <button onClick={() => handleDelete(emp.id)} className="p-1 text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
+                  <div className="flex items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+                    <button onClick={() => openEdit(emp)} className="p-1 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 text-slate-400 hover:text-teal-600"><Pencil size={14} /></button>
+                    <button onClick={() => handleDelete(emp.id)} className="p-1 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
                   </div>
                 </Td>
               </Tr>
@@ -120,7 +120,7 @@ function EmployeesTab() {
         <DialogContent>
           <DialogHeader><DialogTitle>{editId ? 'Edit Employee' : 'Add Employee'}</DialogTitle></DialogHeader>
           <form onSubmit={handleSave} className="flex flex-col gap-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Employee Code *</label>
                 <Input required value={form.employee_code} onChange={(e) => setForm({ ...form, employee_code: e.target.value })} />
@@ -130,7 +130,7 @@ function EmployeesTab() {
                 <Input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">PAN</label>
                 <Input value={form.pan} onChange={(e) => setForm({ ...form, pan: e.target.value })} maxLength={10} />
@@ -144,12 +144,12 @@ function EmployeesTab() {
                 <Input value={form.bank_ifsc} onChange={(e) => setForm({ ...form, bank_ifsc: e.target.value })} maxLength={11} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Joining Date *</label>
                 <Input type="date" required value={form.date_of_joining} onChange={(e) => setForm({ ...form, date_of_joining: e.target.value })} />
               </div>
-              <div className="flex items-end">
+              <div className="flex items-end min-h-9 sm:min-h-0">
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
                   <input type="checkbox" checked={form.is_active} onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
                     className="accent-teal-600" /> Active
@@ -238,7 +238,7 @@ function SalaryStructuresTab() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
         <p className="text-sm text-slate-500">{structures.length} structures</p>
         <Button size="sm" onClick={openNew}><Plus size={14} /> Add Structure</Button>
       </div>
@@ -282,7 +282,7 @@ function SalaryStructuresTab() {
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{editId ? 'Edit Structure' : 'Add Salary Structure'}</DialogTitle></DialogHeader>
           <form onSubmit={handleSave} className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Employee *</label>
                 <select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })}
@@ -297,7 +297,7 @@ function SalaryStructuresTab() {
               </div>
             </div>
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mt-2">Earnings</p>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {(['basic_salary', 'hra', 'conveyance', 'medical', 'special_allowance'] as const).map((f) => (
                 <div key={f}>
                   <label className="block text-xs font-medium text-slate-500 mb-1">{f.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</label>
@@ -311,7 +311,7 @@ function SalaryStructuresTab() {
               </div>
             </div>
             <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mt-2">Deductions</p>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {(['pf_employee_pct', 'pf_employer_pct', 'esi_employee_pct', 'esi_employer_pct', 'professional_tax'] as const).map((f) => (
                 <div key={f}>
                   <label className="block text-xs font-medium text-slate-500 mb-1">{f.replace(/_pct/g, ' %').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</label>
@@ -374,11 +374,11 @@ function PayrollProcessingTab() {
   return (
     <div>
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs text-slate-500 font-medium">Period</label>
-          <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-auto px-2.5 py-1.5" />
+          <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-full sm:w-auto px-2.5 py-1.5" />
         </div>
-        <Button onClick={handleProcess} disabled={processing}>
+        <Button onClick={handleProcess} disabled={processing} className="w-full sm:w-auto">
           {processing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
           Process Payroll
         </Button>
@@ -455,7 +455,7 @@ export default function PayrollPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div>
-        <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Payroll</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Payroll</h1>
         <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>Employee management and salary processing.</p>
       </div>
 

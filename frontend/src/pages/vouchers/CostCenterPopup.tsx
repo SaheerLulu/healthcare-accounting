@@ -108,7 +108,7 @@ export function CostCenterPopup({ open, onOpenChange, currentId, currentLabel, o
           style={{ background: 'rgba(12,30,37,0.45)' }}
         />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl p-6 animate-slideUp"
+          className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl p-4 sm:p-6 animate-slideUp max-h-[85dvh] overflow-y-auto overscroll-contain"
           style={{
             background: 'var(--surface-0)',
             border: '1px solid var(--line)',
@@ -116,7 +116,7 @@ export function CostCenterPopup({ open, onOpenChange, currentId, currentLabel, o
           }}
         >
           <div className="flex items-start justify-between mb-4">
-            <div>
+            <div className="min-w-0">
               <Dialog.Title className="text-base font-semibold flex items-center gap-2" style={{ color: 'var(--ink)' }}>
                 <Layers size={14} style={{ color: 'var(--brand)' }} />
                 Cost Centre
@@ -128,7 +128,7 @@ export function CostCenterPopup({ open, onOpenChange, currentId, currentLabel, o
                 </span>
               </Dialog.Description>
             </div>
-            <Dialog.Close className="p-1 rounded hover:bg-[var(--color-hover-bg)]" aria-label="Close">
+            <Dialog.Close className="shrink-0 p-1 rounded hover:bg-[var(--color-hover-bg)]" aria-label="Close">
               <X className="w-4 h-4" style={{ color: 'var(--ink-3)' }} />
             </Dialog.Close>
           </div>

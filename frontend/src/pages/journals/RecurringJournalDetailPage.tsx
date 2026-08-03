@@ -96,11 +96,11 @@ export default function RecurringJournalDetailPage() {
         <ArrowLeft size={14} /> Back to Recurring Journals
       </button>
 
-      <div className="flex items-start justify-between mb-5 gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Repeat size={18} className="text-teal-600" />
-            <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{rj.profile_name}</h1>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between mb-5 gap-3 sm:gap-4 flex-wrap">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <Repeat size={18} className="text-teal-600 flex-shrink-0" />
+            <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{rj.profile_name}</h1>
             <Badge variant={STATUS_BADGE[rj.status]}>{rj.status}</Badge>
             {rj.auto_post && <Badge variant="info">Auto-post</Badge>}
           </div>
@@ -169,40 +169,42 @@ export default function RecurringJournalDetailPage() {
         <div className="px-5 py-3 border-b border-slate-100">
           <h2 className="text-sm font-semibold text-slate-900">Line Items</h2>
         </div>
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 border-b border-slate-100">
-            <tr>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Account</th>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Description</th>
-              <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Debit</th>
-              <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Credit</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rj.lines.map((l) => (
-              <tr key={l.id} className="border-b border-slate-100 last:border-0">
-                <td className="px-4 py-2.5">
-                  <div className="font-medium text-slate-900">{l.account_name}</div>
-                  <div className="text-xs text-slate-400 font-mono">{l.account_code}</div>
-                </td>
-                <td className="px-4 py-2.5 text-sm text-slate-600">{l.narration || '—'}</td>
-                <td className="px-4 py-2.5 text-right font-mono">
-                  {parseFloat(l.debit) > 0 ? formatCurrency(l.debit) : '—'}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono">
-                  {parseFloat(l.credit) > 0 ? formatCurrency(l.credit) : '—'}
-                </td>
+        <div className="table-scroll">
+          <table className="w-full text-sm min-w-[560px]">
+            <thead className="bg-slate-50 border-b border-slate-100">
+              <tr>
+                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Account</th>
+                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Description</th>
+                <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Debit</th>
+                <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Credit</th>
               </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="bg-slate-50 border-t border-slate-200">
-              <td colSpan={2} className="px-4 py-2.5 text-right font-semibold">Total</td>
-              <td className="px-4 py-2.5 text-right font-mono font-bold">{formatCurrency(rj.total_debit)}</td>
-              <td className="px-4 py-2.5 text-right font-mono font-bold">{formatCurrency(rj.total_credit)}</td>
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody>
+              {rj.lines.map((l) => (
+                <tr key={l.id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-4 py-2.5">
+                    <div className="font-medium text-slate-900">{l.account_name}</div>
+                    <div className="text-xs text-slate-400 font-mono">{l.account_code}</div>
+                  </td>
+                  <td className="px-4 py-2.5 text-sm text-slate-600">{l.narration || '—'}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">
+                    {parseFloat(l.debit) > 0 ? formatCurrency(l.debit) : '—'}
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-mono">
+                    {parseFloat(l.credit) > 0 ? formatCurrency(l.credit) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="bg-slate-50 border-t border-slate-200">
+                <td colSpan={2} className="px-4 py-2.5 text-right font-semibold">Total</td>
+                <td className="px-4 py-2.5 text-right font-mono font-bold">{formatCurrency(rj.total_debit)}</td>
+                <td className="px-4 py-2.5 text-right font-mono font-bold">{formatCurrency(rj.total_credit)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </Card>
 
       <Card className="overflow-hidden p-0 mb-4">
@@ -212,32 +214,34 @@ export default function RecurringJournalDetailPage() {
         {(rj.generated_recent ?? []).length === 0 ? (
           <div className="text-center py-6 text-sm text-slate-400">No entries generated yet</div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-100">
-              <tr>
-                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Entry #</th>
-                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Date</th>
-                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(rj.generated_recent ?? []).map((e) => (
-                <tr key={e.id} className="border-b border-slate-100 last:border-0">
-                  <td className="px-4 py-2.5">
-                    <Link to={`/journals/${e.id}`} className="text-teal-700 hover:underline font-mono">
-                      {e.entry_no}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2.5 text-sm text-slate-600">{formatDate(e.date)}</td>
-                  <td className="px-4 py-2.5">
-                    <Badge variant={e.is_posted ? 'success' : 'warning'}>
-                      {e.is_posted ? 'Posted' : 'Draft'}
-                    </Badge>
-                  </td>
+          <div className="table-scroll">
+            <table className="w-full text-sm min-w-[420px]">
+              <thead className="bg-slate-50 border-b border-slate-100">
+                <tr>
+                  <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Entry #</th>
+                  <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Date</th>
+                  <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {(rj.generated_recent ?? []).map((e) => (
+                  <tr key={e.id} className="border-b border-slate-100 last:border-0">
+                    <td className="px-4 py-2.5">
+                      <Link to={`/journals/${e.id}`} className="text-teal-700 hover:underline font-mono">
+                        {e.entry_no}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-slate-600">{formatDate(e.date)}</td>
+                    <td className="px-4 py-2.5">
+                      <Badge variant={e.is_posted ? 'success' : 'warning'}>
+                        {e.is_posted ? 'Posted' : 'Draft'}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 

@@ -92,7 +92,7 @@ export function VoucherLineRow({
           type="button"
           onClick={onRemove}
           disabled={removeDisabled}
-          className="disabled:opacity-30 disabled:cursor-not-allowed p-1.5 rounded transition-colors"
+          className="disabled:opacity-30 disabled:cursor-not-allowed p-2.5 sm:p-1.5 rounded transition-colors"
           title="Remove line"
           style={{ color: 'var(--ink-3)' }}
           onMouseEnter={(e) => {
@@ -126,7 +126,7 @@ function SideButton({
     <button
       type="button"
       onClick={onClick}
-      className="flex-1 px-2 py-1 text-xs font-semibold mono transition-colors"
+      className="flex-1 px-2 py-2 sm:py-1 text-xs font-semibold mono transition-colors"
       style={active
         ? { background: 'var(--brand)', color: '#fff' }
         : { background: 'transparent', color: 'var(--ink-2)' }}

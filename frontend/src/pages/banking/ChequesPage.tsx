@@ -78,7 +78,7 @@ export default function ChequesPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Cheques</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -226,7 +226,7 @@ function NewChequeDialog({ open, bankAccounts, suppliers, customers, onClose, on
       <DialogContent>
         <DialogHeader><DialogTitle>New Cheque</DialogTitle></DialogHeader>
         <form onSubmit={submit}>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Cheque No." required>
               <Input value={data.cheque_no} required
                 onChange={(e) => setData({ ...data, cheque_no: e.target.value })} />

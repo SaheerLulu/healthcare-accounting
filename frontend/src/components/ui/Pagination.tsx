@@ -61,7 +61,7 @@ export function Pagination({
           type="button"
           disabled={page <= 1}
           onClick={() => onPageChange(page - 1)}
-          className="h-8 w-8 rounded-md flex items-center justify-center disabled:opacity-40 hover:bg-[var(--color-hover-bg)]"
+          className="h-9 w-9 sm:h-8 sm:w-8 rounded-md flex items-center justify-center disabled:opacity-40 hover:bg-[var(--color-hover-bg)]"
           style={{ border: '1px solid var(--line)', color: 'var(--ink-2)' }}
         >
           <ChevronLeft className="w-4 h-4" />
@@ -73,7 +73,7 @@ export function Pagination({
           type="button"
           disabled={page >= totalPages}
           onClick={() => onPageChange(page + 1)}
-          className="h-8 w-8 rounded-md flex items-center justify-center disabled:opacity-40 hover:bg-[var(--color-hover-bg)]"
+          className="h-9 w-9 sm:h-8 sm:w-8 rounded-md flex items-center justify-center disabled:opacity-40 hover:bg-[var(--color-hover-bg)]"
           style={{ border: '1px solid var(--line)', color: 'var(--ink-2)' }}
         >
           <ChevronRight className="w-4 h-4" />

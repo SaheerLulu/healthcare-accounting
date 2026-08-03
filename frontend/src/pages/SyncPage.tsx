@@ -205,7 +205,7 @@ export default function SyncPage() {
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             Data Sync
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -272,7 +272,7 @@ export default function SyncPage() {
         <select
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
-          className="px-3 h-9 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+          className="w-full sm:w-auto px-3 h-9 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
           style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
           title="Filter both tables by sync type"
         >
@@ -280,7 +280,9 @@ export default function SyncPage() {
             <option key={t.value || 'all'} value={t.value}>{t.label}</option>
           ))}
         </select>
-        <div className="flex-1" />
+        {/* The spacer only earns its keep once the row fits on one line —
+            below sm it would push the wrapped buttons off to the right. */}
+        <div className="hidden sm:block flex-1" />
         {openErrorCount > 0 && (
           <button
             onClick={handleRetry}
@@ -344,78 +346,76 @@ export default function SyncPage() {
               No {errorView} errors.
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <Thead>
-                  <Tr>
-                    <Th className="w-8" />
-                    <Th>Type</Th>
-                    <Th>Source ID</Th>
-                    <Th>Error</Th>
-                    <Th className="text-right">Retries</Th>
-                    <Th className="w-[110px]" />
-                  </Tr>
-                </Thead>
-                <Tbody>
-                  {errors.flatMap((err) => {
-                    const expanded = expandedError === err.id
-                    const rows = [
-                      <Tr key={err.id}>
-                        <Td>
+            <Table>
+              <Thead>
+                <Tr>
+                  <Th className="w-8" />
+                  <Th>Type</Th>
+                  <Th>Source ID</Th>
+                  <Th>Error</Th>
+                  <Th className="text-right">Retries</Th>
+                  <Th className="w-[110px]" />
+                </Tr>
+              </Thead>
+              <Tbody>
+                {errors.flatMap((err) => {
+                  const expanded = expandedError === err.id
+                  const rows = [
+                    <Tr key={err.id}>
+                      <Td>
+                        <button
+                          onClick={() => setExpandedError(expanded ? null : err.id)}
+                          className="p-1 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 rounded hover:bg-[var(--color-hover-bg)] transition-colors"
+                          title={expanded ? 'Hide traceback' : 'Show traceback'}
+                          aria-label={expanded ? 'Collapse error' : 'Expand error'}
+                        >
+                          {expanded
+                            ? <ChevronDown size={14} style={{ color: 'var(--ink-3)' }} />
+                            : <ChevronRight size={14} style={{ color: 'var(--ink-3)' }} />}
+                        </button>
+                      </Td>
+                      <Td className="capitalize" style={{ color: 'var(--ink-2)' }}>
+                        {err.sync_type.replace(/_/g, ' ')}
+                      </Td>
+                      <Td className="mono text-xs" style={{ color: 'var(--ink-3)' }}>#{err.source_id}</Td>
+                      <Td className="text-xs" style={{ color: 'var(--ink-2)' }}>
+                        <span className={expanded ? '' : 'line-clamp-2'}>{err.error_message}</span>
+                      </Td>
+                      <Td className="text-right text-xs mono" style={{ color: 'var(--ink-2)' }}>
+                        {err.retry_count}/{err.max_retries}
+                      </Td>
+                      <Td>
+                        {!err.resolved && (
                           <button
-                            onClick={() => setExpandedError(expanded ? null : err.id)}
-                            className="p-1 rounded hover:bg-[var(--color-hover-bg)] transition-colors"
-                            title={expanded ? 'Hide traceback' : 'Show traceback'}
-                            aria-label={expanded ? 'Collapse error' : 'Expand error'}
+                            onClick={() => handleResolveError(err.id)}
+                            className="text-xs px-2 py-1 rounded transition-colors hover:bg-[var(--color-hover-bg)]"
+                            style={{ color: 'var(--brand)' }}
+                            title="Mark resolved without retrying"
                           >
-                            {expanded
-                              ? <ChevronDown size={14} style={{ color: 'var(--ink-3)' }} />
-                              : <ChevronRight size={14} style={{ color: 'var(--ink-3)' }} />}
+                            Resolve
                           </button>
+                        )}
+                      </Td>
+                    </Tr>,
+                  ]
+                  if (expanded && err.traceback) {
+                    rows.push(
+                      <Tr key={`${err.id}-tb`}>
+                        <Td colSpan={6} className="p-0">
+                          <pre
+                            className="overflow-x-auto text-[11px] leading-snug p-4 mono whitespace-pre"
+                            style={{ background: 'var(--surface-1)', color: 'var(--ink-2)' }}
+                          >
+                            {err.traceback}
+                          </pre>
                         </Td>
-                        <Td className="capitalize" style={{ color: 'var(--ink-2)' }}>
-                          {err.sync_type.replace(/_/g, ' ')}
-                        </Td>
-                        <Td className="mono text-xs" style={{ color: 'var(--ink-3)' }}>#{err.source_id}</Td>
-                        <Td className="text-xs" style={{ color: 'var(--ink-2)' }}>
-                          <span className={expanded ? '' : 'line-clamp-2'}>{err.error_message}</span>
-                        </Td>
-                        <Td className="text-right text-xs mono" style={{ color: 'var(--ink-2)' }}>
-                          {err.retry_count}/{err.max_retries}
-                        </Td>
-                        <Td>
-                          {!err.resolved && (
-                            <button
-                              onClick={() => handleResolveError(err.id)}
-                              className="text-xs px-2 py-1 rounded transition-colors hover:bg-[var(--color-hover-bg)]"
-                              style={{ color: 'var(--brand)' }}
-                              title="Mark resolved without retrying"
-                            >
-                              Resolve
-                            </button>
-                          )}
-                        </Td>
-                      </Tr>,
-                    ]
-                    if (expanded && err.traceback) {
-                      rows.push(
-                        <Tr key={`${err.id}-tb`}>
-                          <Td colSpan={6} className="p-0">
-                            <pre
-                              className="overflow-x-auto text-[11px] leading-snug p-4 mono whitespace-pre"
-                              style={{ background: 'var(--surface-1)', color: 'var(--ink-2)' }}
-                            >
-                              {err.traceback}
-                            </pre>
-                          </Td>
-                        </Tr>
-                      )
-                    }
-                    return rows
-                  })}
-                </Tbody>
-              </Table>
-            </div>
+                      </Tr>
+                    )
+                  }
+                  return rows
+                })}
+              </Tbody>
+            </Table>
           )}
         </Card>
       )}
@@ -445,41 +445,39 @@ export default function SyncPage() {
             onAction={() => setConfirmSync(true)}
           />
         ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <Thead>
-                <Tr>
-                  <Th>Sync Type</Th>
-                  <Th>Last Synced</Th>
-                  <Th className="text-right">Records</Th>
-                  <Th className="text-right">Failed</Th>
-                  <Th className="text-right">Duration</Th>
-                  <Th>Status</Th>
+          <Table>
+            <Thead>
+              <Tr>
+                <Th>Sync Type</Th>
+                <Th>Last Synced</Th>
+                <Th className="text-right">Records</Th>
+                <Th className="text-right">Failed</Th>
+                <Th className="text-right">Duration</Th>
+                <Th>Status</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {logs.map((log) => (
+                <Tr key={log.id}>
+                  <Td className="font-medium capitalize" style={{ color: 'var(--ink)' }}>
+                    {log.sync_type.replace(/_/g, ' ')}
+                  </Td>
+                  <Td style={{ color: 'var(--ink-2)' }}>{formatDate(log.last_synced_at)}</Td>
+                  <Td className="text-right mono" style={{ color: 'var(--ink-2)' }}>
+                    {log.records_processed.toLocaleString()}
+                  </Td>
+                  <Td className="text-right mono"
+                      style={{ color: log.error_count > 0 ? 'var(--danger)' : 'var(--ink-3)' }}>
+                    {log.error_count > 0 ? log.error_count.toLocaleString() : '—'}
+                  </Td>
+                  <Td className="text-right mono text-xs" style={{ color: 'var(--ink-3)' }}>
+                    {formatDuration(log.duration_seconds)}
+                  </Td>
+                  <Td><SyncStatusBadge status={log.status} /></Td>
                 </Tr>
-              </Thead>
-              <Tbody>
-                {logs.map((log) => (
-                  <Tr key={log.id}>
-                    <Td className="font-medium capitalize" style={{ color: 'var(--ink)' }}>
-                      {log.sync_type.replace(/_/g, ' ')}
-                    </Td>
-                    <Td style={{ color: 'var(--ink-2)' }}>{formatDate(log.last_synced_at)}</Td>
-                    <Td className="text-right mono" style={{ color: 'var(--ink-2)' }}>
-                      {log.records_processed.toLocaleString()}
-                    </Td>
-                    <Td className="text-right mono"
-                        style={{ color: log.error_count > 0 ? 'var(--danger)' : 'var(--ink-3)' }}>
-                      {log.error_count > 0 ? log.error_count.toLocaleString() : '—'}
-                    </Td>
-                    <Td className="text-right mono text-xs" style={{ color: 'var(--ink-3)' }}>
-                      {formatDuration(log.duration_seconds)}
-                    </Td>
-                    <Td><SyncStatusBadge status={log.status} /></Td>
-                  </Tr>
-                ))}
-              </Tbody>
-            </Table>
-          </div>
+              ))}
+            </Tbody>
+          </Table>
         )}
       </Card>
 
@@ -543,7 +541,7 @@ export default function SyncPage() {
               </>
             )}
           </div>
-          <div className="flex items-center justify-end gap-2 mt-4 pt-4 border-t"
+          <div className="flex flex-wrap items-center justify-end gap-2 mt-4 pt-4 border-t"
                style={{ borderColor: 'var(--line)' }}>
             <DialogClose asChild>
               <Button variant="secondary" disabled={resyncRunning}>Cancel</Button>

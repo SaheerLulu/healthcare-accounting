@@ -232,7 +232,7 @@ export default function AccountsPage() {
             {totalCount} accounts · {counts?.active ?? 0} active · {counts?.inactive ?? 0} inactive
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
             <button
               onClick={() => setView('list')}
@@ -281,7 +281,7 @@ export default function AccountsPage() {
 
       {/* Search + status filter */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <div className="relative flex-1 max-w-md">
+        <div className="relative w-full sm:flex-1 sm:max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <Input
             value={search}
@@ -293,7 +293,7 @@ export default function AccountsPage() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-          className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+          className="flex-1 min-w-0 sm:flex-initial px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
         >
           <option value="all">All status</option>
           <option value="active">Active only</option>
@@ -302,7 +302,7 @@ export default function AccountsPage() {
         <select
           value={locationScope}
           onChange={(e) => setLocationScope(e.target.value as typeof locationScope)}
-          className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+          className="flex-1 min-w-0 sm:flex-initial px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
           title="Which accounts to show"
         >
           <option value="store">This store</option>
@@ -345,7 +345,7 @@ export default function AccountsPage() {
             </SheetHeader>
             <SheetBody>
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Field label="Account Code" required>
                     <Input
                       required
@@ -655,10 +655,14 @@ function CategoryTreeView({
   if (loading) return <div className="py-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
   if (groups.length === 0) return <div className="py-12 text-center text-slate-400 text-sm">No accounts</div>
   return (
-    <div className="py-1">
-      {groups.map((g) => (
-        <CategoryGroupNode key={g.type} group={g} onEdit={onEdit} onDelete={onDelete} onToggle={onToggle} />
-      ))}
+    // The indent is what makes the hierarchy readable, so on narrow screens
+    // the tree scrolls sideways instead of flattening its levels.
+    <div className="table-scroll">
+      <div className="py-1 min-w-[600px]">
+        {groups.map((g) => (
+          <CategoryGroupNode key={g.type} group={g} onEdit={onEdit} onDelete={onDelete} onToggle={onToggle} />
+        ))}
+      </div>
     </div>
   )
 }

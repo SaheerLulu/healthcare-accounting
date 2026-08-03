@@ -76,9 +76,9 @@ export default function RecurringJournalsListPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Recurring Journals</h1>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4 flex-wrap">
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Recurring Journals</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
             Templates that auto-post journal entries on a schedule (depreciation, accruals, prepaid expenses).
             {counts.due > 0 && (
@@ -88,7 +88,7 @@ export default function RecurringJournalsListPage() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button variant="secondary" size="sm" onClick={handleRunDue} disabled={running}>
             {running ? <Loader2 className="animate-spin" size={14} /> : <Play size={14} />}
             Run Due Now
@@ -106,8 +106,8 @@ export default function RecurringJournalsListPage() {
         <Pill label="Stopped" count={counts.stopped} active={filter === 'stopped'} dotColor="var(--ink-3)" onClick={() => setFilter('stopped')} />
       </div>
 
-      <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-md">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-0 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
           <Input value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Search profile name or narration…" className="pl-9" />
@@ -180,7 +180,7 @@ function Pill({ label, count, active, dotColor, onClick }: {
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-2 px-3 h-8 rounded-full text-xs font-medium transition-colors"
+      className="inline-flex items-center gap-2 px-3 h-9 sm:h-8 rounded-full text-xs font-medium transition-colors"
       style={{
         background: active ? 'rgba(15,157,154,0.10)' : 'var(--surface-0)',
         border: `1px solid ${active ? 'rgba(15,157,154,0.35)' : 'var(--line)'}`,

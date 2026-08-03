@@ -181,9 +181,9 @@ export default function GSTR3BPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>GSTR-3B</h1>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>GSTR-3B</h1>
           <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Monthly summary return</p>
         </div>
         <Button
@@ -198,7 +198,7 @@ export default function GSTR3BPage() {
       </div>
 
       {/* Controls */}
-      <div className="flex items-center gap-3 mb-6 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-3 mb-6 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500 font-medium">Period</label>
           <PeriodPicker value={period} onChange={setPeriod} />
@@ -218,7 +218,7 @@ export default function GSTR3BPage() {
           <Loader2 size={28} className="animate-spin text-teal-600" />
         </div>
       ) : summaries.length === 0 ? (
-        <Card className="flex items-center justify-center py-20 text-slate-400 text-sm">
+        <Card className="flex items-center justify-center px-4 py-20 text-center text-slate-400 text-sm">
           No GSTR-3B data. Select period and generate.
         </Card>
       ) : (

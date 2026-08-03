@@ -64,7 +64,7 @@ export default function PettyCashPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Petty Cash</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -187,7 +187,7 @@ function NewFloatDialog({ open, glAccounts, onClose, onSaved }: {
             <Input placeholder="Who holds the cash box" value={data.custodian_name}
               onChange={(e) => setData({ ...data, custodian_name: e.target.value })} />
           </Field>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Imprest Amount" required>
               <Input type="number" step="0.01" min="0.01" value={data.imprest_amount}
                 className="text-right font-mono"
@@ -255,7 +255,7 @@ function SpendDialog({ floatObj, glAccounts, onClose, onDone }: {
       <DialogContent>
         <DialogHeader><DialogTitle>Petty Cash Spend — {floatObj.location_name || `#${floatObj.location_id}`}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Date" required>
               <Input type="date" value={data.date} onChange={(e) => setData({ ...data, date: e.target.value })} />
             </Field>
@@ -320,7 +320,7 @@ function ReplenishDialog({ floatObj, onClose, onDone }: {
       <DialogContent>
         <DialogHeader><DialogTitle>Replenish Petty Cash — {floatObj.location_name || `#${floatObj.location_id}`}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Date" required>
               <Input type="date" value={data.date} onChange={(e) => setData({ ...data, date: e.target.value })} />
             </Field>
@@ -371,8 +371,10 @@ function TxnsDialog({ floatObj, onClose }: {
             {floatObj.location_name || `#${floatObj.location_id}`} — current {formatCurrency(balance)}
           </DialogTitle>
         </DialogHeader>
-        <div className="max-h-[60vh] overflow-auto">
-          <Table>
+        {/* The height cap belongs on <Table>'s own scroll rail: nesting it in
+            a second scroll container would leave the sticky header stuck to
+            the inner rail, which never scrolls vertically. */}
+        <Table wrapperClassName="max-h-[60vh] overflow-y-auto">
             <Thead><Tr><Th>Date</Th><Th>Kind</Th><Th>Description</Th>
               <Th className="text-right px-3">Amount</Th><Th>Voucher</Th><Th>Entry</Th></Tr></Thead>
             <Tbody>
@@ -394,8 +396,7 @@ function TxnsDialog({ floatObj, onClose }: {
                 </Tr>
               ))}
             </Tbody>
-          </Table>
-        </div>
+        </Table>
         <DialogFooter><Button variant="secondary" onClick={onClose}>Close</Button></DialogFooter>
       </DialogContent>
     </Dialog>

@@ -68,7 +68,7 @@ export default function ReceivablesPage() {
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             Receivables
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -81,17 +81,17 @@ export default function ReceivablesPage() {
             . Click Receive on an invoice to record a payment from that customer.
           </p>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap w-full sm:w-auto">
           <Input
             type="text"
             placeholder="Search invoice # or customer…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-56"
+            className="w-full sm:w-56"
           />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>As of</label>
-            <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-auto" />
+            <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-full sm:w-auto" />
           </div>
         </div>
       </div>
@@ -135,7 +135,7 @@ export default function ReceivablesPage() {
                       style={{ color: 'var(--ink)' }}
                     >
                       {r.party_name}
-                      <ExternalLink size={11} className="opacity-0 group-hover:opacity-100" style={{ color: 'var(--brand)' }} />
+                      <ExternalLink size={11} className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100" style={{ color: 'var(--brand)' }} />
                     </Link>
                   </Td>
                   <Td className="text-right mono px-3" style={{ color: 'var(--ink)' }}>
@@ -146,7 +146,7 @@ export default function ReceivablesPage() {
                     {formatCurrency((r.customer_outstanding ?? '0'))}
                   </Td>
                   <Td className="text-right pr-3">
-                    <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center justify-end gap-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                       <Button size="sm" onClick={() => setReceiving(r)}>
                         <Wallet size={13} /> Receive
                       </Button>
@@ -230,7 +230,7 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
           </SheetHeader>
           <SheetBody>
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Date" required>
                   <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
                 </Field>

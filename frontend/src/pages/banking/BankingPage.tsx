@@ -44,7 +44,7 @@ export default function BankingPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Banking</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -203,11 +203,11 @@ function NewBankAccountSheet({ glAccounts, onCreated }: { glAccounts: Account[];
                   placeholder="e.g. HDFC Current Account" />
               </Field>
               <Field label="Type" required>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {ACCOUNT_TYPES.map((t) => (
                     <label key={t.v}
                       className={
-                        'flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm ' +
+                        'flex-1 min-w-[7rem] flex items-center justify-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm ' +
                         (accountType === t.v
                           ? 'border-teal-500 bg-teal-50 text-teal-700'
                           : 'border-slate-200 text-slate-600 hover:border-slate-300')
@@ -224,7 +224,7 @@ function NewBankAccountSheet({ glAccounts, onCreated }: { glAccounts: Account[];
                   <Field label="Bank Name">
                     <Input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="e.g. HDFC Bank" />
                   </Field>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <Field label="Account Number">
                       <Input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} />
                     </Field>
@@ -246,7 +246,7 @@ function NewBankAccountSheet({ glAccounts, onCreated }: { glAccounts: Account[];
                   ))}
                 </select>
               </Field>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Opening Balance">
                   <Input type="number" step="0.01" value={openingBalance}
                     onChange={(e) => setOpeningBalance(e.target.value)} className="text-right font-mono" />

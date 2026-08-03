@@ -122,55 +122,59 @@ export function InvoiceAllocationGrid({
               </div>
             ) : (
               <>
-                <div className="flex justify-end gap-2 mb-2">
+                <div className="flex flex-wrap justify-end gap-2 mb-2">
                   <Button type="button" variant="ghost" size="sm" onClick={payAll}>Pay all in full</Button>
                   <Button type="button" variant="ghost" size="sm" onClick={clearAll}>Clear</Button>
                 </div>
-                <table className="w-full text-sm">
-                  <thead className="border-b" style={{ borderColor: 'var(--line)' }}>
-                    <tr>
-                      <th className="text-left text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Invoice #</th>
-                      <th className="text-left text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Date</th>
-                      <th className="text-right text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Outstanding</th>
-                      <th className="text-right text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>This Payment</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {invoices.map((inv) => {
-                      const cap = outstandingOf(inv)
-                      return (
-                        <tr key={inv.invoice_no} className="border-b" style={{ borderColor: 'var(--line)' }}>
-                          <td className="px-2 py-2 mono text-xs" style={{ color: 'var(--ink)' }}>
-                            <div>{inv.invoice_no}</div>
-                            {inv.narration && (
-                              <div className="text-[10px] truncate max-w-[180px]" style={{ color: 'var(--ink-3)' }}>{inv.narration}</div>
-                            )}
-                          </td>
-                          <td className="px-2 py-2 text-xs" style={{ color: 'var(--ink-2)' }}>{formatDate(inv.date)}</td>
-                          <td className="px-2 py-2 text-right font-mono font-semibold" style={{ color: 'var(--ink)' }}>
-                            {formatCurrency(cap)}
-                          </td>
-                          <td className="px-2 py-2 text-right">
-                            <input
-                              type="number" step="0.01" min="0" max={cap}
-                              value={amounts[inv.invoice_no] ?? ''}
-                              onChange={(e) => setAmount(inv.invoice_no, e.target.value, cap)}
-                              placeholder="0.00"
-                              className="w-28 px-2 py-1 text-right font-mono text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
-                              style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
-                            />
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr style={{ background: 'var(--surface-1)' }}>
-                      <td colSpan={3} className="px-2 py-2 text-right text-xs font-semibold" style={{ color: 'var(--ink)' }}>Total payment</td>
-                      <td className="px-2 py-2 text-right font-mono font-bold" style={{ color: 'var(--brand)' }}>{formatCurrency(total)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
+                <div className="table-scroll">
+                  {/* The min-w sits under the sheet's own desktop width, so the
+                      rail only engages once the panel goes full-screen on phones. */}
+                  <table className="w-full min-w-[440px] text-sm">
+                    <thead className="border-b" style={{ borderColor: 'var(--line)' }}>
+                      <tr>
+                        <th className="text-left text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Invoice #</th>
+                        <th className="text-left text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Date</th>
+                        <th className="text-right text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Outstanding</th>
+                        <th className="text-right text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>This Payment</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invoices.map((inv) => {
+                        const cap = outstandingOf(inv)
+                        return (
+                          <tr key={inv.invoice_no} className="border-b" style={{ borderColor: 'var(--line)' }}>
+                            <td className="px-2 py-2 mono text-xs" style={{ color: 'var(--ink)' }}>
+                              <div>{inv.invoice_no}</div>
+                              {inv.narration && (
+                                <div className="text-[10px] truncate max-w-[180px]" style={{ color: 'var(--ink-3)' }}>{inv.narration}</div>
+                              )}
+                            </td>
+                            <td className="px-2 py-2 text-xs" style={{ color: 'var(--ink-2)' }}>{formatDate(inv.date)}</td>
+                            <td className="px-2 py-2 text-right font-mono font-semibold" style={{ color: 'var(--ink)' }}>
+                              {formatCurrency(cap)}
+                            </td>
+                            <td className="px-2 py-2 text-right">
+                              <input
+                                type="number" step="0.01" min="0" max={cap}
+                                value={amounts[inv.invoice_no] ?? ''}
+                                onChange={(e) => setAmount(inv.invoice_no, e.target.value, cap)}
+                                placeholder="0.00"
+                                className="w-28 px-2 py-1 text-right font-mono text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
+                                style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
+                              />
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ background: 'var(--surface-1)' }}>
+                        <td colSpan={3} className="px-2 py-2 text-right text-xs font-semibold" style={{ color: 'var(--ink)' }}>Total payment</td>
+                        <td className="px-2 py-2 text-right font-mono font-bold" style={{ color: 'var(--brand)' }}>{formatCurrency(total)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
               </>
             )}
           </SheetBody>

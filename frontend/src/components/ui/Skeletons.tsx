@@ -54,7 +54,7 @@ export function SkeletonTable({ rows = 6, cols = 5 }: { rows?: number; cols?: nu
 
 export function SkeletonForm() {
   return (
-    <div className="space-y-4 rounded-xl p-6 card-shadow">
+    <div className="space-y-4 rounded-xl p-4 sm:p-6 card-shadow">
       {Array.from({ length: 5 }).map((_, i) => (
         <div key={i} className="space-y-1.5">
           <Skeleton width={80} height={10} />

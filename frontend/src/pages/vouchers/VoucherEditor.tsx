@@ -512,7 +512,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
 
       {allStores && (
         <div
-          className="mb-3 px-4 py-2.5 rounded-lg flex items-center gap-2.5 text-sm"
+          className="mb-3 px-4 py-2.5 rounded-lg flex flex-wrap items-center gap-2.5 text-sm"
           style={{
             background: 'rgba(245, 158, 11, 0.08)',
             border: '1px solid rgba(245, 158, 11, 0.30)',
@@ -539,7 +539,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
           >
             {config.fKey}
           </span>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             {editingId ? `Edit ${originalEntry?.entry_no ?? config.label}` : `${config.label} Voucher`}
           </h1>
           <span
@@ -570,7 +570,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {voucherType === 'PAYMENT' && partyId && (
             <Button variant="secondary" size="sm" onClick={() => setAllocOpen(true)}>
               <FileStack size={14} /> Allocate Bills
@@ -586,7 +586,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
         </div>
       </div>
 
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <Field label="Date" required>
             <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
@@ -624,16 +624,21 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
       </Card>
 
       <Card className="overflow-hidden p-0">
-        <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: 'var(--line)' }}>
+        <div
+          className="px-4 sm:px-5 py-3 border-b flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"
+          style={{ borderColor: 'var(--line)' }}
+        >
           <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Particulars</h2>
-          <div className="flex items-center gap-3 text-xs" style={{ color: 'var(--ink-2)' }}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs" style={{ color: 'var(--ink-2)' }}>
             <span>By = Dr · To = Cr</span>
             <span>·</span>
             <span>Total Dr & Cr must match</span>
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="table-scroll">
+          {/* The line grid keeps its Tally column layout on every screen — it
+              scrolls sideways rather than reflowing into stacked cards. */}
+          <table className="w-full min-w-[720px] text-sm">
             <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
               <tr>
                 <th className="text-left text-[10px] font-semibold px-2 py-2 uppercase tracking-wide w-20" style={{ color: 'var(--ink-2)' }}>By/To</th>
@@ -729,11 +734,11 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
         </Field>
       </Card>
 
-      {/* Sticky save bar */}
+      {/* Sticky save bar — sits on the F-key bar at md+, on the viewport floor
+          below it, where the F-key bar is hidden. */}
       <div
-        className="fixed left-0 right-0 z-20 px-6 py-3 flex items-center justify-end gap-2"
+        className="fixed left-0 right-0 bottom-0 md:bottom-9 z-20 px-3 sm:px-6 py-3 flex flex-wrap items-center justify-end gap-2 safe-bottom"
         style={{
-          bottom: 36,
           background: 'var(--surface-0)',
           borderTop: '1px solid var(--line)',
           boxShadow: '0 -4px 12px rgba(0,0,0,0.04)',

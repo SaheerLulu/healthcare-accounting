@@ -91,7 +91,7 @@ export default function PayablesPage() {
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             Payables
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -115,7 +115,7 @@ export default function PayablesPage() {
           placeholder="Search invoice/bill # or vendor…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-64"
+          className="w-full sm:w-64"
         />
       </div>
 
@@ -238,7 +238,7 @@ export default function PayablesPage() {
                       </Badge>
                     </Td>
                     <Td className="text-right pr-3">
-                      <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center justify-end gap-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                         <Button size="sm" onClick={() => setPaying(b)}>
                           <Banknote size={13} /> Pay
                         </Button>
@@ -324,7 +324,7 @@ function PayBillSheet({ bill, onClose, onSuccess }: {
           </SheetHeader>
           <SheetBody>
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Date" required>
                   <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
                 </Field>

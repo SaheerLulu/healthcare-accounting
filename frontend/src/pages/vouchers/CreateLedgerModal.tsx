@@ -85,7 +85,7 @@ export function CreateLedgerModal({ open, onOpenChange, parents, onCreated }: Pr
           style={{ background: 'rgba(12,30,37,0.45)' }}
         />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl p-6 animate-slideUp"
+          className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl p-4 sm:p-6 animate-slideUp max-h-[85dvh] overflow-y-auto overscroll-contain"
           style={{
             background: 'var(--surface-0)',
             border: '1px solid var(--line)',
@@ -93,7 +93,7 @@ export function CreateLedgerModal({ open, onOpenChange, parents, onCreated }: Pr
           }}
         >
           <div className="flex items-start justify-between mb-4">
-            <div>
+            <div className="min-w-0">
               <Dialog.Title className="text-base font-semibold" style={{ color: 'var(--ink)' }}>
                 Create Ledger
               </Dialog.Title>
@@ -102,7 +102,7 @@ export function CreateLedgerModal({ open, onOpenChange, parents, onCreated }: Pr
               </Dialog.Description>
             </div>
             <Dialog.Close
-              className="p-1 rounded hover:bg-[var(--color-hover-bg)]"
+              className="shrink-0 p-1 rounded hover:bg-[var(--color-hover-bg)]"
               aria-label="Close"
             >
               <X className="w-4 h-4" style={{ color: 'var(--ink-3)' }} />
@@ -118,7 +118,7 @@ export function CreateLedgerModal({ open, onOpenChange, parents, onCreated }: Pr
                 autoFocus
               />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Code" hint="Optional — auto-generated if blank">
                 <Input
                   value={code}

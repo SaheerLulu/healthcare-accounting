@@ -246,7 +246,7 @@ export function BillRefPickerSheet({
                   <p className="text-xs" style={{ color: 'var(--ink-2)' }}>
                     For invoices not tracked inside the Bills module — type the reference manually.
                   </p>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label className="block">
                       <span className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>Reference #</span>
                       <Input
@@ -298,42 +298,46 @@ function RefTable({ cols, rows }: {
   rows: { key: string; onClick: () => void; cells: React.ReactNode[] }[]
 }) {
   return (
-    <table className="w-full text-sm">
-      <thead className="border-b" style={{ borderColor: 'var(--line)' }}>
-        <tr>
-          {cols.map((c, i) => (
-            <th
-              key={i}
-              className={`text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider ${i === cols.length - 1 ? 'text-right' : 'text-left'}`}
-              style={{ color: 'var(--ink-2)' }}
-            >
-              {c}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r) => (
-          <tr
-            key={r.key}
-            onClick={r.onClick}
-            className="border-b cursor-pointer transition-colors"
-            style={{ borderColor: 'var(--line)' }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
-          >
-            {r.cells.map((cell, i) => (
-              <td
+    <div className="table-scroll">
+      {/* 380px is under the sheet's own content width, so the rail only
+          engages once the sheet has gone full-screen on a phone. */}
+      <table className="w-full text-sm min-w-[380px]">
+        <thead className="border-b" style={{ borderColor: 'var(--line)' }}>
+          <tr>
+            {cols.map((c, i) => (
+              <th
                 key={i}
-                className={`px-2 py-2 ${i === r.cells.length - 1 ? 'text-right' : ''}`}
+                className={`text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider ${i === cols.length - 1 ? 'text-right' : 'text-left'}`}
+                style={{ color: 'var(--ink-2)' }}
               >
-                {cell}
-              </td>
+                {c}
+              </th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr
+              key={r.key}
+              onClick={r.onClick}
+              className="border-b cursor-pointer transition-colors"
+              style={{ borderColor: 'var(--line)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
+            >
+              {r.cells.map((cell, i) => (
+                <td
+                  key={i}
+                  className={`px-2 py-2 ${i === r.cells.length - 1 ? 'text-right' : ''}`}
+                >
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   )
 }
 

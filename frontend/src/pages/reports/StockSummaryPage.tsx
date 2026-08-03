@@ -32,16 +32,16 @@ function StockMovementTab() {
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3 mb-5">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs text-slate-500 font-medium">From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-auto px-2.5 py-1.5" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto px-2.5 py-1.5" />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs text-slate-500 font-medium">To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-auto px-2.5 py-1.5" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto px-2.5 py-1.5" />
         </div>
-        <Button onClick={load} disabled={loading}>
+        <Button className="w-full sm:w-auto" onClick={load} disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>
@@ -103,17 +103,17 @@ function StockValuationTab() {
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3 mb-5">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs text-slate-500 font-medium">As of</label>
-          <Input type="date" value={asOfDate} onChange={(e) => setAsOfDate(e.target.value)} className="w-auto px-2.5 py-1.5" />
+          <Input type="date" value={asOfDate} onChange={(e) => setAsOfDate(e.target.value)} className="w-full sm:w-auto px-2.5 py-1.5" />
         </div>
-        <Button onClick={load} disabled={loading}>
+        <Button className="w-full sm:w-auto" onClick={load} disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>
         {fetched && (
-          <span className="ml-auto text-sm text-slate-600">
+          <span className="w-full sm:w-auto ml-auto text-sm text-slate-600">
             Total Value: <span className="font-mono font-semibold text-slate-900">{formatCurrency(totalValue)}</span>
           </span>
         )}
@@ -165,7 +165,7 @@ export default function StockSummaryPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Stock Summary</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Stock Summary</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Inventory movement and valuation reports</p>
       </div>
 

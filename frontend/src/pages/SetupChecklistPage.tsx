@@ -161,7 +161,7 @@ export default function SetupChecklistPage() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-baseline gap-3">
           <span
-            className="mono text-xs font-bold px-2 py-0.5 rounded"
+            className="mono text-xs font-bold px-2 py-0.5 rounded hidden md:inline"
             style={{
               background: 'rgba(15,157,154,0.12)',
               color: 'var(--brand)',
@@ -170,26 +170,26 @@ export default function SetupChecklistPage() {
           >
             F11
           </span>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             Setup Checklist
           </h1>
         </div>
-        <Button variant="secondary" onClick={() => navigate('/settings')}>
+        <Button variant="secondary" className="flex-shrink-0" onClick={() => navigate('/settings')}>
           <SettingsIcon size={14} /> Settings
         </Button>
       </div>
 
-      <Card className="p-5">
+      <Card className="p-4 sm:p-5">
         <div className="flex items-center gap-3">
           {allRequiredDone ? (
             <>
               <div
-                className="w-10 h-10 rounded-lg flex items-center justify-center"
+                className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
                 style={{ background: 'rgba(31,138,76,0.12)' }}
               >
                 <CheckCircle2 size={20} style={{ color: 'var(--success)' }} />
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="font-semibold" style={{ color: 'var(--ink)' }}>
                   All required setup complete
                 </div>
@@ -201,12 +201,12 @@ export default function SetupChecklistPage() {
           ) : (
             <>
               <div
-                className="w-10 h-10 rounded-lg flex items-center justify-center"
+                className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
                 style={{ background: 'rgba(199,122,17,0.12)' }}
               >
                 <AlertTriangle size={20} style={{ color: 'var(--warning)' }} />
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="font-semibold" style={{ color: 'var(--ink)' }}>
                   {requiredOk}/{requiredTotal} required steps done
                 </div>
@@ -217,7 +217,7 @@ export default function SetupChecklistPage() {
             </>
           )}
           <div className="flex-1" />
-          <div className="text-2xl font-semibold mono" style={{ color: 'var(--brand)' }}>
+          <div className="text-2xl font-semibold mono flex-shrink-0" style={{ color: 'var(--brand)' }}>
             {Math.round((requiredOk / Math.max(requiredTotal, 1)) * 100)}%
           </div>
         </div>
@@ -251,7 +251,7 @@ function SectionList({ title, items, navigate }: {
               className={i < items.length - 1 ? 'border-b' : ''}
               style={i < items.length - 1 ? { borderColor: 'var(--line)' } : undefined}
             >
-              <div className="flex items-center gap-3 px-4 py-3">
+              <div className="flex items-center gap-3 px-3 sm:px-4 py-3">
                 <div
                   className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
                   style={{
@@ -276,6 +276,7 @@ function SectionList({ title, items, navigate }: {
                   <Button
                     variant="ghost"
                     size="sm"
+                    className="flex-shrink-0 whitespace-nowrap"
                     onClick={() => navigate(c.fix!.to)}
                   >
                     {c.fix.label} <ChevronRight size={12} />

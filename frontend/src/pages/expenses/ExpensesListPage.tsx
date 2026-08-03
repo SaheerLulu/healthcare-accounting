@@ -68,9 +68,9 @@ export default function ExpensesListPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Expenses</h1>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Expenses</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
             <span className="mono">{counts?.total ?? 0}</span> expenses · Total spent{' '}
             <span className="mono font-medium" style={{ color: 'var(--ink)' }}>{formatCurrency(counts?.total_amount ?? '0')}</span>
@@ -86,21 +86,21 @@ export default function ExpensesListPage() {
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[220px] max-w-md">
+        <div className="relative w-full sm:w-auto sm:flex-1 sm:min-w-[220px] sm:max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
           <Input value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Search vendor, reference, notes…" className="pl-9" />
         </div>
         <div
-          className="flex items-center gap-1 px-2 h-9 rounded-md"
+          className="flex items-center gap-1 px-2 h-9 rounded-md w-full sm:w-auto"
           style={{ border: '1px solid var(--line)', background: 'var(--surface-0)' }}
         >
-          <Calendar size={13} style={{ color: 'var(--ink-3)' }} />
+          <Calendar size={13} className="flex-shrink-0" style={{ color: 'var(--ink-3)' }} />
           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="text-xs bg-transparent focus:outline-none" style={{ color: 'var(--ink)' }} />
+            className="text-xs bg-transparent focus:outline-none min-w-0" style={{ color: 'var(--ink)' }} />
           <span className="text-xs" style={{ color: 'var(--ink-3)' }}>→</span>
           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="text-xs bg-transparent focus:outline-none" style={{ color: 'var(--ink)' }} />
+            className="text-xs bg-transparent focus:outline-none min-w-0" style={{ color: 'var(--ink)' }} />
         </div>
         {hasFilters && (
           <button onClick={() => { setSearch(''); setFilter('all'); setDateFrom(''); setDateTo('') }}

@@ -106,6 +106,28 @@
   --color-nav-border: rgba(51, 65, 85, 0.6);
 }
 
+/* ============================================================
+   Responsive contract
+   ------------------------------------------------------------
+   This is a dense, Tally-style accounting UI. It is designed for
+   the desktop and stays exactly as-is at >=1024px (lg). Below
+   that we trade density for reach:
+
+     lg  >=1024  full horizontal nav, full density  (unchanged)
+     md  >=768   stacked shell, hamburger nav, 2-up card grids
+     sm  >=640   single-column forms, wrapping toolbars
+     base <640   tight gutters, full-bleed controls, no F-key bar
+
+   Data tables NEVER reflow into stacked cards: in accounting the
+   column alignment carries the meaning. They scroll horizontally
+   inside `.table-scroll` (baked into <Table>) instead.
+   ============================================================ */
+
+html {
+  /* Stop iOS/Safari from inflating type when the device rotates. */
+  -webkit-text-size-adjust: 100%;
+}
+
 /* Typography */
 body {
   font-family: 'Inter', 'Roboto', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -139,25 +161,29 @@ td.code,
   font-feature-settings: 'tnum' 1;
 }
 
+/* Headings scale with the viewport between phone and desktop so page
+   titles stay proportionate without a breakpoint step. Pages that set
+   an explicit Tailwind size (text-xl etc.) still win — utilities have
+   equal specificity but land later in the cascade. */
 h1 {
-  font-size: 1.75rem;
+  font-size: clamp(1.375rem, 1.15rem + 1.1vw, 1.75rem);
   font-weight: 600;
-  line-height: 2.125rem;
+  line-height: 1.25;
   color: var(--ink);
   letter-spacing: -0.01em;
 }
 
 h2 {
-  font-size: 1.375rem;
+  font-size: clamp(1.125rem, 0.98rem + 0.7vw, 1.375rem);
   font-weight: 600;
-  line-height: 1.75rem;
+  line-height: 1.3;
   color: var(--ink);
 }
 
 h3 {
-  font-size: 1.125rem;
+  font-size: clamp(1rem, 0.94rem + 0.3vw, 1.125rem);
   font-weight: 600;
-  line-height: 1.5rem;
+  line-height: 1.35;
   color: var(--ink);
 }
 
@@ -238,6 +264,7 @@ button:active:not(:disabled), [role="button"]:active:not(:disabled) {
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slideUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes slideInLeft { from { transform: translateX(-100%); } to { transform: translateX(0); } }
 @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 
 .animate-fadeIn { animation: fadeIn 300ms ease-out both; }
@@ -245,6 +272,7 @@ button:active:not(:disabled), [role="button"]:active:not(:disabled) {
 .animate-fade-in { animation: fadeIn 300ms ease-out both; }
 .animate-slide-up { animation: slideUp 400ms ease-out both; }
 .animate-slide-in-right { animation: slideInRight 220ms cubic-bezier(0.32, 0.72, 0, 1) both; }
+.animate-slide-in-left { animation: slideInLeft 220ms cubic-bezier(0.32, 0.72, 0, 1) both; }
 .animate-shimmer {
   background: linear-gradient(90deg, var(--color-grey-light) 25%, var(--surface-1) 50%, var(--color-grey-light) 75%);
   background-size: 200% 100%;
@@ -255,5 +283,71 @@ button:active:not(:disabled), [role="button"]:active:not(:disabled) {
 @media (max-width: 768px) {
   .login-grid {
     grid-template-columns: 1fr !important;
+  }
+}
+
+/* ============================================================
+   Responsive primitives
+   ============================================================ */
+
+/* Horizontal scroll rail for wide data tables and entry grids.
+   Baked into <Table>; apply by hand around raw <table> markup and
+   Tally-style voucher grids. Momentum scrolling on iOS, and the
+   scroll chain stops here so a sideways swipe never navigates back. */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* Tighter table gutters on phones — the extra specificity (.table-striped
+   td beats .px-4) means per-cell Tailwind padding still applies elsewhere. */
+@media (max-width: 767.98px) {
+  .table-striped th,
+  .table-striped td {
+    padding-left: 0.625rem;
+    padding-right: 0.625rem;
+  }
+}
+
+/* iOS zooms the viewport when a focused control renders below 16px.
+   Every input in this app is text-sm (14px), so pin them at 16px on
+   phones — which also lands them on a comfortable touch target. */
+@media (max-width: 639.98px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* Fixed bottom furniture clears the iOS home indicator.
+   This rule is unlayered, so it beats Tailwind's `py-*` utilities rather than
+   adding to them — hence the explicit base term. It defaults to 0.75rem to
+   match `py-3`, the padding every consumer happens to use; override with
+   `--safe-bottom-pad` if a bar uses something else. env() resolves to 0px
+   everywhere but iOS, so this is inert on desktop. */
+.safe-bottom {
+  padding-bottom: calc(var(--safe-bottom-pad, 0.75rem) + env(safe-area-inset-bottom, 0px));
+}
+
+/* Print: unroll every scroll rail so nothing is cropped on paper. */
+@media print {
+  .table-scroll {
+    overflow: visible !important;
+  }
+}
+
+/* Respect the OS "reduce motion" setting — the page-transition fades,
+   dropdown slides and shimmer skeletons all collapse to instant. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

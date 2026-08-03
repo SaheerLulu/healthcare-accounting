@@ -48,7 +48,7 @@ export function PrintVoucherView({ open, onOpenChange, entry }: Props) {
 
           {/* Toolbar — hidden on print */}
           <div
-            className="print-hide flex items-center justify-between px-5 py-3 border-b sticky top-0 z-10"
+            className="print-hide flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 sm:px-5 py-3 border-b sticky top-0 z-10"
             style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}
           >
             <span className="text-xs mono uppercase tracking-wider" style={{ color: 'var(--ink-3)' }}>
@@ -65,7 +65,7 @@ export function PrintVoucherView({ open, onOpenChange, entry }: Props) {
           </div>
 
           {/* Printable voucher */}
-          <div className="p-8" style={{ color: '#0c1e25', fontFamily: 'Inter, system-ui, sans-serif' }}>
+          <div className="voucher-body p-4 sm:p-8" style={{ color: '#0c1e25', fontFamily: 'Inter, system-ui, sans-serif' }}>
             <header className="text-center pb-4 border-b-2" style={{ borderColor: '#0c1e25' }}>
               <h2 className="text-lg font-bold tracking-wide">
                 {settings?.company_name || 'Seefmed Accounting'}
@@ -98,53 +98,55 @@ export function PrintVoucherView({ open, onOpenChange, entry }: Props) {
               </div>
             </div>
 
-            <table className="w-full text-sm border" style={{ borderColor: '#0c1e25', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: '#f1f5f5' }}>
-                  <th className="text-left px-3 py-2 border" style={{ borderColor: '#0c1e25', width: 60 }}>Type</th>
-                  <th className="text-left px-3 py-2 border" style={{ borderColor: '#0c1e25' }}>Particulars</th>
-                  <th className="text-right px-3 py-2 border" style={{ borderColor: '#0c1e25', width: 120 }}>Debit</th>
-                  <th className="text-right px-3 py-2 border" style={{ borderColor: '#0c1e25', width: 120 }}>Credit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {entry.lines.map((l, i) => {
-                  const isDr = parseFloat(l.debit) > 0
-                  return (
-                    <tr key={i}>
-                      <td className="px-3 py-2 mono font-bold border" style={{ borderColor: '#0c1e25' }}>
-                        {isDr ? 'Dr' : 'Cr'}
-                      </td>
-                      <td className="px-3 py-2 border" style={{ borderColor: '#0c1e25' }}>
-                        <div className="font-medium">{l.account_name || `Account ${l.account}`}</div>
-                        {l.account_code && (
-                          <div className="text-xs mono" style={{ color: '#5b6b73' }}>{l.account_code}</div>
-                        )}
-                        {l.narration && <div className="text-xs mt-0.5">{l.narration}</div>}
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono border" style={{ borderColor: '#0c1e25' }}>
-                        {parseFloat(l.debit) > 0 ? formatCurrency(l.debit) : ''}
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono border" style={{ borderColor: '#0c1e25' }}>
-                        {parseFloat(l.credit) > 0 ? formatCurrency(l.credit) : ''}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-              <tfoot>
-                <tr style={{ background: '#f1f5f5', fontWeight: 700 }}>
-                  <td className="px-3 py-2 border" style={{ borderColor: '#0c1e25' }} />
-                  <td className="px-3 py-2 text-right border" style={{ borderColor: '#0c1e25' }}>Total</td>
-                  <td className="px-3 py-2 text-right font-mono border" style={{ borderColor: '#0c1e25' }}>
-                    {formatCurrency(totals.dr)}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono border" style={{ borderColor: '#0c1e25' }}>
-                    {formatCurrency(totals.cr)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
+            <div className="table-scroll">
+              <table className="w-full min-w-[520px] text-sm border" style={{ borderColor: '#0c1e25', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f1f5f5' }}>
+                    <th className="text-left px-3 py-2 border" style={{ borderColor: '#0c1e25', width: 60 }}>Type</th>
+                    <th className="text-left px-3 py-2 border" style={{ borderColor: '#0c1e25' }}>Particulars</th>
+                    <th className="text-right px-3 py-2 border" style={{ borderColor: '#0c1e25', width: 120 }}>Debit</th>
+                    <th className="text-right px-3 py-2 border" style={{ borderColor: '#0c1e25', width: 120 }}>Credit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entry.lines.map((l, i) => {
+                    const isDr = parseFloat(l.debit) > 0
+                    return (
+                      <tr key={i}>
+                        <td className="px-3 py-2 mono font-bold border" style={{ borderColor: '#0c1e25' }}>
+                          {isDr ? 'Dr' : 'Cr'}
+                        </td>
+                        <td className="px-3 py-2 border" style={{ borderColor: '#0c1e25' }}>
+                          <div className="font-medium">{l.account_name || `Account ${l.account}`}</div>
+                          {l.account_code && (
+                            <div className="text-xs mono" style={{ color: '#5b6b73' }}>{l.account_code}</div>
+                          )}
+                          {l.narration && <div className="text-xs mt-0.5">{l.narration}</div>}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono border" style={{ borderColor: '#0c1e25' }}>
+                          {parseFloat(l.debit) > 0 ? formatCurrency(l.debit) : ''}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono border" style={{ borderColor: '#0c1e25' }}>
+                          {parseFloat(l.credit) > 0 ? formatCurrency(l.credit) : ''}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{ background: '#f1f5f5', fontWeight: 700 }}>
+                    <td className="px-3 py-2 border" style={{ borderColor: '#0c1e25' }} />
+                    <td className="px-3 py-2 text-right border" style={{ borderColor: '#0c1e25' }}>Total</td>
+                    <td className="px-3 py-2 text-right font-mono border" style={{ borderColor: '#0c1e25' }}>
+                      {formatCurrency(totals.dr)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono border" style={{ borderColor: '#0c1e25' }}>
+                      {formatCurrency(totals.cr)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
 
             {entry.narration && (
               <div className="mt-4">
@@ -169,6 +171,9 @@ export function PrintVoucherView({ open, onOpenChange, entry }: Props) {
               .print-area, .print-area * { visibility: visible !important; }
               .print-area { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; max-width: none !important; max-height: none !important; box-shadow: none !important; border: none !important; }
               .print-hide { display: none !important; }
+              /* The on-screen dialog tightens its gutters on phones; paper
+                 always gets the full 2rem margin regardless of page width. */
+              .print-area .voucher-body { padding: 2rem !important; }
             }
           `}</style>
         </Dialog.Content>

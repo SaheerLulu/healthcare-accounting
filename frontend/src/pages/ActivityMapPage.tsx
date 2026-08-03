@@ -477,7 +477,7 @@ export default function ActivityMapPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-baseline gap-2">
+      <div className="flex items-baseline gap-2 flex-wrap">
         <BookOpen size={18} style={{ color: 'var(--brand)' }} />
         <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
           Activity → Account Map
@@ -569,38 +569,40 @@ function ActivityRow({ activity, last, byKey }: {
         )}
       </div>
       <div className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--line)' }}>
-        <table className="w-full text-xs">
-          <tbody>
-            {activity.lines.map((l, i) => {
-              const mapping = l.key ? byKey[l.key] : null
-              return (
-                <tr key={i} className={i < activity.lines.length - 1 ? 'border-b' : ''} style={{ borderColor: 'var(--line)' }}>
-                  <td className="px-3 py-1.5 mono font-bold w-12" style={{ color: l.side === 'Dr' ? 'var(--success)' : 'var(--danger)' }}>
-                    {l.side}
-                  </td>
-                  <td className="px-3 py-1.5" style={{ color: 'var(--ink)' }}>
-                    {l.desc}
-                  </td>
-                  <td className="px-3 py-1.5 text-right">
-                    {mapping ? (
-                      <span className="mono text-[11px]" style={{ color: 'var(--ink-2)' }}>
-                        <span style={{ color: 'var(--brand)' }}>{mapping.account_code}</span> {mapping.account_name}
-                      </span>
-                    ) : l.key ? (
-                      <span className="text-[11px] italic" style={{ color: 'var(--warning)' }}>
-                        not mapped
-                      </span>
-                    ) : (
-                      <span className="text-[11px] italic" style={{ color: 'var(--ink-3)' }}>
-                        contextual
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table className="w-full text-xs min-w-[560px]">
+            <tbody>
+              {activity.lines.map((l, i) => {
+                const mapping = l.key ? byKey[l.key] : null
+                return (
+                  <tr key={i} className={i < activity.lines.length - 1 ? 'border-b' : ''} style={{ borderColor: 'var(--line)' }}>
+                    <td className="px-3 py-1.5 mono font-bold w-12" style={{ color: l.side === 'Dr' ? 'var(--success)' : 'var(--danger)' }}>
+                      {l.side}
+                    </td>
+                    <td className="px-3 py-1.5" style={{ color: 'var(--ink)' }}>
+                      {l.desc}
+                    </td>
+                    <td className="px-3 py-1.5 text-right">
+                      {mapping ? (
+                        <span className="mono text-[11px]" style={{ color: 'var(--ink-2)' }}>
+                          <span style={{ color: 'var(--brand)' }}>{mapping.account_code}</span> {mapping.account_name}
+                        </span>
+                      ) : l.key ? (
+                        <span className="text-[11px] italic" style={{ color: 'var(--warning)' }}>
+                          not mapped
+                        </span>
+                      ) : (
+                        <span className="text-[11px] italic" style={{ color: 'var(--ink-3)' }}>
+                          contextual
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
       {activity.notes && (
         <div className="text-[11px] mt-2" style={{ color: 'var(--ink-3)' }}>

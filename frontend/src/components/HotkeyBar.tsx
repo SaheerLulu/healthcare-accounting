@@ -3,6 +3,10 @@ import { useHotkeyContext, type HotkeyHint } from '../contexts/HotkeyContext'
 /**
  * Tally-style fixed hotkey hint bar at the bottom of the viewport.
  * Shows page-scoped hints when registered, otherwise the global default.
+ *
+ * Hidden below `md`: it advertises F-keys and Ctrl chords, which a touch
+ * device has no way to press, so on phones it would cost a row of screen
+ * to say nothing. The shortcuts themselves stay bound.
  */
 export function HotkeyBar() {
   const { pageHints, globalHints } = useHotkeyContext()
@@ -10,7 +14,7 @@ export function HotkeyBar() {
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 z-30 border-t flex items-center gap-1.5 px-4 h-9 overflow-x-auto"
+      className="hidden md:flex fixed bottom-0 left-0 right-0 z-30 border-t items-center gap-1.5 px-4 h-9 overflow-x-auto"
       style={{
         background: 'var(--surface-0)',
         borderColor: 'var(--line)',

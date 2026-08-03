@@ -17,7 +17,7 @@ import { SkeletonTable } from '../../components/ui/Skeletons'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 
 function DialogFooter({ children }: { children: React.ReactNode }) {
-  return <div className="flex gap-2 justify-end mt-4">{children}</div>
+  return <div className="flex flex-wrap gap-2 justify-end mt-4">{children}</div>
 }
 
 export default function LoansPage() {
@@ -40,7 +40,7 @@ export default function LoansPage() {
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Loans & EMI</h1>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Loans & EMI</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
             <span className="mono">{loans.length}</span> loans
           </p>
@@ -105,7 +105,7 @@ function NewLoanDialog({ open, onClose, onSaved }: any) {
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent>
         <DialogHeader><DialogTitle>New Loan</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Input placeholder="Loan No." value={data.loan_no} onChange={(e) => setData({ ...data, loan_no: e.target.value })} />
           <Input placeholder="Lender name" value={data.lender_name} onChange={(e) => setData({ ...data, lender_name: e.target.value })} />
           <select className="border rounded px-2 py-1.5" value={data.loan_type}
@@ -168,9 +168,11 @@ function ScheduleDialog({ loan, onClose, onPaid }: any) {
     <Dialog open={!!loan} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent className="max-w-3xl">
         <DialogHeader><DialogTitle>EMI Schedule — {loan.loan_no}</DialogTitle></DialogHeader>
-        <div className="max-h-[60vh] overflow-auto">
           {loading ? <SkeletonTable /> : (
-            <Table>
+            // The height cap belongs on <Table>'s own scroll rail: nesting it
+            // in a second scroll container would leave the sticky header stuck
+            // to the inner rail, which never scrolls vertically.
+            <Table wrapperClassName="max-h-[60vh] overflow-y-auto">
               <Thead><Tr><Th>#</Th><Th>Due</Th><Th className="text-right">Principal</Th>
                 <Th className="text-right">Interest</Th><Th className="text-right">Total</Th>
                 <Th className="text-right">Balance</Th><Th>Status</Th><Th></Th></Tr></Thead>
@@ -201,7 +203,6 @@ function ScheduleDialog({ loan, onClose, onPaid }: any) {
               </Tbody>
             </Table>
           )}
-        </div>
         <DialogFooter><Button variant="secondary" onClick={onClose}>Close</Button></DialogFooter>
       </DialogContent>
     </Dialog>

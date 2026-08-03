@@ -43,7 +43,7 @@ export default function LoginPage() {
     <div className="min-h-screen grid login-grid" style={{ gridTemplateColumns: '1.1fr 1fr' }}>
       {/* Left — dark product panel */}
       <div
-        className="relative flex flex-col p-10 md:p-14 overflow-hidden"
+        className="relative flex flex-col p-6 sm:p-10 md:p-14 overflow-hidden"
         style={{ background: '#0c1e25', color: 'white' }}
       >
         {/* faint grid */}
@@ -90,7 +90,9 @@ export default function LoginPage() {
           </div>
           <div
             style={{
-              fontSize: 36,
+              // Caps at today's 36px from ~655px wide up, so the desktop
+              // panel is untouched; shrinks only on phones.
+              fontSize: 'clamp(1.5rem, 5.5vw, 36px)',
               fontWeight: 600,
               lineHeight: 1.15,
               letterSpacing: '-0.02em',
@@ -114,8 +116,10 @@ export default function LoginPage() {
         </div>
 
         {/* Trust strip */}
+        {/* Below sm the three columns become rows — swapping display leaves the
+            inline template inert there and byte-identical from sm up. */}
         <div
-          className="relative grid gap-8 md:gap-12"
+          className="relative flex flex-col sm:grid gap-4 sm:gap-8 md:gap-12"
           style={{
             gridTemplateColumns: 'repeat(3, minmax(0,auto))',
             paddingTop: 18,
@@ -159,7 +163,7 @@ export default function LoginPage() {
       </div>
 
       {/* Right — form on warm paper */}
-      <div className="flex flex-col justify-center p-10 md:p-14" style={{ background: '#FAFAF8' }}>
+      <div className="flex flex-col justify-center p-6 sm:p-10 md:p-14" style={{ background: '#FAFAF8' }}>
         <form onSubmit={handleSubmit} className="w-full max-w-sm mx-auto">
           <div
             style={{
@@ -276,7 +280,7 @@ export default function LoginPage() {
               type="button"
               onClick={() => setShowPassword((s) => !s)}
               aria-label={showPassword ? 'Hide password' : 'Show password'}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded hover:bg-gray-100"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 sm:p-1.5 rounded hover:bg-gray-100"
               style={{ color: 'var(--ink-2)' }}
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
