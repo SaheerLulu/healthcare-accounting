@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
@@ -98,6 +99,13 @@ class LocationFilterMixin:
             if isinstance(data, dict) and data.get('location_id') not in (None, ''):
                 assert_location_access(request, data.get('location_id'))
 
+    # Whether a row with no location is company-wide (visible from every store)
+    # or simply unscoped. Off by default: for transactional models an untagged
+    # row is a data defect, and surfacing it in every store would leak. Master
+    # records that are genuinely shared — a single company bank account — opt
+    # in, and must have a write guard that agrees.
+    location_allows_null = False
+
     def get_queryset(self):
         qs = super().get_queryset()
         location = get_active_location(self.request)
@@ -106,6 +114,11 @@ class LocationFilterMixin:
             return qs
 
         if location:
+            if self.location_allows_null:
+                return qs.filter(
+                    Q(**{self.location_field: location.id})
+                    | Q(**{f'{self.location_field}__isnull': True})
+                )
             return qs.filter(**{self.location_field: location.id})
 
         return qs.none()

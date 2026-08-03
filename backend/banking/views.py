@@ -2,6 +2,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.response import Response
 
@@ -43,6 +44,11 @@ class BankAccountViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     queryset = BankAccount.objects.select_related('chart_account')
     serializer_class = BankAccountSerializer
     pagination_class = None
+    # An account with no location is the company's, usable from any store —
+    # which is what _assert_bank_account_access above already assumes. Without
+    # this the read filter excluded exactly the accounts that guard permits,
+    # leaving the cheque form's bank picker empty in every store.
+    location_allows_null = True
 
     def get_queryset(self):
         qs = super().get_queryset()  # LocationFilterMixin scopes by location_id
@@ -110,8 +116,11 @@ class BankAccountViewSet(LocationFilterMixin, viewsets.ModelViewSet):
 class BankTransactionViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     queryset = BankTransaction.objects.select_related('bank_account', 'matched_journal_entry')
     serializer_class = BankTransactionSerializer
-    # No own location_id — scope through the owning bank account's store.
+    # No own location_id — scope through the owning bank account's store, and
+    # follow that account's shared-when-null rule so a company-wide account's
+    # statement lines don't disappear once a store is selected.
     location_field = 'bank_account__location_id'
+    location_allows_null = True
 
     def get_queryset(self):
         qs = super().get_queryset()  # LocationFilterMixin scopes via bank_account__location_id
@@ -281,8 +290,19 @@ class ChequeViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         location = get_active_location(self.request)
         extra = {}
-        if location and 'location_id' not in serializer.validated_data:
-            extra['location_id'] = location.id
+        if serializer.validated_data.get('location_id') is None:
+            # In All-Stores mode fall back to the bank account's own store. A
+            # cheque saved with no location vanished from the register as soon
+            # as any store was selected, which read as "the save failed".
+            account = serializer.validated_data.get('bank_account')
+            resolved = location.id if location else getattr(account, 'location_id', None)
+            if resolved is None:
+                raise ValidationError({'location_id': [
+                    'Select a store before recording a cheque — this bank '
+                    'account is shared across stores, so there is nothing to '
+                    'file the cheque under.',
+                ]})
+            extra['location_id'] = resolved
         instance = serializer.save(
             created_by=self.request.user if self.request.user.is_authenticated else None,
             **extra,
@@ -369,7 +389,21 @@ class PettyCashFloatViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     pagination_class = None
 
     def perform_create(self, serializer):
-        instance = serializer.save()
+        # This used to be a bare save(), skipping the mixin, so the float was
+        # never stamped with the active store and the create failed outright
+        # unless the page happened to post location_id itself.
+        extra = {}
+        if serializer.validated_data.get('location_id') is None:
+            location = get_active_location(self.request)
+            if location is None:
+                raise ValidationError({'location_id': [
+                    'Select a store before creating a petty-cash float — each '
+                    'store keeps its own.',
+                ]})
+            extra['location_id'] = location.id
+            if not serializer.validated_data.get('location_name'):
+                extra['location_name'] = getattr(location, 'name', '') or ''
+        instance = serializer.save(**extra)
         log_action('CREATE', 'PettyCashFloat', instance.pk, str(instance), request=self.request)
 
     @action(detail=True, methods=['post'], url_path='spend')

@@ -172,6 +172,9 @@ class PettyCashFloatSerializer(serializers.ModelSerializer):
                   'current_balance', 'needs_replenishment',
                   'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
+        # The viewset stamps the active store when the client omits it, the
+        # same way every other location-scoped create in the app works.
+        extra_kwargs = {'location_id': {'required': False}}
 
     def validate_chart_account(self, chart):
         # The float's GL is a Cash leaf — same contract as BankAccount's

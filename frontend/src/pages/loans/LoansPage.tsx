@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Plus, Eye, CheckCircle2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  listLoans, createLoan, getLoanSchedule, disburseLoan, payEMI,
-  type Loan, type EMIRow,
+  listLoans, createLoan, getLoanSchedule, disburseLoan, payEMI, getChartOfAccounts,
+  type Loan, type EMIRow, type Account,
+  apiErrorMessage,
 } from '../../lib/api'
 import { useLocation } from '../../contexts/LocationContext'
 import { formatCurrency, formatDate } from '../../lib/utils'
@@ -15,6 +16,7 @@ import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog'
+import { AccountPicker } from '../journals/AccountPicker'
 
 function DialogFooter({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-wrap gap-2 justify-end mt-4">{children}</div>
@@ -31,7 +33,7 @@ export default function LoansPage() {
     try {
       const r = await listLoans()
       setLoans(Array.isArray(r) ? r : (r.results ?? []))
-    } catch { toast.error('Failed to load loans') }
+    } catch (e) { toast.error(apiErrorMessage(e, 'Failed to load loans')) }
     finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
@@ -73,7 +75,7 @@ export default function LoansPage() {
                     {!l.disbursement_entry_no && (
                       <Button size="sm" variant="ghost" onClick={async () => {
                         try { await disburseLoan(l.id); toast.success('Disbursement posted'); load() }
-                        catch { toast.error('Failed') }
+                        catch (e) { toast.error(apiErrorMessage(e, 'Could not record the EMI payment.')) }
                       }}>Disburse</Button>
                     )}
                     <Button size="sm" variant="ghost" onClick={() => setScheduleFor(l)}><Eye size={14} /> Schedule</Button>
@@ -93,14 +95,28 @@ export default function LoansPage() {
 
 function NewLoanDialog({ open, onClose, onSaved }: any) {
   const { activeLocationId } = useLocation()
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [data, setData] = useState({
     loan_no: '', lender_name: '', loan_type: 'term',
     principal_amount: '', interest_rate_pct: '',
     tenure_months: 36,
     start_date: new Date().toISOString().slice(0, 10),
     emi_day: 5,
-    liability_account: '', interest_expense_account: '',
+    liability_account: null as number | null,
+    interest_expense_account: null as number | null,
   })
+
+  useEffect(() => {
+    if (open) getChartOfAccounts().then(setAccounts).catch(() => {/* pickers degrade */})
+  }, [open])
+
+  // The two GLs used to be free-text "account ID" boxes. Everyone typed the
+  // account code they know (2011) rather than its database id, and the server
+  // answered 'Invalid pk "2011"' -- which the page then showed as "Failed".
+  const liabilityAccounts = useMemo(
+    () => accounts.filter((a) => a.account_type === 'LIABILITY'), [accounts])
+  const expenseAccounts = useMemo(
+    () => accounts.filter((a) => a.account_type === 'EXPENSE'), [accounts])
   return (
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent>
@@ -126,25 +142,33 @@ function NewLoanDialog({ open, onClose, onSaved }: any) {
                  onChange={(e) => setData({ ...data, tenure_months: parseInt(e.target.value || '0') })} />
           <Input type="number" min={1} max={28} placeholder="EMI day (1-28)" value={data.emi_day}
                  onChange={(e) => setData({ ...data, emi_day: parseInt(e.target.value || '5') })} />
-          <Input placeholder="Loan-liability GL account ID" value={data.liability_account}
-                 onChange={(e) => setData({ ...data, liability_account: e.target.value })} />
-          <Input placeholder="Interest-expense GL account ID" value={data.interest_expense_account}
-                 onChange={(e) => setData({ ...data, interest_expense_account: e.target.value })} />
+          <label className="block text-xs font-medium text-slate-600">
+            Loan-liability GL
+            <AccountPicker accounts={liabilityAccounts} value={data.liability_account}
+              onChange={(id) => setData({ ...data, liability_account: id })} />
+          </label>
+          <label className="block text-xs font-medium text-slate-600">
+            Interest-expense GL
+            <AccountPicker accounts={expenseAccounts} value={data.interest_expense_account}
+              onChange={(id) => setData({ ...data, interest_expense_account: id })} />
+          </label>
         </div>
         <DialogFooter>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button onClick={async () => {
+            if (!data.liability_account || !data.interest_expense_account) {
+              toast.error('Pick both the loan-liability and interest-expense GL accounts.')
+              return
+            }
             try {
               await createLoan({
                 ...data,
                 loan_type: data.loan_type as any,
-                liability_account: parseInt(data.liability_account) as any,
-                interest_expense_account: parseInt(data.interest_expense_account) as any,
                 location_id: (activeLocationId ?? null) as any,
               } as any)
               toast.success('Loan created with amortization schedule')
               onSaved(); onClose()
-            } catch (e: any) { toast.error(e?.response?.data?.detail || 'Failed') }
+            } catch (e: any) { toast.error(apiErrorMessage(e, 'Could not save the loan.')) }
           }}>Save</Button>
         </DialogFooter>
       </DialogContent>
@@ -160,7 +184,7 @@ function ScheduleDialog({ loan, onClose, onPaid }: any) {
     setLoading(true)
     getLoanSchedule(loan.id)
       .then((r) => setEmis(r.rows))
-      .catch(() => toast.error('Failed to load schedule'))
+      .catch((e) => toast.error(apiErrorMessage(e, 'Failed to load schedule')))
       .finally(() => setLoading(false))
   }, [loan])
   if (!loan) return null
@@ -194,7 +218,7 @@ function ScheduleDialog({ loan, onClose, onPaid }: any) {
                             toast.success(`EMI ${e.installment_no} paid`)
                             const r = await getLoanSchedule(loan.id)
                             setEmis(r.rows); onPaid()
-                          } catch { toast.error('Failed') }
+                          } catch (e) { toast.error(apiErrorMessage(e, 'Could not record the EMI payment.')) }
                         }}><CheckCircle2 size={14} /> Pay</Button>
                       )}
                     </Td>
