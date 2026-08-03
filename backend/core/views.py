@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from django.db import models
 from django.db.models import Sum, Q, Case, When, Value, DecimalField
-from django.db.models.functions import ExtractMonth, ExtractYear
+from django.db.models.functions import ExtractMonth, ExtractYear, Lower
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import RetrieveUpdateAPIView
@@ -563,14 +563,17 @@ def _scope_party_qs(request, qs):
 class SuppliersListView(APIView):
     def get(self, request):
         qs = _scope_party_qs(request, SupplierRO.objects.all())
-        suppliers = qs.order_by('company_name').values('id', 'company_name')
+        # Lower() rather than a bare column so the picker reads the same on
+        # Postgres and SQLite: a C/POSIX-collation database orders every
+        # capital ahead of every lowercase name.
+        suppliers = qs.order_by(Lower('company_name'), 'id').values('id', 'company_name')
         return Response([{'id': s['id'], 'name': s['company_name']} for s in suppliers])
 
 
 class CustomersListView(APIView):
     def get(self, request):
         qs = _scope_party_qs(request, CustomerRO.objects.all())
-        customers = qs.order_by('customer_name').values('id', 'customer_name')
+        customers = qs.order_by(Lower('customer_name'), 'id').values('id', 'customer_name')
         return Response([{'id': c['id'], 'name': c['customer_name']} for c in customers])
 
 

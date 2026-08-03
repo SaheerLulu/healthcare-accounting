@@ -4,6 +4,8 @@ from decimal import Decimal
 from datetime import date, timedelta
 from django.http import HttpResponse
 from django.db.models import Sum, Q, F
+
+from core.sorting import ci_key
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.pagination import PageNumberPagination
@@ -1474,7 +1476,11 @@ class StockMovementSummaryView(APIView):
                 'closing_qty': closing,
             })
 
-        rows.sort(key=lambda x: x['product_name'])
+        codes = {pid: (getattr(p, 'default_code', '') or '')
+                 for pid, p in products.items()}
+        rows.sort(key=lambda x: ci_key(x['product_name'],
+                                       codes.get(x['product_id'], ''),
+                                       x['product_id']))
 
         return Response({
             'start_date': start_date,
@@ -1583,7 +1589,11 @@ class StockValuationView(APIView):
                 'value': str(value),
             })
 
-        rows.sort(key=lambda x: x['product_name'])
+        codes = {pid: (getattr(p, 'default_code', '') or '')
+                 for pid, p in products.items()}
+        rows.sort(key=lambda x: ci_key(x['product_name'],
+                                       codes.get(x['product_id'], ''),
+                                       x['product_id']))
 
         return Response({
             'as_of_date': as_of_date,
@@ -2029,7 +2039,8 @@ class AgedStockReportView(APIView):
                 'days_since_last_sale': days_since_last_sale,
                 'last_out_date': str(row['last_out_date']) if row['last_out_date'] else None,
             })
-        rows.sort(key=lambda r: -(r['days_since_last_sale'] or 99999))
+        rows.sort(key=lambda r: (-(r['days_since_last_sale'] or 99999),)
+                  + ci_key(r.get('product_name', ''), r.get('product_id', 0)))
         return Response({
             'as_of': str(as_of), 'slow_days_threshold': slow_days,
             'rows': rows, 'count': len(rows),
