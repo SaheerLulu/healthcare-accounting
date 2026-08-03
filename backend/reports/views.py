@@ -985,7 +985,16 @@ def _build_book_response(account_subtype, request):
     account_code = request.query_params.get('account_code')
     location = require_location_or_all_access(request)
 
-    accounts = ChartOfAccount.objects.filter(account_subtype=account_subtype).order_by('account_code')
+    accounts = ChartOfAccount.objects.filter(account_subtype=account_subtype)
+    if location:
+        # Under per-store chart-of-accounts cloning each store has its own
+        # '1110-<STORE>' leaf, all of them subtype Cash. Without this the book
+        # listed every branch's ledger as a card of its own — and named it.
+        # Untagged rows stay: the seeded template still carries the history of
+        # any store that was never cloned.
+        accounts = accounts.filter(
+            Q(location_id=location.id) | Q(location_id__isnull=True))
+    accounts = accounts.order_by('account_code')
     if account_code:
         accounts = accounts.filter(account_code=account_code)
 

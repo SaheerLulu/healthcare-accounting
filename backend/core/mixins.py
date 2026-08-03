@@ -52,13 +52,27 @@ def assert_location_access(request, location_id):
 def require_location_or_all_access(request):
     """Resolve the active location for report-style endpoints.
 
-    Returns the active location, or None for admin/all-access users (the
-    consolidated all-stores view). Regular users without a valid
-    X-Location-Id header are refused instead of silently falling through
-    to unscoped, all-location data.
+    Returns the active location, or None for the consolidated all-stores view.
+    Regular users without a valid X-Location-Id header are refused instead of
+    silently falling through to unscoped, all-location data.
+
+    "All stores" means *no header*. A header that was sent but did not resolve
+    — a stale store id left in localStorage, say — is an error, not a licence
+    to widen the query: an all-access user would otherwise get every branch's
+    money reported under the one store name the switcher is still showing.
     """
     location = get_active_location(request)
-    if location is None and not _has_all_location_access(request.user):
+    if location is not None:
+        return location
+
+    requested = (request.META.get('HTTP_X_LOCATION_ID') or '').strip()
+    if requested and requested.lower() != 'all':
+        raise PermissionDenied(
+            'The selected store could not be resolved. Re-pick it from the '
+            'store switcher.'
+        )
+
+    if not _has_all_location_access(request.user):
         raise PermissionDenied(
             'A valid X-Location-Id header for a location you are assigned '
             'to is required.'
