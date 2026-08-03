@@ -18,11 +18,15 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Response interceptor: on 401 redirect to login
+// Response interceptor: on 401 redirect to login.
+// The sign-in request is exempt: there, a 401 IS the answer to "are these
+// credentials valid?", and redirecting would reload the page and destroy the
+// error before the login form could show it.
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const isSignInRequest = error.config?.url === '/auth/token/'
+    if (error.response?.status === 401 && !isSignInRequest) {
       localStorage.removeItem('token')
       localStorage.removeItem('refresh_token')
       window.location.href = '/login'

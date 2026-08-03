@@ -1,16 +1,27 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, AlertCircle, CornerDownLeft } from 'lucide-react'
+import { toast } from 'sonner'
 import { login } from '../lib/api'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const passwordRef = useRef<HTMLInputElement>(null)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [rememberMe, setRememberMe] = useState(true)
+  const [failedAttempts, setFailedAttempts] = useState(0)
+
+  // Focus has to wait for the render that re-enables the field: the catch
+  // block runs while isSubmitting is still true, and a disabled input cannot
+  // take focus. Keying the effect on the attempt count also re-focuses on a
+  // second consecutive failure, where the message itself does not change.
+  useEffect(() => {
+    if (failedAttempts > 0) passwordRef.current?.focus()
+  }, [failedAttempts])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -32,8 +43,25 @@ export default function LoginPage() {
       localStorage.setItem('refresh_token', res.refresh)
       navigate('/dashboard')
     } catch (err: any) {
-      const detail = err?.response?.data?.detail
-      setError(detail || 'Invalid credentials. Please try again.')
+      // A rejected sign-in answers 401 (SimpleJWT) or 400 (malformed payload).
+      // Anything else — 5xx, or no response at all when the server is down —
+      // is our problem, not the user's, and must not read as a bad password.
+      const status = err?.response?.status
+      const isRejectedCredential = status === 400 || status === 401
+      const message = isRejectedCredential
+        ? 'Incorrect username or password. Please try again.'
+        : 'Something went wrong. Please try again later.'
+
+      // Deliberately the same message for a wrong username as for a wrong
+      // password: naming the field that failed turns the form into an oracle
+      // for which accounts exist.
+      setError(message)
+      toast.error(message)
+
+      // Drop the password so a retry starts clean, but keep the username —
+      // it is usually right, and retyping it is pure friction.
+      setPassword('')
+      setFailedAttempts((n) => n + 1)
     } finally {
       setIsSubmitting(false)
     }
@@ -180,6 +208,10 @@ export default function LoginPage() {
           </div>
 
           {error && (
+            // No role="alert" here on purpose: the toast carries the same
+            // sentence in its own live region, and two live regions would
+            // announce the failure twice. This banner is the visual copy that
+            // persists after the toast dismisses.
             <div
               className="mb-5 px-3 py-2.5 rounded-md flex items-start gap-2.5"
               style={{
@@ -261,6 +293,7 @@ export default function LoginPage() {
           <div className="relative">
             <input
               id="password"
+              ref={passwordRef}
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
