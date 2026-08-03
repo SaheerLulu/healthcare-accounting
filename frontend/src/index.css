@@ -332,10 +332,15 @@ button:active:not(:disabled), [role="button"]:active:not(:disabled) {
   padding-bottom: calc(var(--safe-bottom-pad, 0.75rem) + env(safe-area-inset-bottom, 0px));
 }
 
-/* Print: unroll every scroll rail so nothing is cropped on paper. */
+/* Print: unroll every scroll rail so nothing is cropped on paper. The Day Book
+   grid also drops its min-width — 54rem is wider than A4 portrait, and on paper
+   there is no sideways scroll to reach the rest of the row. */
 @media print {
   .table-scroll {
     overflow: visible !important;
+  }
+  .daybook-grid {
+    min-width: 0 !important;
   }
 }
 
