@@ -30,6 +30,11 @@ import {
  *
  * Showing only the latter (the old behaviour) made the page understate
  * payables vs the dashboard, which aggregates the GL. Both are surfaced here.
+ *
+ * The two are disjoint, which is what makes the grand total below a valid sum:
+ * a bills-app bill also posts a party-tagged Payable credit, so the GL report
+ * deliberately excludes bills-app entries (see _bills_app_ledger_keys in
+ * reports/views.py) rather than reporting the same debt on both tabs.
  */
 export default function PayablesPage() {
   const [bills, setBills] = useState<Bill[]>([])

@@ -717,16 +717,56 @@ class ReceivablesAgingView(APIView):
         })
 
 
+def _bills_app_ledger_keys(location):
+    """JE ids and line ids that belong to the bills app rather than to the
+    GL-only ledger.
+
+    A bills.Bill posts its own party-tagged Payable credit, so without this the
+    same debt is listed both here and in the Payables page's Vendor Bills tab —
+    and that page adds the two tabs together.
+    """
+    from bills.models import Bill, BillPayment
+    from journals.models import BillReference
+
+    bills = Bill.objects.filter(journal_entry__isnull=False)
+    payments = BillPayment.objects.filter(journal_entry__isnull=False)
+    if location:
+        bills = bills.filter(journal_entry__location_id=location.id)
+        payments = payments.filter(journal_entry__location_id=location.id)
+
+    entry_ids = set(bills.values_list('journal_entry_id', flat=True))
+    entry_ids |= set(payments.values_list('journal_entry_id', flat=True))
+
+    # A voucher payment allocated to a bills-app bill settles that bill, not a
+    # GL invoice. Its ref_no is the bill_no, so it never matches an entry_no
+    # below — leaving it in would make it look like on-account money.
+    line_ids = set(BillReference.objects.filter(
+        kind='AGAINST', bill_id__isnull=False,
+    ).values_list('line_id', flat=True))
+    return entry_ids, line_ids
+
+
 def _open_party_invoices(request, *, party_type):
     """Per-invoice open-balance rows for a party type, with bill-wise netting.
 
     An "invoice" is one posted JE line that CREATES the obligation — for a
     customer the Debit on Receivable, for a supplier the Credit on Payable.
-    Each invoice's remaining balance = its original amount minus prior bill-wise
-    AGAINST allocations (journals.BillReference) keyed by the invoice's entry_no
-    and scoped to the SAME party-type + subtype + location (so a receipt against
-    a customer invoice never nets a supplier invoice, and a Store-A allocation
-    never touches a Store-B invoice — see [[party-ledger-per-party]]).
+
+    An invoice is reduced by two things:
+
+      1. Bill-wise AGAINST allocations (journals.BillReference) that name its
+         entry_no, scoped to the SAME party-type + subtype + location (so a
+         receipt against a customer invoice never nets a supplier invoice, and
+         a Store-A allocation never touches a Store-B invoice — see
+         [[party-ledger-per-party]]).
+      2. Whatever else has come off that party's ledger without naming an
+         invoice — a plain part-payment, a debit note, TDS — applied
+         oldest-first. This is the common case, not the exception: none of the
+         four payment paths in the app writes an allocation, so before this
+         existed a part-paid invoice sat at its gross amount for ever.
+
+    FIFO matches how _age_open_invoices buckets the same money, so this report
+    and the aging report agree on what is still open.
 
     These live as JEs (synced PurchaseOrder / SALE), not the bills app — that's
     why getBills shows nothing for synced suppliers. Tag-based, NOT code-based.
@@ -734,10 +774,12 @@ def _open_party_invoices(request, *, party_type):
     from journals.models import BillReference
     as_of_date = request.query_params.get('date', date.today().isoformat())
     search = request.query_params.get('search', '').strip().lower()
+    party_id_param = request.query_params.get('party_id')
     location = require_location_or_all_access(request)
     is_supplier = party_type == 'Supplier'
     subtype = 'Payable' if is_supplier else 'Receivable'
     net_key = 'supplier_outstanding' if is_supplier else 'customer_outstanding'
+    ZERO = Decimal('0')
 
     base = JournalEntryLine.objects.filter(
         entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of_date,
@@ -745,15 +787,36 @@ def _open_party_invoices(request, *, party_type):
     )
     if location:
         base = base.filter(entry__location_id=location.id)
+    if party_id_param:
+        try:
+            base = base.filter(party_id=int(party_id_param))
+        except (TypeError, ValueError):
+            pass
+
+    # Excluded before the split below, so an obligation and its settlements
+    # drop out together and the oldest-first pool stays balanced.
+    if is_supplier:
+        bill_entry_ids, bill_line_ids = _bills_app_ledger_keys(location)
+        if bill_entry_ids:
+            base = base.exclude(entry_id__in=bill_entry_ids)
+        if bill_line_ids:
+            base = base.exclude(id__in=bill_line_ids)
 
     invoice_lines = base.filter(credit__gt=0) if is_supplier else base.filter(debit__gt=0)
     invoice_lines = list(invoice_lines.select_related('entry').order_by('entry__date', 'entry__id'))
 
-    # Per-party net outstanding across ALL their lines — gate so fully-settled
-    # parties (incl. those paid via plain unallocated debits) fall out.
-    per_party = defaultdict(lambda: Decimal('0'))
-    for l in base:
-        per_party[l.party_id] += (l.credit - l.debit) if is_supplier else (l.debit - l.credit)
+    # One pass for both per-party totals: what was invoiced, and what has since
+    # come off it by any means. Their difference gates fully-settled parties out.
+    invoiced = defaultdict(lambda: Decimal('0'))
+    settled = defaultdict(lambda: Decimal('0'))
+    for l in base.values('party_id', 'debit', 'credit'):
+        pid = l['party_id']
+        if is_supplier:
+            invoiced[pid] += l['credit']
+            settled[pid] += l['debit']
+        else:
+            invoiced[pid] += l['debit']
+            settled[pid] += l['credit']
 
     # Prior AGAINST allocations per invoice (one query), scoped to party+subtype+location.
     entry_nos = [l.entry.entry_no for l in invoice_lines]
@@ -769,6 +832,14 @@ def _open_party_invoices(request, *, party_type):
         for r in ref_qs.values('ref_no').annotate(s=Sum('amount')):
             allocated[r['ref_no']] = r['s'] or Decimal('0')
 
+    # Settlement that named its invoice is already accounted for above; the
+    # remainder is on-account and gets applied oldest-first in the row loop.
+    explicit = defaultdict(lambda: Decimal('0'))
+    for l in invoice_lines:
+        explicit[l.party_id] += allocated.get(l.entry.entry_no, ZERO)
+    pool = {pid: max(amount - explicit.get(pid, ZERO), ZERO)
+            for pid, amount in settled.items()}
+
     if is_supplier:
         from inventory_reader.models import SupplierRO as RO
         name_field = 'company_name'
@@ -783,17 +854,23 @@ def _open_party_invoices(request, *, party_type):
         pass
 
     rows = []
+    cents = Decimal('0.01')
     for l in invoice_lines:
         pid = l.party_id
-        net = per_party.get(pid, Decimal('0'))
+        net = invoiced.get(pid, ZERO) - settled.get(pid, ZERO)
         if net <= 0:
             continue
-        cents = Decimal('0.01')
         original = (l.credit if is_supplier else l.debit).quantize(cents)
-        paid = allocated.get(l.entry.entry_no, Decimal('0')).quantize(cents)
-        outstanding = (original - paid).quantize(cents)
+        outstanding = (original - allocated.get(l.entry.entry_no, ZERO)).quantize(cents)
+        # Draw down the party's on-account settlement, oldest invoice first.
+        available = pool.get(pid, ZERO)
+        if outstanding > 0 and available > 0:
+            applied = min(available, outstanding)
+            outstanding = (outstanding - applied).quantize(cents)
+            pool[pid] = available - applied
         if outstanding <= 0:
             continue
+        paid = (original - outstanding).quantize(cents)
         name = names.get(pid, f'{party_type} #{pid}')
         if search and search not in name.lower() \
                 and search not in (l.entry.entry_no or '').lower():
