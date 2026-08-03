@@ -47,20 +47,20 @@ export default function BankBookPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Bank Book</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Bank Book</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>All transactions through bank accounts</p>
       </div>
 
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 sm:gap-3 mb-5 flex-wrap">
+        <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-none">
           <label className="text-xs text-slate-500 font-medium">From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-auto px-2.5 py-1.5" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto px-2.5 py-1.5" />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-none">
           <label className="text-xs text-slate-500 font-medium">To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-auto px-2.5 py-1.5" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto px-2.5 py-1.5" />
         </div>
-        <Button onClick={load} disabled={loading}>
+        <Button onClick={load} disabled={loading} className="w-full sm:w-auto">
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>
@@ -73,15 +73,15 @@ export default function BankBookPage() {
       {accounts.map((acc) => (
         <Card key={acc.account_code} className="overflow-hidden mb-4">
           <div
-            className="flex items-center justify-between px-4 py-3 bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors"
+            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-3 bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors"
             onClick={() => toggleAccount(acc.account_code)}
           >
-            <div className="flex items-center gap-2">
-              {expandedAccounts.has(acc.account_code) ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              <span className="font-mono text-xs text-slate-500">{acc.account_code}</span>
-              <span className="font-semibold text-sm text-slate-900">{acc.account_name}</span>
+            <div className="flex items-center gap-2 min-w-0">
+              {expandedAccounts.has(acc.account_code) ? <ChevronDown size={16} className="flex-shrink-0" /> : <ChevronRight size={16} className="flex-shrink-0" />}
+              <span className="font-mono text-xs text-slate-500 flex-shrink-0">{acc.account_code}</span>
+              <span className="font-semibold text-sm text-slate-900 truncate">{acc.account_name}</span>
             </div>
-            <span className={cn("font-mono text-sm font-medium", Number(acc.closing_balance) >= 0 ? 'text-slate-900' : 'text-red-600')}>
+            <span className={cn("font-mono text-sm font-medium whitespace-nowrap", Number(acc.closing_balance) >= 0 ? 'text-slate-900' : 'text-red-600')}>
               Closing: {formatCurrency(acc.closing_balance)}
             </span>
           </div>
@@ -134,7 +134,7 @@ export default function BankBookPage() {
       ))}
 
       {fetched && accounts.length > 0 && (
-        <div className="flex justify-end gap-6 mt-2 text-sm text-slate-600">
+        <div className="flex flex-wrap justify-end gap-x-6 gap-y-1 mt-2 text-sm text-slate-600">
           <span>Total Debits: <span className="font-mono font-semibold">{formatCurrency(summary.total_debit)}</span></span>
           <span>Total Credits: <span className="font-mono font-semibold">{formatCurrency(summary.total_credit)}</span></span>
         </div>

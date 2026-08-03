@@ -6,6 +6,8 @@ import {
   listPettyCashFloats, createPettyCashFloat,
   spendPettyCash, replenishPettyCash, getPettyCashTxns, getChartOfAccounts,
   type PettyCashFloat, type PettyCashTxn, type Account,
+  apiErrorMessage,
+  apiFieldErrors,
 } from '../../lib/api'
 import { useLocation } from '../../contexts/LocationContext'
 import { formatCurrency, formatDate } from '../../lib/utils'
@@ -23,10 +25,12 @@ function DialogFooter({ children }: { children: React.ReactNode }) {
   return <div className="flex gap-2 justify-end mt-4">{children}</div>
 }
 
-function Field({ label, required, hint, children }: {
+function Field({ label, required, hint, error, children }: {
   label: string
   required?: boolean
   hint?: string
+  /** Server-side rejection for this field, from apiFieldErrors(). */
+  error?: string
   children: React.ReactNode
 }) {
   return (
@@ -35,7 +39,9 @@ function Field({ label, required, hint, children }: {
         {label} {required && <span className="text-rose-500">*</span>}
       </span>
       {children}
-      {hint && <span className="block text-xs text-slate-400 mt-1">{hint}</span>}
+      {error
+        ? <span className="block text-xs mt-1" style={{ color: 'var(--danger)' }}>{error}</span>
+        : hint && <span className="block text-xs text-slate-400 mt-1">{hint}</span>}
     </label>
   )
 }
@@ -54,7 +60,7 @@ export default function PettyCashPage() {
     try {
       const r = await listPettyCashFloats()
       setFloats(Array.isArray(r) ? r : (r.results ?? []))
-    } catch { toast.error('Failed to load floats') }
+    } catch (e) { toast.error(apiErrorMessage(e, 'Failed to load floats')) }
     finally { setLoading(false) }
   }
   useEffect(() => { load() }, [])
@@ -64,7 +70,7 @@ export default function PettyCashPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Petty Cash</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -140,7 +146,8 @@ function NewFloatDialog({ open, glAccounts, onClose, onSaved }: {
   }
   const [data, setData] = useState(blank)
   const [saving, setSaving] = useState(false)
-  useEffect(() => { if (open) setData(blank) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [open])
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  useEffect(() => { if (open) { setData(blank); setFieldErrors({}) } /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [open])
 
   // The float's GL must be a Cash leaf — same rule the backend enforces.
   const cashAccounts = useMemo(
@@ -148,9 +155,13 @@ function NewFloatDialog({ open, glAccounts, onClose, onSaved }: {
     [glAccounts])
 
   async function submit() {
-    if (!activeLocationId) { toast.error('Select a store first'); return }
+    if (!activeLocationId) {
+      toast.error('Pick a store from the switcher at the top — each store keeps its own float.')
+      return
+    }
     if (!data.chart_account) { toast.error('Pick the cash GL account'); return }
     setSaving(true)
+    setFieldErrors({})
     try {
       await createPettyCashFloat({
         chart_account: data.chart_account,
@@ -162,12 +173,8 @@ function NewFloatDialog({ open, glAccounts, onClose, onSaved }: {
       })
       toast.success('Float created'); onSaved(); onClose()
     } catch (err) {
-      const e = err as { response?: { data?: Record<string, unknown> } }
-      const d = e.response?.data
-      toast.error(d
-        ? Object.entries(d).map(([k, v]) =>
-            `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`).join(' • ')
-        : 'Failed to create float')
+      setFieldErrors(apiFieldErrors(err))
+      toast.error(apiErrorMessage(err, 'Failed to create float.'))
     } finally { setSaving(false) }
   }
 
@@ -179,21 +186,22 @@ function NewFloatDialog({ open, glAccounts, onClose, onSaved }: {
           Float store: <strong>{activeLocation?.name || 'Select a store from the switcher first'}</strong>
         </p>
         <div className="space-y-3">
-          <Field label="Cash GL Account" required hint="A Cash-subtype leaf — typically 1110 Cash in Hand or a sub-account">
+          <Field label="Cash GL Account" required error={fieldErrors.chart_account}
+            hint="A Cash-subtype leaf — typically 1110 Cash in Hand or a sub-account">
             <AccountPicker accounts={cashAccounts} value={data.chart_account}
               onChange={(id) => setData({ ...data, chart_account: id })} />
           </Field>
-          <Field label="Custodian">
+          <Field label="Custodian" error={fieldErrors.custodian_name}>
             <Input placeholder="Who holds the cash box" value={data.custodian_name}
               onChange={(e) => setData({ ...data, custodian_name: e.target.value })} />
           </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Imprest Amount" required>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Imprest Amount" required error={fieldErrors.imprest_amount}>
               <Input type="number" step="0.01" min="0.01" value={data.imprest_amount}
                 className="text-right font-mono"
                 onChange={(e) => setData({ ...data, imprest_amount: e.target.value })} />
             </Field>
-            <Field label="Replenish Threshold" required>
+            <Field label="Replenish Threshold" required error={fieldErrors.replenishment_threshold}>
               <Input type="number" step="0.01" min="0" value={data.replenishment_threshold}
                 className="text-right font-mono"
                 onChange={(e) => setData({ ...data, replenishment_threshold: e.target.value })} />
@@ -246,7 +254,7 @@ function SpendDialog({ floatObj, glAccounts, onClose, onDone }: {
       toast.success('Spend recorded — journal entry posted'); onDone(); onClose()
     } catch (err) {
       const e = err as { response?: { data?: { detail?: string } } }
-      toast.error(e.response?.data?.detail || 'Failed to record spend')
+      toast.error(apiErrorMessage(e, 'Failed to record spend.'))
     } finally { setSaving(false) }
   }
 
@@ -255,7 +263,7 @@ function SpendDialog({ floatObj, glAccounts, onClose, onDone }: {
       <DialogContent>
         <DialogHeader><DialogTitle>Petty Cash Spend — {floatObj.location_name || `#${floatObj.location_id}`}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Date" required>
               <Input type="date" value={data.date} onChange={(e) => setData({ ...data, date: e.target.value })} />
             </Field>
@@ -311,7 +319,7 @@ function ReplenishDialog({ floatObj, onClose, onDone }: {
       toast.success('Replenished — contra entry posted'); onDone(); onClose()
     } catch (err) {
       const e = err as { response?: { data?: { detail?: string } } }
-      toast.error(e.response?.data?.detail || 'Failed to replenish')
+      toast.error(apiErrorMessage(e, 'Failed to replenish.'))
     } finally { setSaving(false) }
   }
 
@@ -320,7 +328,7 @@ function ReplenishDialog({ floatObj, onClose, onDone }: {
       <DialogContent>
         <DialogHeader><DialogTitle>Replenish Petty Cash — {floatObj.location_name || `#${floatObj.location_id}`}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Date" required>
               <Input type="date" value={data.date} onChange={(e) => setData({ ...data, date: e.target.value })} />
             </Field>
@@ -360,7 +368,7 @@ function TxnsDialog({ floatObj, onClose }: {
     if (!floatObj) return
     getPettyCashTxns(floatObj.id)
       .then((r) => { setTxns(r.rows); setBalance(r.current_balance) })
-      .catch(() => toast.error('Failed to load transactions'))
+      .catch((e) => toast.error(apiErrorMessage(e, 'Failed to load transactions')))
   }, [floatObj])
   if (!floatObj) return null
   return (
@@ -371,8 +379,10 @@ function TxnsDialog({ floatObj, onClose }: {
             {floatObj.location_name || `#${floatObj.location_id}`} — current {formatCurrency(balance)}
           </DialogTitle>
         </DialogHeader>
-        <div className="max-h-[60vh] overflow-auto">
-          <Table>
+        {/* The height cap belongs on <Table>'s own scroll rail: nesting it in
+            a second scroll container would leave the sticky header stuck to
+            the inner rail, which never scrolls vertically. */}
+        <Table wrapperClassName="max-h-[60vh] overflow-y-auto">
             <Thead><Tr><Th>Date</Th><Th>Kind</Th><Th>Description</Th>
               <Th className="text-right px-3">Amount</Th><Th>Voucher</Th><Th>Entry</Th></Tr></Thead>
             <Tbody>
@@ -394,8 +404,7 @@ function TxnsDialog({ floatObj, onClose }: {
                 </Tr>
               ))}
             </Tbody>
-          </Table>
-        </div>
+        </Table>
         <DialogFooter><Button variant="secondary" onClick={onClose}>Close</Button></DialogFooter>
       </DialogContent>
     </Dialog>

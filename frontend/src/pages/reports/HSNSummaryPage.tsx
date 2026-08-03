@@ -56,13 +56,13 @@ export default function HSNSummaryPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>HSN Summary</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>HSN Summary</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>
           GSTR-1 Table 12 — HSN-wise outward supplies, B2B / B2C tabs, net of credit notes
         </p>
       </div>
 
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-3 mb-5 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500 font-medium">Period</label>
           <PeriodPicker value={period} onChange={setPeriod} />
@@ -84,7 +84,7 @@ export default function HSNSummaryPage() {
         <button
           onClick={exportCsv}
           disabled={rows.length === 0}
-          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border disabled:opacity-40"
+          className="sm:ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border disabled:opacity-40"
           style={{ borderColor: 'var(--line)', color: 'var(--ink-2)' }}
         >
           <Download size={13} /> Export CSV (Table 12)

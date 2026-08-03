@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Plus, CheckCircle2, AlertTriangle, Ban, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   listCheques, createCheque, clearCheque, bounceCheque, cancelCheque,
   getBankAccounts, getSuppliers, getCustomers,
   type Cheque, type BankAccount, type Party,
+  apiErrorMessage,
 } from '../../lib/api'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
@@ -65,7 +67,7 @@ export default function ChequesPage() {
       if (tab === 'pdc') params.pdc = 'true'
       const r = await listCheques(params)
       setCheques(Array.isArray(r) ? r : (r.results ?? []))
-    } catch { toast.error('Failed to load cheques') }
+    } catch (e) { toast.error(apiErrorMessage(e, 'Failed to load cheques')) }
     finally { setLoading(false) }
   }
   useEffect(() => { load() }, [tab])
@@ -73,12 +75,12 @@ export default function ChequesPage() {
   useEffect(() => {
     Promise.all([getBankAccounts(), getSuppliers(), getCustomers()])
       .then(([b, s, c]) => { setBankAccounts(b); setSuppliers(s); setCustomers(c) })
-      .catch(() => {/* pickers degrade to empty lists */})
+      .catch((e) => toast.error(apiErrorMessage(e, 'Could not load bank accounts and parties.')))
   }, [])
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Cheques</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -134,7 +136,7 @@ export default function ChequesPage() {
                               try { await clearCheque(c.id); toast.success('Cleared'); load() }
                               catch (err) {
                                 const e = err as { response?: { data?: { detail?: string } } }
-                                toast.error(e.response?.data?.detail || 'Failed to clear')
+                                toast.error(apiErrorMessage(e, 'Failed to clear the cheque.'))
                               }
                             }}><CheckCircle2 size={14} /> Clear</Button>
                             <Button size="sm" variant="ghost" onClick={() => setBounceFor(c)}>
@@ -212,12 +214,7 @@ function NewChequeDialog({ open, bankAccounts, suppliers, customers, onClose, on
       })
       toast.success('Cheque saved'); onSaved(); onClose()
     } catch (err) {
-      const e = err as { response?: { data?: Record<string, unknown> } }
-      const d = e.response?.data
-      toast.error(d
-        ? Object.entries(d).map(([k, v]) =>
-            `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`).join(' • ')
-        : 'Failed to save cheque')
+      toast.error(apiErrorMessage(err, 'Failed to save cheque.'))
     } finally { setSaving(false) }
   }
 
@@ -226,7 +223,7 @@ function NewChequeDialog({ open, bankAccounts, suppliers, customers, onClose, on
       <DialogContent>
         <DialogHeader><DialogTitle>New Cheque</DialogTitle></DialogHeader>
         <form onSubmit={submit}>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Cheque No." required>
               <Input value={data.cheque_no} required
                 onChange={(e) => setData({ ...data, cheque_no: e.target.value })} />
@@ -239,13 +236,24 @@ function NewChequeDialog({ open, bankAccounts, suppliers, customers, onClose, on
               </select>
             </Field>
             <Field label={data.kind === 'issued' ? 'Drawn on (our bank)' : 'Deposit to (our bank)'} required>
-              <select className={selectClass} value={data.bank_account} required
-                onChange={(e) => setData({ ...data, bank_account: e.target.value })}>
-                <option value="">— Select —</option>
-                {bankAccounts.filter((b) => b.account_type !== 'cash').map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}{b.bank_name ? ` · ${b.bank_name}` : ''}</option>
-                ))}
-              </select>
+              {bankAccounts.filter((b) => b.account_type !== 'cash').length === 0 ? (
+                // An empty picker leaves nothing to select, and the save then
+                // fails on a required field with no way for the user to fix it.
+                <div className="text-xs rounded px-2.5 py-2" style={{
+                  background: 'rgba(199,122,17,0.08)', color: 'var(--warning)',
+                }}>
+                  No bank account is available for this store.{' '}
+                  <Link to="/banking" className="underline">Add one in Banking</Link>.
+                </div>
+              ) : (
+                <select className={selectClass} value={data.bank_account} required
+                  onChange={(e) => setData({ ...data, bank_account: e.target.value })}>
+                  <option value="">— Select —</option>
+                  {bankAccounts.filter((b) => b.account_type !== 'cash').map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}{b.bank_name ? ` · ${b.bank_name}` : ''}</option>
+                  ))}
+                </select>
+              )}
             </Field>
             <Field label="Cheque Date" required>
               <Input type="date" value={data.cheque_date} required
@@ -325,7 +333,7 @@ function BounceDialog({ cheque, onClose, onDone }: {
             try { await bounceCheque(cheque.id, reason, bankCharge || undefined); toast.success('Marked as bounced'); onDone(); onClose() }
             catch (err) {
               const e = err as { response?: { data?: { detail?: string } } }
-              toast.error(e.response?.data?.detail || 'Failed')
+              toast.error(apiErrorMessage(e, 'Action failed.'))
             } finally { setSaving(false) }
           }}>{saving && <Loader2 size={14} className="animate-spin" />} Mark Bounced</Button>
         </DialogFooter>
@@ -362,7 +370,7 @@ function CancelDialog({ cheque, onClose, onDone }: {
             try { await cancelCheque(cheque.id, reason); toast.success('Cheque cancelled'); onDone(); onClose() }
             catch (err) {
               const e = err as { response?: { data?: { detail?: string } } }
-              toast.error(e.response?.data?.detail || 'Failed')
+              toast.error(apiErrorMessage(e, 'Action failed.'))
             } finally { setSaving(false) }
           }}>{saving && <Loader2 size={14} className="animate-spin" />} Cancel Cheque</Button>
         </DialogFooter>

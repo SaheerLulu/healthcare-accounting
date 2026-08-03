@@ -50,7 +50,7 @@ function PurchaseRow({ row, isOpen, lines, loadingLines, onToggle }: {
             ) : lines.length === 0 ? (
               <div className="text-center py-4 text-xs" style={{ color: 'var(--ink-3)' }}>No line items</div>
             ) : (
-              <div className="px-10 py-3 overflow-x-auto">
+              <div className="table-scroll px-4 py-3 sm:px-10">
                 <table className="w-full text-xs">
                   <thead>
                     <tr style={{ color: 'var(--ink-2)' }}>
@@ -181,14 +181,14 @@ export default function PurchaseRegisterPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Purchase Register</h1>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Purchase Register</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
             Supplier-invoice-wise inventory purchases with GST split. Inter-store transfers excluded.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={() => exportAs('csv')} disabled={rows.length === 0}>
             <Download size={15} />CSV
           </Button>
@@ -199,16 +199,16 @@ export default function PurchaseRegisterPage() {
       </div>
 
       {/* Period filters */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-auto" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-auto" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button onClick={load} disabled={loading}>
+        <Button className="w-full sm:w-auto" onClick={load} disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>

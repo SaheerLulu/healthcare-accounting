@@ -123,9 +123,9 @@ export default function JournalsPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4 flex-wrap">
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             Journal Entries
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -151,31 +151,31 @@ export default function JournalsPage() {
 
       {/* Filters row */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[220px] max-w-md">
+        <div className="relative flex-1 min-w-0 sm:min-w-[220px] max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
           <Input value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Search voucher no. or narration…" className="pl-9" />
         </div>
         <select value={voucherType} onChange={(e) => setVoucherType(e.target.value)}
-          className="h-9 px-3 text-sm rounded-md outline-none"
+          className="h-9 px-3 text-sm rounded-md outline-none w-full sm:w-auto"
           style={{ border: '1px solid var(--line)', background: 'var(--surface-0)', color: 'var(--ink)' }}
         >
           <option value="all">All voucher types</option>
           {VOUCHER_TYPES.map((v) => <option key={v} value={v}>{voucherLabel(v)}</option>)}
         </select>
         <div
-          className="flex items-center gap-1 px-2 h-9 rounded-md"
+          className="flex items-center gap-1 px-2 h-9 rounded-md w-full sm:w-auto"
           style={{ border: '1px solid var(--line)', background: 'var(--surface-0)' }}
         >
-          <Calendar size={13} style={{ color: 'var(--ink-3)' }} />
+          <Calendar size={13} className="flex-shrink-0" style={{ color: 'var(--ink-3)' }} />
           <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="text-xs bg-transparent focus:outline-none" style={{ color: 'var(--ink)' }} />
-          <span style={{ color: 'var(--ink-3)' }} className="text-xs">→</span>
+            className="text-xs bg-transparent focus:outline-none flex-1 min-w-0 sm:flex-initial" style={{ color: 'var(--ink)' }} />
+          <span style={{ color: 'var(--ink-3)' }} className="text-xs flex-shrink-0">→</span>
           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="text-xs bg-transparent focus:outline-none" style={{ color: 'var(--ink)' }} />
+            className="text-xs bg-transparent focus:outline-none flex-1 min-w-0 sm:flex-initial" style={{ color: 'var(--ink)' }} />
         </div>
         {hasActiveFilters && (
-          <button onClick={clearFilters} className="text-xs hover:underline inline-flex items-center gap-1" style={{ color: 'var(--ink-2)' }}>
+          <button onClick={clearFilters} className="text-xs hover:underline inline-flex items-center gap-1 h-9 sm:h-auto" style={{ color: 'var(--ink-2)' }}>
             <X size={12} /> Clear
           </button>
         )}
@@ -268,7 +268,7 @@ function NewVoucherDropdown() {
       </Button>
       {open && (
         <div
-          className="absolute right-0 top-full mt-1 rounded-lg shadow-lg py-1 min-w-[260px] z-50 dropdown-animate"
+          className="absolute right-0 top-full mt-1 rounded-lg shadow-lg py-1 min-w-[260px] max-w-[calc(100vw-1.5rem)] z-50 dropdown-animate"
           style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
         >
           <div
@@ -316,7 +316,7 @@ function StatusPill({ label, count, active, dotColor, onClick }: {
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-2 px-3 h-8 rounded-full text-xs font-medium transition-colors"
+      className="inline-flex items-center gap-2 px-3 h-9 sm:h-8 rounded-full text-xs font-medium transition-colors"
       style={{
         background: active ? 'rgba(15,157,154,0.10)' : 'var(--surface-0)',
         border: `1px solid ${active ? 'rgba(15,157,154,0.35)' : 'var(--line)'}`,
@@ -379,7 +379,7 @@ function PaymentSheet({ suppliers, onSuccess }: { suppliers: Party[]; onSuccess:
         <form onSubmit={submit} className="flex flex-col h-full">
           <SheetHeader><SheetTitle>Quick Payment</SheetTitle></SheetHeader>
           <SheetBody>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Date" required>
                 <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
               </Field>
@@ -473,7 +473,7 @@ function ReceiptSheet({ customers, onSuccess }: { customers: Party[]; onSuccess:
         <form onSubmit={submit} className="flex flex-col h-full">
           <SheetHeader><SheetTitle>Quick Receipt</SheetTitle></SheetHeader>
           <SheetBody>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Date" required>
                 <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
               </Field>
@@ -566,7 +566,7 @@ function ContraSheet({ onSuccess }: { onSuccess: () => void }) {
         <form onSubmit={submit} className="flex flex-col h-full">
           <SheetHeader><SheetTitle>Bank ↔ Cash Transfer</SheetTitle></SheetHeader>
           <SheetBody>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Date" required>
                 <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
               </Field>

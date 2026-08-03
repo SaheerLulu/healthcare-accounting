@@ -76,11 +76,11 @@ export default function GSTR2BPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>GSTR-2B</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>GSTR-2B</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Auto-populated purchase register — {entries.length} invoices</p>
       </div>
 
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-3 mb-5 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500 font-medium">Period</label>
           <PeriodPicker value={period} onChange={setPeriod} />
@@ -120,7 +120,7 @@ export default function GSTR2BPage() {
                 <Td className="text-right font-mono text-slate-500">{formatCurrency(e.total_gst)}</Td>
                 <Td className="text-center">
                   <button onClick={() => handleToggleITC(e.id)}
-                    className={cn('p-1 rounded', e.itc_eligible ? 'text-emerald-600 bg-emerald-50' : 'text-red-500 bg-red-50')}>
+                    className={cn('p-2.5 sm:p-1 rounded', e.itc_eligible ? 'text-emerald-600 bg-emerald-50' : 'text-red-500 bg-red-50')}>
                     {e.itc_eligible ? <Check size={14} /> : <X size={14} />}
                   </button>
                 </Td>

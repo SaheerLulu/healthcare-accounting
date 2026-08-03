@@ -105,15 +105,17 @@ export default function DashboardPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-end justify-between flex-wrap gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between flex-wrap">
         <div>
           <h1 style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Dashboard</h1>
           <p className="mt-0.5" style={{ color: 'var(--ink-2)' }}>
             {isDefaultFY ? 'Current financial year — at a glance' : `${dateFrom} → ${dateTo}`}
           </p>
         </div>
-        <div className="flex items-end gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end flex-wrap">
+          {/* Stacks label-over-field on phones — two native date pickers
+              side by side do not survive a 320px viewport. */}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>From</label>
             <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-auto" />
             <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>To</label>
@@ -221,8 +223,8 @@ export default function DashboardPage() {
 
       {/* Chart + attention queue */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 rounded-xl p-5 card-shadow">
-          <div className="flex items-baseline justify-between mb-4">
+        <div className="lg:col-span-2 rounded-xl p-4 sm:p-5 card-shadow">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 mb-4">
             <h3 style={{ color: 'var(--ink)' }}>Monthly revenue vs expenses</h3>
             <span
               className="mono uppercase"
@@ -234,37 +236,41 @@ export default function DashboardPage() {
           {!hasMonthly ? (
             <EmptyState variant="no-data" title="No monthly data yet" description="Post journal entries to see monthly revenue and expense trends." />
           ) : (
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={monthly} margin={{ top: 0, right: 0, left: 10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
-                <XAxis
-                  dataKey="month"
-                  tick={{ fontSize: 11, fill: 'var(--ink-2)' }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fontSize: 11, fill: 'var(--ink-2)' }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
-                />
-                <Tooltip
-                  formatter={(value: number) => [formatCurrency(value), '']}
-                  contentStyle={{
-                    borderRadius: '8px',
-                    border: '1px solid var(--line)',
-                    background: 'var(--surface-0)',
-                    fontSize: '12px',
-                    color: 'var(--ink)',
-                  }}
-                  cursor={{ fill: 'rgba(15,157,154,0.06)' }}
-                />
-                <Legend wrapperStyle={{ fontSize: '12px', color: 'var(--ink-2)' }} />
-                <Bar dataKey="revenue" name="Revenue" fill="var(--brand)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="expenses" name="Expenses" fill="var(--danger)" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="h-[220px] sm:h-[300px]">
+              {/* ResponsiveContainer only tracks width, so the chart height comes
+                  from this wrapper — 300px crowds out everything else on a phone. */}
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthly} margin={{ top: 0, right: 0, left: 10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+                  <XAxis
+                    dataKey="month"
+                    tick={{ fontSize: 11, fill: 'var(--ink-2)' }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: 'var(--ink-2)' }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
+                  />
+                  <Tooltip
+                    formatter={(value: number) => [formatCurrency(value), '']}
+                    contentStyle={{
+                      borderRadius: '8px',
+                      border: '1px solid var(--line)',
+                      background: 'var(--surface-0)',
+                      fontSize: '12px',
+                      color: 'var(--ink)',
+                    }}
+                    cursor={{ fill: 'rgba(15,157,154,0.06)' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: '12px', color: 'var(--ink-2)' }} />
+                  <Bar dataKey="revenue" name="Revenue" fill="var(--brand)" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="expenses" name="Expenses" fill="var(--danger)" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </div>
 
@@ -304,8 +310,8 @@ function AttentionQueue({
   if (gstPayable > 0) items.push({ key: 'gst', label: 'GST payable this period', amount: gstPayable, tone: 'danger', onClick: onViewGst })
 
   return (
-    <div className="rounded-xl p-5 card-shadow">
-      <div className="flex items-baseline justify-between mb-4">
+    <div className="rounded-xl p-4 sm:p-5 card-shadow">
+      <div className="flex items-baseline justify-between gap-2 mb-4">
         <h3 style={{ color: 'var(--ink)' }}>Attention queue</h3>
         <AlertTriangle className="w-4 h-4" style={{ color: 'var(--warning)' }} />
       </div>
@@ -324,10 +330,10 @@ function AttentionQueue({
               <li key={it.key}>
                 <button
                   onClick={it.onClick}
-                  className="w-full attention-row rounded-md p-3 flex items-center justify-between hover:translate-x-0.5 transition-transform"
+                  className="w-full attention-row rounded-md p-3 flex items-center justify-between gap-3 hover:translate-x-0.5 transition-transform"
                   style={{ background: 'var(--surface-1)' }}
                 >
-                  <div className="text-left">
+                  <div className="text-left min-w-0">
                     <div className="text-xs mono uppercase" style={{ color: toneFg, letterSpacing: '0.08em' }}>
                       {it.tone === 'danger' ? 'Tax' : it.tone === 'warning' ? 'AR' : 'AP'}
                     </div>
@@ -335,7 +341,7 @@ function AttentionQueue({
                       {it.label}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-shrink-0">
                     <span className="mono kpi-value text-sm font-semibold" style={{ color: 'var(--ink)' }}>
                       {formatCurrency(it.amount)}
                     </span>

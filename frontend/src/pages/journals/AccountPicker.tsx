@@ -219,6 +219,9 @@ export function AccountPicker({
           className="fixed z-[60] rounded-lg border shadow-lg overflow-hidden dropdown-animate"
           style={{
             top: pos.top, left: pos.left, width: pos.width,
+            // The panel mirrors the trigger width; on a phone that trigger can
+            // live inside a horizontally scrolled grid, so cap it at the viewport.
+            maxWidth: 'calc(100vw - 1.5rem)',
             backgroundColor: 'var(--surface-0)',
             borderColor: 'var(--line)',
           }}
@@ -278,16 +281,16 @@ export function AccountPicker({
           </div>
           {onAltC && (
             <div
-              className="border-t px-3 py-1.5 flex items-center justify-between"
+              className="border-t px-3 py-1.5 flex items-center justify-between gap-2"
               style={{ borderColor: 'var(--line)', backgroundColor: 'var(--surface-1)' }}
             >
-              <span className="text-[11px]" style={{ color: 'var(--ink-3)' }}>
+              <span className="text-[11px] min-w-0" style={{ color: 'var(--ink-3)' }}>
                 Press <kbd className="mono font-semibold" style={{ color: 'var(--brand)' }}>Alt+C</kbd> to create a new ledger
               </span>
               <button
                 type="button"
                 onMouseDown={(e) => { e.preventDefault(); setOpen(false); onAltC() }}
-                className="inline-flex items-center gap-1 text-[11px] font-medium hover:underline"
+                className="inline-flex items-center gap-1 text-[11px] font-medium hover:underline flex-shrink-0"
                 style={{ color: 'var(--brand)' }}
               >
                 <Plus size={11} /> New

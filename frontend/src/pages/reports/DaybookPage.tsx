@@ -24,19 +24,47 @@ const VOUCHER_BG: Record<string, string> = {
   DEBIT_NOTE: 'bg-amber-50 text-amber-700',
 }
 
+/**
+ * The one definition of the Day Book's columns.
+ *
+ * The header strip, every entry row and the expanded drill-down all lay out
+ * on these tracks. They used to be three separate flex rows whose widths were
+ * typed out by hand and had drifted apart, which is what threw 'via' and
+ * 'narration' out of line with their headings.
+ *
+ * Tracks: 1 chevron · 2 entry no · 3 type · 4 via · 5 narration · 6 debit · 7 credit.
+ * The drill-down spans 2/6 for the account and lands its amounts on 6 and 7 —
+ * update those spans and DAYBOOK_MIN_W below if a column is ever added.
+ */
+const DAYBOOK_GRID = {
+  display: 'grid',
+  gridTemplateColumns: '1rem 9rem 6.75rem 6.75rem minmax(10rem, 1fr) 7rem 7rem',
+  columnGap: '0.75rem',
+  alignItems: 'center',
+} as const
+
+// Sum of the fixed tracks + gaps + px-4 + narration's 10rem floor. Below this
+// the narration track would win the fight for space and every column right of
+// it would slide, so the day block scrolls sideways instead.
+const DAYBOOK_MIN_W = '54rem'
+
 function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
   const navigate = useNavigate()
   const [expanded, setExpanded] = useState(false)
   const totalDebit = entry.lines.reduce((s, l) => s + Number(l.debit), 0)
   const totalCredit = entry.lines.reduce((s, l) => s + Number(l.credit), 0)
   // Cash/Bank involvement, surfaced at the header level so money-movement
-  // entries are spottable without expanding the lines.
-  const modes = [...new Set(entry.lines.map((l) => l.account_subtype).filter((s) => s === 'Cash' || s === 'Bank'))] as string[]
+  // entries are spottable without expanding the lines. Fixed order, so the
+  // two badges don't swap places between rows with journal-line order.
+  const modes = (['Cash', 'Bank'] as const).filter((m) =>
+    entry.lines.some((l) => l.account_subtype === m)
+  )
 
   return (
     <div className="border-b last:border-b-0" style={{ borderColor: 'var(--line)' }}>
       <div
-        className="flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors"
+        className="px-4 py-2.5 cursor-pointer transition-colors"
+        style={DAYBOOK_GRID}
         onClick={() => setExpanded((e) => !e)}
         onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
@@ -45,23 +73,29 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); navigate(`/journals/${entry.id}`) }}
-          className="text-sm font-mono w-36 text-left hover:underline"
+          className="text-sm font-mono text-left truncate hover:underline"
           style={{ color: 'var(--brand)' }}
         >
           {entry.entry_no}
         </button>
-        <span
-          className={cn('inline-flex px-2 py-0.5 rounded text-xs font-medium', VOUCHER_BG[entry.voucher_type] || 'bg-slate-100 text-slate-600')}
-          style={{ minWidth: 92, textAlign: 'center' }}
-        >
-          {voucherLabel(entry.voucher_type)}
+        <span>
+          <span
+            className={cn(
+              'inline-flex px-2 py-0.5 rounded text-xs font-medium whitespace-nowrap',
+              VOUCHER_BG[entry.voucher_type] || 'bg-slate-100 text-slate-600'
+            )}
+          >
+            {voucherLabel(entry.voucher_type)}
+          </span>
         </span>
-        <span className="inline-flex gap-1" style={{ minWidth: 48 }}>
+        {/* Holds its track open when there are no badges, so an entry that
+            touches neither cash nor bank doesn't shift narration left. */}
+        <span className="inline-flex gap-1">
           {modes.map((m) => (
             <span
               key={m}
               className={cn(
-                'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium',
+                'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium whitespace-nowrap',
                 m === 'Bank' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'
               )}
               title={`Entry touches a ${m.toLowerCase()} account`}
@@ -71,47 +105,54 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
             </span>
           ))}
         </span>
-        <span className="text-sm flex-1 truncate" style={{ color: 'var(--ink)' }}>{entry.narration || '—'}</span>
-        {entry.reference_type ? (
-          <span
-            className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-slate-100"
-            style={{ color: 'var(--ink-2)' }}
-            title="Pharmacy source document this entry was generated from"
-          >
-            {entry.reference_type}{entry.reference_id ? ` #${entry.reference_id}` : ''}
+        {/* The source-document chip rides inside the narration cell rather than
+            sitting beside it as an eighth, unheaded column — that stray item is
+            what used to move narration's right edge from row to row. min-w-0 is
+            load-bearing: a grid item's automatic minimum is its content, so
+            without it the narration refuses to shrink and pushes the amounts. */}
+        <span className="flex items-center gap-2 min-w-0">
+          <span className="text-sm truncate" title={entry.narration || undefined} style={{ color: 'var(--ink)' }}>
+            {entry.narration || '—'}
           </span>
-        ) : null}
-        <span className="text-sm font-mono w-28 text-right" style={{ color: 'var(--ink)' }}>{formatCurrency(totalDebit)}</span>
-        <span className="text-sm font-mono w-28 text-right" style={{ color: 'var(--ink)' }}>{formatCurrency(totalCredit)}</span>
+          {entry.reference_type ? (
+            <span
+              className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-slate-100 whitespace-nowrap flex-shrink-0"
+              style={{ color: 'var(--ink-2)' }}
+              title="Pharmacy source document this entry was generated from"
+            >
+              {entry.reference_type}{entry.reference_id ? ` #${entry.reference_id}` : ''}
+            </span>
+          ) : null}
+        </span>
+        <span className="text-sm font-mono text-right" style={{ color: 'var(--ink)' }}>{formatCurrency(totalDebit)}</span>
+        <span className="text-sm font-mono text-right" style={{ color: 'var(--ink)' }}>{formatCurrency(totalCredit)}</span>
       </div>
       {expanded && (
-        <div className="px-12 pb-3" style={{ background: 'var(--surface-1)' }}>
-          <table className="w-full text-xs">
-            <thead>
-              <tr style={{ color: 'var(--ink-2)' }}>
-                <th className="text-left pb-1 font-medium pt-1">Account</th>
-                <th className="text-right pb-1 font-medium">Debit</th>
-                <th className="text-right pb-1 font-medium">Credit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entry.lines.map((line, i) => (
-                <tr key={i}>
-                  <td className="py-0.5" style={{ color: 'var(--ink-2)' }}>
-                    <span className="font-mono mr-2" style={{ color: 'var(--ink-3)' }}>{line.account_code}</span>
-                    {line.account_name}
-                  </td>
-                  <td className="py-0.5 text-right font-mono" style={{ color: 'var(--ink)' }}>
-                    {Number(line.debit) > 0 ? formatCurrency(line.debit) : '—'}
-                  </td>
-                  <td className="py-0.5 text-right font-mono" style={{ color: 'var(--ink)' }}>
-                    {Number(line.credit) > 0 ? formatCurrency(line.credit) : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div className="flex justify-end mt-2">
+        <div className="pb-3" style={{ background: 'var(--surface-1)' }}>
+          {/* Laid out on the same tracks as the row above, so each line's debit
+              and credit sit directly under the entry's totals. It used to be a
+              separate auto-layout table indented by px-12, which lined up with
+              nothing — and carried its own scroll rail nested inside the day's. */}
+          <div className="px-4 pt-1.5 text-[11px]" style={{ ...DAYBOOK_GRID, color: 'var(--ink-3)' }}>
+            <span style={{ gridColumn: '2 / 6' }}>Account</span>
+            <span className="text-right">Debit</span>
+            <span className="text-right">Credit</span>
+          </div>
+          {entry.lines.map((line, i) => (
+            <div key={i} className="px-4 py-0.5 text-xs" style={DAYBOOK_GRID}>
+              <span className="min-w-0 truncate" style={{ gridColumn: '2 / 6', color: 'var(--ink-2)' }}>
+                <span className="font-mono mr-2" style={{ color: 'var(--ink-3)' }}>{line.account_code}</span>
+                {line.account_name}
+              </span>
+              <span className="text-right font-mono" style={{ color: 'var(--ink)' }}>
+                {Number(line.debit) > 0 ? formatCurrency(line.debit) : '—'}
+              </span>
+              <span className="text-right font-mono" style={{ color: 'var(--ink)' }}>
+                {Number(line.credit) > 0 ? formatCurrency(line.credit) : '—'}
+              </span>
+            </div>
+          ))}
+          <div className="flex justify-end mt-2 px-4">
             <button
               type="button"
               onClick={() => navigate(`/journals/${entry.id}`)}
@@ -217,34 +258,34 @@ export default function DaybookPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Day Book</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Day Book</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>
           Chronological register of all transactions · F2 jumps to date · 1–8 toggle voucher filters
         </p>
       </div>
 
       {/* Date range */}
-      <div className="flex items-center gap-3 mb-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>From</label>
           <Input
             ref={dateFromRef}
             type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
-            className="w-auto px-2.5 py-1.5"
+            className="w-full sm:w-auto px-2.5 py-1.5"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>To</label>
           <Input
             type="date"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
-            className="w-auto px-2.5 py-1.5"
+            className="w-full sm:w-auto px-2.5 py-1.5"
           />
         </div>
-        <Button variant="secondary" onClick={load} disabled={loading}>
+        <Button variant="secondary" className="w-full sm:w-auto" onClick={load} disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
           Refresh
         </Button>
@@ -296,7 +337,7 @@ export default function DaybookPage() {
       </div>
 
       {fetched && (
-        <div className="flex items-center gap-6 text-sm" style={{ color: 'var(--ink-2)' }}>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm" style={{ color: 'var(--ink-2)' }}>
           <span>Entries: <span className="font-semibold" style={{ color: 'var(--ink)' }}>{filteredSummary.total_entries}</span></span>
           <span>Total Debit: <span className="font-mono font-semibold" style={{ color: 'var(--ink)' }}>{formatCurrency(filteredSummary.total_debit)}</span></span>
           <span>Total Credit: <span className="font-mono font-semibold" style={{ color: 'var(--ink)' }}>{formatCurrency(filteredSummary.total_credit)}</span></span>
@@ -317,26 +358,37 @@ export default function DaybookPage() {
 
       {filteredDays.map((day) => (
         <Card key={day.date} className="overflow-hidden p-0">
-          <div className="px-4 py-2.5 border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>{formatDate(day.date)}</span>
-              <Badge variant="default" className="text-xs">
-                {day.entries.length} {day.entries.length === 1 ? 'entry' : 'entries'}
-              </Badge>
-            </div>
-            <div className="flex gap-3 mt-1.5 text-[11px]" style={{ color: 'var(--ink-3)' }}>
-              <span className="w-4" />
-              <span className="w-36">Entry No</span>
-              <span style={{ minWidth: 92 }}>Type</span>
-              <span style={{ minWidth: 48 }}>Via</span>
-              <span className="flex-1">Narration</span>
-              <span className="w-28 text-right">Debit</span>
-              <span className="w-28 text-right">Credit</span>
+          {/* The entry rows are a fixed column grid — debit/credit have to line
+              up down the day — so narrow viewports scroll it sideways rather
+              than crushing the columns. */}
+          <div className="table-scroll">
+            <div className="daybook-grid" style={{ minWidth: DAYBOOK_MIN_W }}>
+              <div className="px-4 py-2.5 border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>{formatDate(day.date)}</span>
+                  <Badge variant="default" className="text-xs">
+                    {day.entries.length} {day.entries.length === 1 ? 'entry' : 'entries'}
+                  </Badge>
+                </div>
+                {/* Same tracks as the rows below — the labels no longer carry
+                    their own widths, so they cannot drift out of step with the
+                    cells. pl-2 / pl-1.5 match the padding inside the pills, so
+                    each heading sits over its value's first letter. */}
+                <div className="mt-1.5 text-[11px]" style={{ ...DAYBOOK_GRID, color: 'var(--ink-3)' }}>
+                  <span />
+                  <span>Entry No</span>
+                  <span className="pl-2">Type</span>
+                  <span className="pl-1.5">Via</span>
+                  <span>Narration</span>
+                  <span className="text-right">Debit</span>
+                  <span className="text-right">Credit</span>
+                </div>
+              </div>
+              {day.entries.map((entry) => (
+                <DaybookEntryRow key={entry.id} entry={entry} />
+              ))}
             </div>
           </div>
-          {day.entries.map((entry) => (
-            <DaybookEntryRow key={entry.id} entry={entry} />
-          ))}
         </Card>
       ))}
     </div>

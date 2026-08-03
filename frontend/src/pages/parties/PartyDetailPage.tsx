@@ -68,7 +68,7 @@ export default function PartyDetailPage({ partyType }: { partyType: PartyType })
 
       <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{detail.name}</h1>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{detail.name}</h1>
           <div className="flex items-center gap-3 text-sm text-slate-500 mt-1 flex-wrap">
             {detail.gst_no && <span className="font-mono">{detail.gst_no}</span>}
             <Badge variant={detail.status?.toLowerCase() === 'active' ? 'success' : 'default'}>
@@ -263,12 +263,12 @@ function OpeningBalanceCard({
   }
 
   return (
-    <div className="flex items-start justify-between gap-4">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex items-start gap-3">
         <div className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center text-amber-700 flex-shrink-0">
           <Wallet className="w-4 h-4" />
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-xs text-slate-500 uppercase tracking-wider">Opening Balance</div>
           {hasOpening ? (
             <>
@@ -285,7 +285,7 @@ function OpeningBalanceCard({
           )}
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-shrink-0">
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
             <Button variant="secondary" size="sm">
@@ -306,7 +306,7 @@ function OpeningBalanceCard({
         {hasOpening && (
           <button
             onClick={handleClear}
-            className="text-slate-400 hover:text-red-600 transition-colors p-1.5"
+            className="text-slate-400 hover:text-red-600 transition-colors p-2.5 -m-1 sm:p-1.5 sm:m-0"
             title="Clear opening balance"
           >
             <Trash2 className="w-4 h-4" />
@@ -424,7 +424,7 @@ function TransactionsTab({ partyType, partyId }: { partyType: PartyType; partyId
   }, [partyType, partyId])
 
   return (
-    <Card className="overflow-x-auto overflow-hidden">
+    <Card className="overflow-hidden">
       <Table>
         <Thead>
           <Tr className="bg-slate-50">
@@ -495,7 +495,7 @@ function EmailsTab({ partyType, partyId, defaultEmail }: { partyType: PartyType;
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
         <p className="text-sm text-slate-500">Manually logged communications with this {partyType.toLowerCase()}.</p>
         <Dialog open={showDialog} onOpenChange={setShowDialog}>
           <DialogTrigger asChild>
@@ -544,7 +544,7 @@ function EmailsTab({ partyType, partyId, defaultEmail }: { partyType: PartyType;
                 </div>
                 <button
                   onClick={() => handleDelete(c.id)}
-                  className="text-slate-400 hover:text-red-600 transition-colors"
+                  className="text-slate-400 hover:text-red-600 transition-colors flex-shrink-0 p-2.5 -m-2.5 sm:p-0 sm:m-0"
                   title="Delete"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -597,7 +597,7 @@ function CommunicationForm({
 
   return (
     <form onSubmit={submit} className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <label className="block text-sm">
           <span className="text-slate-500">Channel</span>
           <select value={channel} onChange={(e) => setChannel(e.target.value as typeof channel)}
@@ -714,24 +714,25 @@ function StatementTab({ partyType, partyId, partyName }: { partyType: PartyType;
 
   return (
     <div>
-      <div className="flex items-end gap-3 mb-4 flex-wrap">
-        <label className="block text-sm">
+      <div className="flex items-end gap-2 sm:gap-3 mb-4 flex-wrap">
+        <label className="block text-sm w-full sm:w-auto sm:flex-initial">
           <span className="text-slate-500 block mb-1">From</span>
           <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)}
-            className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-sm" />
+            className="w-full sm:w-auto px-2.5 py-1.5 border border-slate-200 rounded-lg text-sm" />
         </label>
-        <label className="block text-sm">
+        <label className="block text-sm w-full sm:w-auto sm:flex-initial">
           <span className="text-slate-500 block mb-1">To</span>
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)}
-            className="px-2.5 py-1.5 border border-slate-200 rounded-lg text-sm" />
+            className="w-full sm:w-auto px-2.5 py-1.5 border border-slate-200 rounded-lg text-sm" />
         </label>
-        <Button variant="secondary" size="sm" onClick={downloadCsv} disabled={!data || data.rows.length === 0}>
+        <Button variant="secondary" size="sm" onClick={downloadCsv} disabled={!data || data.rows.length === 0}
+          className="w-full sm:w-auto">
           <Download className="w-4 h-4" /> Export CSV
         </Button>
       </div>
 
       {data && (
-        <div className="grid grid-cols-3 gap-3 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           <Card className="p-3">
             <div className="text-xs text-slate-500 uppercase tracking-wider">Opening</div>
             <div className="text-lg font-semibold font-mono mt-0.5">{formatCurrency(data.opening_balance)}</div>
@@ -753,7 +754,7 @@ function StatementTab({ partyType, partyId, partyName }: { partyType: PartyType;
         </div>
       )}
 
-      <Card className="overflow-x-auto overflow-hidden">
+      <Card className="overflow-hidden">
         <Table>
           <Thead>
             <Tr className="bg-slate-50">

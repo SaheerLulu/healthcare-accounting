@@ -23,7 +23,7 @@ export default function ClosingEntriesPage() {
   return (
     <div className="max-w-3xl mx-auto space-y-5">
       <div>
-        <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
           Closing & Period-End Entries
         </h1>
         <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -65,7 +65,7 @@ function InventoryAdjustmentForm() {
     itc_to_reverse: '0', narration: '',
   })
   return (
-    <Card className="p-5 space-y-3">
+    <Card className="p-4 sm:p-5 space-y-3">
       <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
         Books <strong>Dr Inventory Loss + ITC reversal / Cr Closing Stock + Input GST</strong> per CGST §17(5)(h).
       </p>
@@ -83,7 +83,7 @@ function InventoryAdjustmentForm() {
              onChange={(e) => setData({ ...data, itc_to_reverse: e.target.value })} />
       <Input placeholder="Narration" value={data.narration}
              onChange={(e) => setData({ ...data, narration: e.target.value })} />
-      <Button onClick={async () => {
+      <Button className="w-full sm:w-auto" onClick={async () => {
         if (!activeLocationId) { toast.error('Select a store first'); return }
         try {
           const r = await postInventoryAdjustment({
@@ -103,7 +103,7 @@ function DrugExpiryForm() {
     value_at_cost: '', itc_to_reverse: '0', narration: '',
   })
   return (
-    <Card className="p-5 space-y-3">
+    <Card className="p-4 sm:p-5 space-y-3">
       <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
         Pharmacy-specific: <strong>Dr Expiry Loss + ITC reversal / Cr Closing Stock + Input GST</strong>.
       </p>
@@ -115,7 +115,7 @@ function DrugExpiryForm() {
              onChange={(e) => setData({ ...data, itc_to_reverse: e.target.value })} />
       <Input placeholder="Narration" value={data.narration}
              onChange={(e) => setData({ ...data, narration: e.target.value })} />
-      <Button onClick={async () => {
+      <Button className="w-full sm:w-auto" onClick={async () => {
         if (!activeLocationId) { toast.error('Select a store first'); return }
         try {
           const r = await postDrugExpiry({ ...data, location_id: activeLocationId })
@@ -135,7 +135,7 @@ function StockTransferForm() {
   // "From" is always the active store; "To" is another of the user's stores.
   const destinations = locations.filter((l) => l.id !== activeLocationId)
   return (
-    <Card className="p-5 space-y-3">
+    <Card className="p-4 sm:p-5 space-y-3">
       <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
         Posts a pair of JVs using the <strong>Stock-In-Transit</strong> account that nets to zero across the pair.
       </p>
@@ -153,7 +153,7 @@ function StockTransferForm() {
              onChange={(e) => setData({ ...data, value: e.target.value })} />
       <Input placeholder="Narration" value={data.narration}
              onChange={(e) => setData({ ...data, narration: e.target.value })} />
-      <Button onClick={async () => {
+      <Button className="w-full sm:w-auto" onClick={async () => {
         if (!activeLocationId) { toast.error('Select the source store first'); return }
         if (!data.to_location_id) { toast.error('Select a destination store'); return }
         try {
@@ -177,7 +177,7 @@ function BadDebtsForm() {
   })
   const [result, setResult] = useState<any>(null)
   return (
-    <Card className="p-5 space-y-3">
+    <Card className="p-4 sm:p-5 space-y-3">
       <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
         Aging-based provision (0/25/50/100% buckets). Posts only the delta against existing provision balance.
       </p>
@@ -185,7 +185,7 @@ function BadDebtsForm() {
       <Input type="date" value={data.as_of} onChange={(e) => setData({ ...data, as_of: e.target.value })} />
       <Input placeholder="Narration" value={data.narration}
              onChange={(e) => setData({ ...data, narration: e.target.value })} />
-      <Button onClick={async () => {
+      <Button className="w-full sm:w-auto" onClick={async () => {
         try {
           const r = await postBadDebtsProvision({
             ...data, location_id: activeLocationId ?? undefined,

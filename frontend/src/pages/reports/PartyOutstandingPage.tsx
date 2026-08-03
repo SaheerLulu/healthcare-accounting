@@ -33,19 +33,19 @@ export default function PartyOutstandingPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Party Outstanding</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Party Outstanding</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Outstanding balances by {partyType.toLowerCase()} — Total: {formatCurrency(total)}</p>
       </div>
 
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-3 mb-5 flex-wrap">
         <select value={partyType} onChange={(e) => setPartyType(e.target.value)}
-          className="px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+          className="w-full sm:w-auto px-2.5 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
           <option value="Customer">Customers</option>
           <option value="Supplier">Suppliers</option>
         </select>
       </div>
 
-      <Card className="overflow-x-auto overflow-hidden">
+      <Card className="overflow-hidden">
         <Table>
           <Thead>
             <Tr className="bg-slate-50">

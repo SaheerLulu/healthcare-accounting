@@ -59,7 +59,7 @@ function CompanyInfoTab() {
   if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} /></div>
 
   return (
-    <Card className="p-6">
+    <Card className="p-4 sm:p-6">
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           {FIELD_CONFIG.map(({ key, label, placeholder, type }) => {
@@ -90,13 +90,13 @@ function CompanyInfoTab() {
           })}
         </div>
 
-        <div className="flex items-center justify-between pt-2 border-t" style={{ borderColor: 'var(--line)' }}>
+        <div className="flex flex-col gap-3 pt-2 border-t sm:flex-row sm:items-center sm:justify-between" style={{ borderColor: 'var(--line)' }}>
           {isDirty ? (
             <p className="text-xs font-medium" style={{ color: 'var(--warning)' }}>You have unsaved changes</p>
           ) : (
             <p className="text-xs" style={{ color: 'var(--ink-3)' }}>All changes saved</p>
           )}
-          <Button type="submit" disabled={saving || !isDirty} variant="primary">
+          <Button type="submit" disabled={saving || !isDirty} variant="primary" className="w-full sm:w-auto">
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             {saving ? 'Saving...' : 'Save Settings'}
           </Button>
@@ -355,7 +355,7 @@ function AccountMappingsTab() {
 
       {/* Filter bar */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-md">
+        <div className="relative w-full max-w-md sm:w-auto sm:flex-1">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2"
                  style={{ color: 'var(--ink-3)' }} />
           <Input
@@ -368,7 +368,7 @@ function AccountMappingsTab() {
         <select
           value={filter}
           onChange={(e) => setFilter(e.target.value as typeof filter)}
-          className="px-3 py-1.5 text-sm border rounded-lg"
+          className="w-full sm:w-auto px-3 py-1.5 text-sm border rounded-lg"
           style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
         >
           <option value="all">All ({rows.length})</option>
@@ -382,7 +382,7 @@ function AccountMappingsTab() {
           <select
             value={scope}
             onChange={(e) => setScope(e.target.value as typeof scope)}
-            className="px-3 py-1.5 text-sm border rounded-lg"
+            className="w-full sm:w-auto px-3 py-1.5 text-sm border rounded-lg"
             style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
             title="Edit per-store overrides, or the shared defaults that apply when no override exists"
           >
@@ -441,7 +441,9 @@ function AccountMappingsTab() {
                 </div>
               </button>
               {!collapsed && (
-                <Table>
+                // Four fixed-width columns plus a full-width account picker:
+                // hold the natural width below lg and let the rail scroll.
+                <Table className="min-w-[760px] lg:min-w-0">
                   <Thead>
                     <Tr style={{ background: 'var(--surface-0)' }}>
                       <Th className="w-[180px]">Key</Th>
@@ -526,7 +528,7 @@ function AccountMappingsTab() {
                               {row.has_override && editingLocationId != null && (
                                 <button
                                   onClick={() => clearOverride(row)}
-                                  className="p-1.5 rounded transition-colors hover:bg-[var(--color-hover-bg)]"
+                                  className="p-1.5 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 rounded transition-colors hover:bg-[var(--color-hover-bg)]"
                                   style={{ color: 'var(--ink-3)' }}
                                   title="Clear this per-store override — fall back to shared default"
                                   aria-label="Clear per-store override"
@@ -694,7 +696,9 @@ function GstRegistrationsTab() {
       </Card>
 
       <Card className="overflow-hidden">
-        <Table>
+        {/* Five columns of editable fields — keep them legible below lg and
+            let the rail scroll rather than crushing the GSTIN input. */}
+        <Table className="min-w-[820px] lg:min-w-0">
           <Thead>
             <Tr style={{ background: 'var(--surface-1)' }}>
               <Th>Store</Th>
@@ -781,7 +785,7 @@ export default function SettingsPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Settings</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>Settings</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Company, account mappings, and tax configuration</p>
       </div>
 

@@ -102,7 +102,7 @@ export default function LedgerPage() {
       </button>
 
       <div>
-        <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
           Ledger · {report?.account.name ?? code}
         </h1>
         <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -111,16 +111,16 @@ export default function LedgerPage() {
         </p>
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-auto" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-auto" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button onClick={applyDates} disabled={loading}>
+        <Button className="w-full sm:w-auto" onClick={applyDates} disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
           Apply
         </Button>
@@ -136,7 +136,7 @@ export default function LedgerPage() {
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Stat label="Opening" value={formatCurrency(report.opening_balance)} />
             <Stat label="Transactions" value={total.toLocaleString()} mono />
             <Stat
@@ -147,7 +147,6 @@ export default function LedgerPage() {
           </div>
 
           <Card className="overflow-hidden p-0">
-            <div className="overflow-x-auto">
             <Table>
               <Thead>
                 <Tr>
@@ -215,7 +214,6 @@ export default function LedgerPage() {
                 )}
               </Tbody>
             </Table>
-            </div>
           </Card>
 
           {total > 0 && (

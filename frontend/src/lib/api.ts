@@ -18,11 +18,15 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Response interceptor: on 401 redirect to login
+// Response interceptor: on 401 redirect to login.
+// The sign-in request is exempt: there, a 401 IS the answer to "are these
+// credentials valid?", and redirecting would reload the page and destroy the
+// error before the login form could show it.
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    const isSignInRequest = error.config?.url === '/auth/token/'
+    if (error.response?.status === 401 && !isSignInRequest) {
       localStorage.removeItem('token')
       localStorage.removeItem('refresh_token')
       window.location.href = '/login'
@@ -30,6 +34,69 @@ api.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+
+// ─── Errors ──────────────────────────────────────────────────────────────────
+
+/** 'liability_account' -> 'Liability account' */
+function prettyField(field: string): string {
+  const words = field.replace(/_id$/, '').replace(/_/g, ' ').trim()
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/**
+ * The server's reason for refusing a request, as a sentence worth showing.
+ *
+ * DRF answers a validation error with `{"field": ["message"]}` and no `detail`
+ * key, so the `err.response.data.detail || 'Failed'` idiom this replaces
+ * rendered every validation error in the app as the bare word "Failed" —
+ * "Cheque date is required" and "Account not selected" were indistinguishable.
+ *
+ * `fallback` is used only where the server genuinely has nothing useful to say:
+ * a 5xx, or a body that isn't a field map.
+ */
+export function apiErrorMessage(err: unknown, fallback = 'Something went wrong. Please try again.'): string {
+  const response = (err as { response?: { status?: number; data?: unknown } })?.response
+  if (!response) {
+    return 'Cannot reach the server. Check your connection and try again.'
+  }
+  const { status, data } = response
+  // A 500 body is an HTML error page in DEBUG and opaque otherwise; either way
+  // it is our failure, not something the user can act on.
+  if ((status ?? 0) >= 500) return fallback
+  if (!data || typeof data !== 'object') return fallback
+
+  const body = data as Record<string, unknown>
+  if (typeof body.detail === 'string') return body.detail
+
+  const parts: string[] = []
+  for (const [field, value] of Object.entries(body)) {
+    const text = Array.isArray(value)
+      ? value.filter((v) => typeof v === 'string').join(' ')
+      : typeof value === 'string' ? value : ''
+    if (!text) continue
+    parts.push(field === 'non_field_errors' ? text : `${prettyField(field)}: ${text}`)
+  }
+  return parts.length > 0 ? parts.join(' • ') : fallback
+}
+
+/**
+ * The same validation errors keyed by field, for marking inputs inline.
+ * Empty when the failure wasn't a field-level rejection.
+ */
+export function apiFieldErrors(err: unknown): Record<string, string> {
+  const response = (err as { response?: { status?: number; data?: unknown } })?.response
+  const data = response?.data
+  if (!data || typeof data !== 'object' || (response?.status ?? 0) >= 500) return {}
+  const out: Record<string, string> = {}
+  for (const [field, value] of Object.entries(data as Record<string, unknown>)) {
+    if (field === 'detail') continue
+    const text = Array.isArray(value)
+      ? value.filter((v) => typeof v === 'string').join(' ')
+      : typeof value === 'string' ? value : ''
+    if (text) out[field] = text
+  }
+  return out
+}
 
 // ─── Auth ────────────────────────────────────────────────────────────────────
 

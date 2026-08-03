@@ -6,16 +6,26 @@ import { cn } from '../../lib/utils'
  * Use <Table> which automatically applies `table-striped` (defined in
  * index.css) — alternating rows get stripe bg, hover rows get the teal
  * accent bar on the left edge.
+ *
+ * Every table ships inside a `.table-scroll` rail so narrow viewports
+ * scroll the columns sideways instead of squeezing them. Accounting
+ * tables are not reflowed into stacked cards — the column alignment is
+ * what makes debits, credits and balances readable at a glance.
+ * `wrapperClassName` styles that rail (e.g. a max-height for a long
+ * register); `className` still lands on the <table> itself.
  */
-const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(
-  ({ className, ...props }, ref) => (
+const Table = React.forwardRef<
+  HTMLTableElement,
+  React.HTMLAttributes<HTMLTableElement> & { wrapperClassName?: string }
+>(({ className, wrapperClassName, ...props }, ref) => (
+  <div className={cn('table-scroll', wrapperClassName)}>
     <table
       ref={ref}
       className={cn('w-full text-sm table-striped', className)}
       {...props}
     />
-  )
-)
+  </div>
+))
 Table.displayName = 'Table'
 
 const Thead = React.forwardRef<HTMLTableSectionElement, React.HTMLAttributes<HTMLTableSectionElement>>(

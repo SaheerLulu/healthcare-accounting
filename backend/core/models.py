@@ -348,6 +348,7 @@ class AccountMapping(models.Model):
         ('PETTY_EXPENSE', 'Petty Cash Expenses (Indirect Expense)'),
         ('OTHER_CHARGES_RECOVERED', 'Freight / Other Charges Recovered (on sales)'),
         ('CONSULTATION_INCOME', 'Consultation / OPD Fee Income (GST-exempt)'),
+        ('SERVICE_INCOME', 'Taxable Clinical Service Income (procedures, day-care)'),
     ]
 
     # Default mapping from key to account_code for data migration. These map
@@ -420,6 +421,7 @@ class AccountMapping(models.Model):
         'OPENING_BALANCE_EQUITY': '3300',
         'OTHER_CHARGES_RECOVERED': '4520',
         'CONSULTATION_INCOME': '4320',
+        'SERVICE_INCOME': '4330',
     }
 
     key = models.CharField(max_length=30, choices=KEY_CHOICES)

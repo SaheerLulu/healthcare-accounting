@@ -34,22 +34,22 @@ export default function ProfitLossPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-5">
       <div>
-        <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Profit & Loss</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Profit & Loss</h1>
         <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
           Revenue, direct expenses, gross profit, indirect expenses, net profit.
         </p>
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-auto" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-auto" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button onClick={load} disabled={loading}>
+        <Button className="w-full sm:w-auto" onClick={load} disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>
@@ -213,7 +213,7 @@ function SubtotalBlock({ label, sublabel, value, positive, emphasized, dateRange
     : 'rgba(192,57,43,0.30)'
   return (
     <div
-      className={cn('rounded-xl p-5 flex items-center justify-between')}
+      className={cn('rounded-xl p-5 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-0')}
       style={{
         background: bg,
         border: `${emphasized ? '2px' : '1px'} solid ${border}`,

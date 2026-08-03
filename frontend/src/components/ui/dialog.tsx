@@ -32,7 +32,10 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md rounded-xl border shadow-lg p-6 animate-slide-up max-h-[90vh] overflow-y-auto',
+        // `w-[calc(100%-1.5rem)]` keeps a 12px gutter on either side at phone
+        // widths, where a plain `w-full` dialog would run edge to edge.
+        // `max-h-[85dvh]` accounts for mobile browser chrome that `vh` ignores.
+        'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-[calc(100%-1.5rem)] max-w-md rounded-xl border shadow-lg p-4 sm:p-6 animate-slide-up max-h-[85dvh] overflow-y-auto overscroll-contain',
         className
       )}
       style={{

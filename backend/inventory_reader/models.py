@@ -215,6 +215,12 @@ class POSOrderRO(models.Model):
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
     total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20)
+    # A checkout that mixes medicines with clinical services splits into two
+    # documents: 'goods' (a tax invoice, stock relieved) and 'service' (a bill of
+    # supply for exempt clinical services, no stock, no COGS). `bill_group` ties
+    # the pair together.
+    doc_type = models.CharField(max_length=10, default='goods')
+    bill_group = models.CharField(max_length=64, blank=True, default='')
     created_at = models.DateTimeField()
 
     class Meta:
@@ -230,9 +236,22 @@ class POSOrderLineRO(models.Model):
         POSOrderRO, on_delete=models.DO_NOTHING,
         related_name='lines', db_constraint=False
     )
+    # NULL on a service line. This MUST stay null=True: Django's forward-FK
+    # descriptor raises RelatedObjectDoesNotExist (an AttributeError subclass) when
+    # the column is NULL on a null=False FK, so the defensive `line.product if
+    # line.product else ''` idiom used across gst_returns and reports would RAISE
+    # rather than fall back. Prefetching does not help — the descriptor re-checks
+    # field.null after reading the cache.
     product = models.ForeignKey(
-        ProductRO, on_delete=models.DO_NOTHING, db_constraint=False
+        ProductRO, null=True, blank=True,
+        on_delete=models.DO_NOTHING, db_constraint=False,
     )
+    is_service = models.BooleanField(default=False)
+    service_description = models.CharField(max_length=255, blank=True, default='')
+    # Services carry a SAC (Chapter 99), not an HSN, and are exempt unless the
+    # master says otherwise.
+    sac_code = models.CharField(max_length=10, blank=True, default='')
+    taxability_class = models.CharField(max_length=10, blank=True, default='')
     quantity = models.IntegerField()
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2)
@@ -247,6 +266,12 @@ class POSOrderLineRO(models.Model):
     class Meta:
         managed = False
         db_table = 'pos_posorderline'
+
+    @property
+    def display_name(self):
+        if self.is_service:
+            return self.service_description or 'Service'
+        return self.product.name if self.product_id else ''
 
 
 class POSPaymentRO(models.Model):

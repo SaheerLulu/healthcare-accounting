@@ -41,8 +41,8 @@ export default function TrialBalancePage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Trial Balance</h1>
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Trial Balance</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>All accounts with debit and credit balances.</p>
         </div>
       </div>
@@ -64,16 +64,16 @@ export default function TrialBalancePage() {
       )}
 
       {/* Period filters */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+        <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-none">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-auto" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-none">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-auto" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button onClick={load} disabled={loading}>
+        <Button onClick={load} disabled={loading} className="w-full sm:w-auto">
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>

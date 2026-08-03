@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Plus, Play } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   listFixedAssets, listAssetClasses, createFixedAsset, createAssetClass,
   postAssetAcquisition, disposeAsset, previewDepreciation, postDepreciation,
-  type FixedAsset, type AssetClass,
+  getChartOfAccounts,
+  type FixedAsset, type AssetClass, type Account,
+  apiErrorMessage,
 } from '../../lib/api'
 import { useLocation } from '../../contexts/LocationContext'
 import { formatCurrency, formatDate } from '../../lib/utils'
@@ -16,9 +18,10 @@ import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog'
+import { AccountPicker } from '../journals/AccountPicker'
 
 function DialogFooter({ children }: { children: React.ReactNode }) {
-  return <div className="flex gap-2 justify-end mt-4">{children}</div>
+  return <div className="flex flex-wrap gap-2 justify-end mt-4">{children}</div>
 }
 
 export default function FixedAssetsPage() {
@@ -37,8 +40,8 @@ export default function FixedAssetsPage() {
       const aRows = Array.isArray(a) ? a : (a.results ?? [])
       setAssets(aRows)
       setClasses(c)
-    } catch {
-      toast.error('Failed to load assets')
+    } catch (e) {
+      toast.error(apiErrorMessage(e, 'Failed to load assets'))
     } finally {
       setLoading(false)
     }
@@ -49,14 +52,14 @@ export default function FixedAssetsPage() {
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             Fixed Assets
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
             <span className="mono">{assets.length}</span> assets · {classes.length} classes
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => setShowClassDialog(true)}>
             <Plus size={16} /> Asset Class
           </Button>
@@ -109,7 +112,7 @@ export default function FixedAssetsPage() {
                     {a.status === 'active' && !a.acquisition_entry_no && (
                       <Button size="sm" variant="ghost" onClick={async () => {
                         try { await postAssetAcquisition(a.id); toast.success('Acquisition JE posted'); load() }
-                        catch { toast.error('Could not post acquisition') }
+                        catch (e) { toast.error(apiErrorMessage(e, 'Could not post acquisition')) }
                       }}>Post Acq.</Button>
                     )}
                     {a.status === 'active' && a.acquisition_entry_no && (
@@ -132,14 +135,30 @@ export default function FixedAssetsPage() {
 }
 
 function AssetClassDialog({ open, onClose, onSaved }: any) {
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [data, setData] = useState({ code: '', name: '', dep_method: 'SLM', useful_life_years: 5,
     wdv_rate_pct: '0', salvage_value_pct: '5',
-    asset_account: '', accum_dep_account: '', dep_expense_account: '' })
+    asset_account: null as number | null,
+    accum_dep_account: null as number | null,
+    dep_expense_account: null as number | null })
+
+  useEffect(() => {
+    if (open) getChartOfAccounts().then(setAccounts).catch(() => {/* pickers degrade */})
+  }, [open])
+
+  // These were free-text "account ID" boxes; an operator naturally typed the
+  // account code (1640) rather than its database id, and the server answered
+  // 'Invalid pk "1640"' -- which the dialog reported as the word "Failed".
+  const assetAccounts = useMemo(
+    () => accounts.filter((a) => a.account_type === 'ASSET'), [accounts])
+  const expenseAccounts = useMemo(
+    () => accounts.filter((a) => a.account_type === 'EXPENSE'), [accounts])
+
   return (
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent>
         <DialogHeader><DialogTitle>New Asset Class</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Input placeholder="Code (e.g. COMP)" value={data.code} onChange={(e) => setData({ ...data, code: e.target.value })} />
           <Input placeholder="Name (e.g. Computers)" value={data.name} onChange={(e) => setData({ ...data, name: e.target.value })} />
           <select className="border rounded px-2 py-1.5" value={data.dep_method}
@@ -153,24 +172,34 @@ function AssetClassDialog({ open, onClose, onSaved }: any) {
                  onChange={(e) => setData({ ...data, wdv_rate_pct: e.target.value })} />
           <Input placeholder="Salvage value %" value={data.salvage_value_pct}
                  onChange={(e) => setData({ ...data, salvage_value_pct: e.target.value })} />
-          <Input placeholder="Asset GL account ID" value={data.asset_account}
-                 onChange={(e) => setData({ ...data, asset_account: e.target.value })} />
-          <Input placeholder="Accum. Dep. GL account ID" value={data.accum_dep_account}
-                 onChange={(e) => setData({ ...data, accum_dep_account: e.target.value })} />
-          <Input placeholder="Dep. Expense GL account ID" value={data.dep_expense_account}
-                 onChange={(e) => setData({ ...data, dep_expense_account: e.target.value })} />
+          <label className="block text-xs font-medium text-slate-600">
+            Asset GL
+            <AccountPicker accounts={assetAccounts} value={data.asset_account}
+              onChange={(id) => setData({ ...data, asset_account: id })} />
+          </label>
+          <label className="block text-xs font-medium text-slate-600">
+            Accumulated depreciation GL
+            <AccountPicker accounts={assetAccounts} value={data.accum_dep_account}
+              onChange={(id) => setData({ ...data, accum_dep_account: id })} />
+          </label>
+          <label className="block text-xs font-medium text-slate-600">
+            Depreciation expense GL
+            <AccountPicker accounts={expenseAccounts} value={data.dep_expense_account}
+              onChange={(id) => setData({ ...data, dep_expense_account: id })} />
+          </label>
         </div>
         <DialogFooter>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button onClick={async () => {
+            if (!data.asset_account || !data.accum_dep_account || !data.dep_expense_account) {
+              toast.error('Pick all three GL accounts for this class.')
+              return
+            }
             try {
-              await createAssetClass({ ...data, dep_method: data.dep_method as 'SLM' | 'WDV',
-                asset_account: parseInt(data.asset_account) as any,
-                accum_dep_account: parseInt(data.accum_dep_account) as any,
-                dep_expense_account: parseInt(data.dep_expense_account) as any })
+              await createAssetClass({ ...data, dep_method: data.dep_method as 'SLM' | 'WDV' } as any)
               toast.success('Asset class created')
               onSaved(); onClose()
-            } catch (e: any) { toast.error(e?.response?.data?.detail || 'Failed') }
+            } catch (e: any) { toast.error(apiErrorMessage(e, 'Could not save.')) }
           }}>Save</Button>
         </DialogFooter>
       </DialogContent>
@@ -190,14 +219,23 @@ function AssetDialog({ open, classes, onClose, onSaved }: any) {
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent>
         <DialogHeader><DialogTitle>New Fixed Asset</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Input placeholder="Asset number" value={data.asset_no} onChange={(e) => setData({ ...data, asset_no: e.target.value })} />
           <Input placeholder="Name" value={data.name} onChange={(e) => setData({ ...data, name: e.target.value })} />
-          <select className="border rounded px-2 py-1.5" value={data.asset_class}
-                  onChange={(e) => setData({ ...data, asset_class: e.target.value })}>
-            <option value="">Select class…</option>
-            {classes.map((c: AssetClass) => <option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}
-          </select>
+          {classes.length === 0 ? (
+            <div className="text-xs rounded px-2.5 py-2" style={{
+              background: 'rgba(199,122,17,0.08)', color: 'var(--warning)',
+            }}>
+              No asset classes defined yet — create one first, or an asset has
+              no depreciation rules to follow.
+            </div>
+          ) : (
+            <select className="border rounded px-2 py-1.5" value={data.asset_class}
+                    onChange={(e) => setData({ ...data, asset_class: e.target.value })}>
+              <option value="">Select class…</option>
+              {classes.map((c: AssetClass) => <option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}
+            </select>
+          )}
           <Input type="date" value={data.acquisition_date}
                  onChange={(e) => setData({ ...data, acquisition_date: e.target.value })} />
           <Input placeholder="Acquisition cost ₹" value={data.acquisition_cost}
@@ -209,14 +247,17 @@ function AssetDialog({ open, classes, onClose, onSaved }: any) {
         </div>
         <DialogFooter>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button onClick={async () => {
+          <Button disabled={classes.length === 0} onClick={async () => {
+            // An empty select yields '' -> parseInt -> NaN, which JSON.stringify
+            // sends as null, and the server rightly refuses it.
+            if (!data.asset_class) { toast.error('Pick an asset class.'); return }
             try {
               await createFixedAsset({
                 ...data, asset_class: parseInt(data.asset_class) as any,
                 location_id: activeLocationId ?? null,
               })
               toast.success('Asset created'); onSaved(); onClose()
-            } catch (e: any) { toast.error(e?.response?.data?.detail || 'Failed') }
+            } catch (e: any) { toast.error(apiErrorMessage(e, 'Could not save.')) }
           }}>Save</Button>
         </DialogFooter>
       </DialogContent>
@@ -235,7 +276,7 @@ function DepreciationDialog({ open, onClose, onPosted }: any) {
           <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} />
           <Button variant="secondary" onClick={async () => {
             try { setPreview(await previewDepreciation(period)) }
-            catch { toast.error('Preview failed') }
+            catch (e) { toast.error(apiErrorMessage(e, 'Preview failed')) }
           }}>Preview</Button>
           {preview && (
             <Card className="p-3 text-sm">
@@ -247,7 +288,7 @@ function DepreciationDialog({ open, onClose, onPosted }: any) {
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button disabled={!preview} onClick={async () => {
             try { await postDepreciation(period); toast.success('Depreciation posted'); onPosted(); onClose() }
-            catch (e: any) { toast.error(e?.response?.data?.detail || 'Failed') }
+            catch (e: any) { toast.error(apiErrorMessage(e, 'Could not save.')) }
           }}>Post</Button>
         </DialogFooter>
       </DialogContent>
@@ -261,7 +302,7 @@ function DisposeDialog({ asset, onClose, onDone }: any) {
   return (
     <Dialog open={!!asset} onOpenChange={(o: boolean) => !o && onClose()}>
       <DialogContent>
-        <DialogHeader><DialogTitle>Dispose {asset.asset_no} — {asset.name}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle className="min-w-0 break-words">Dispose {asset.asset_no} — {asset.name}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div className="text-sm" style={{ color: 'var(--ink-2)' }}>
             NBV: {formatCurrency(asset.net_book_value ?? asset.acquisition_cost)}
@@ -280,7 +321,7 @@ function DisposeDialog({ asset, onClose, onDone }: any) {
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button onClick={async () => {
             try { await disposeAsset(asset.id, data); toast.success('Asset disposed'); onDone(); onClose() }
-            catch (e: any) { toast.error(e?.response?.data?.detail || 'Failed') }
+            catch (e: any) { toast.error(apiErrorMessage(e, 'Could not save.')) }
           }}>Dispose</Button>
         </DialogFooter>
       </DialogContent>

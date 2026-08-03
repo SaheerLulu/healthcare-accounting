@@ -32,9 +32,9 @@ export default function GstGrandSummaryPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             GST Grand Summary
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -111,41 +111,43 @@ function RateTable({ title, rows, totals }: { title: string; rows: RateRow[]; to
   return (
     <Card>
       <CardHeader><span className="text-sm font-semibold text-slate-900">{title}</span></CardHeader>
-      <CardContent className="overflow-x-auto p-0">
-        <table className="w-full text-sm min-w-[640px]">
-          <thead>
-            <tr className="text-xs font-semibold uppercase tracking-wide text-slate-500 border-b border-slate-200">
-              <th className="text-left py-2.5 px-4">Rate</th>
-              <th className="text-right py-2.5 px-4">Taxable</th>
-              <th className="text-right py-2.5 px-4">CGST</th>
-              <th className="text-right py-2.5 px-4">SGST</th>
-              <th className="text-right py-2.5 px-4">IGST</th>
-              <th className="text-right py-2.5 px-4">Total Tax</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.rate} className="border-b border-slate-100">
-                <td className="py-2.5 px-4 font-medium text-slate-900">{r.rate}%</td>
-                <td className="py-2.5 px-4 text-right font-mono text-slate-700">{formatCurrency(r.taxable)}</td>
-                <td className="py-2.5 px-4 text-right font-mono text-slate-700">{formatCurrency(r.cgst)}</td>
-                <td className="py-2.5 px-4 text-right font-mono text-slate-700">{formatCurrency(r.sgst)}</td>
-                <td className="py-2.5 px-4 text-right font-mono text-slate-700">{formatCurrency(r.igst)}</td>
-                <td className="py-2.5 px-4 text-right font-mono font-medium text-slate-900">{formatCurrency(r.total_tax)}</td>
+      <CardContent className="p-0">
+        <div className="table-scroll">
+          <table className="w-full text-sm min-w-[640px]">
+            <thead>
+              <tr className="text-xs font-semibold uppercase tracking-wide text-slate-500 border-b border-slate-200">
+                <th className="text-left py-2.5 px-4">Rate</th>
+                <th className="text-right py-2.5 px-4">Taxable</th>
+                <th className="text-right py-2.5 px-4">CGST</th>
+                <th className="text-right py-2.5 px-4">SGST</th>
+                <th className="text-right py-2.5 px-4">IGST</th>
+                <th className="text-right py-2.5 px-4">Total Tax</th>
               </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="font-semibold border-t-2 border-slate-200 bg-slate-50">
-              <td className="py-2.5 px-4">Total</td>
-              <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(totals.taxable)}</td>
-              <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(totals.cgst)}</td>
-              <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(totals.sgst)}</td>
-              <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(totals.igst)}</td>
-              <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(totals.total_tax)}</td>
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.rate} className="border-b border-slate-100">
+                  <td className="py-2.5 px-4 font-medium text-slate-900">{r.rate}%</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-slate-700">{formatCurrency(r.taxable)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-slate-700">{formatCurrency(r.cgst)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-slate-700">{formatCurrency(r.sgst)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono text-slate-700">{formatCurrency(r.igst)}</td>
+                  <td className="py-2.5 px-4 text-right font-mono font-medium text-slate-900">{formatCurrency(r.total_tax)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="font-semibold border-t-2 border-slate-200 bg-slate-50">
+                <td className="py-2.5 px-4">Total</td>
+                <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(totals.taxable)}</td>
+                <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(totals.cgst)}</td>
+                <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(totals.sgst)}</td>
+                <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(totals.igst)}</td>
+                <td className="py-2.5 px-4 text-right font-mono">{formatCurrency(totals.total_tax)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </CardContent>
     </Card>
   )

@@ -47,7 +47,7 @@ function SectionCard({ section }: { section: FilingHealthSection }) {
         )}
       </div>
       {open && section.rows.length > 0 && (
-        <div className="border-t overflow-x-auto" style={{ borderColor: 'var(--line)' }}>
+        <div className="border-t table-scroll" style={{ borderColor: 'var(--line)' }}>
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-slate-50" style={{ color: 'var(--ink-2)' }}>
@@ -107,7 +107,7 @@ export default function GSTFilingHealthPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
           GST Filing Health Check
         </h1>
         <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -116,7 +116,7 @@ export default function GSTFilingHealthPage() {
         </p>
       </div>
 
-      <div className="flex items-center gap-3 mb-5 flex-wrap">
+      <div className="flex items-center gap-2 sm:gap-3 mb-5 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500 font-medium">Period</label>
           <PeriodPicker value={period} onChange={setPeriod} />
@@ -138,7 +138,7 @@ export default function GSTFilingHealthPage() {
           <Loader2 size={28} className="animate-spin text-teal-600" />
         </div>
       ) : !data ? (
-        <Card className="p-12 text-center text-slate-400 text-sm">Select a period to run the check</Card>
+        <Card className="p-8 sm:p-12 text-center text-slate-400 text-sm">Select a period to run the check</Card>
       ) : (
         <div className="flex flex-col gap-3">
           {sections.map((s) => <SectionCard key={s.title} section={s} />)}

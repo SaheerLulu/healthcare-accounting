@@ -83,7 +83,13 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
     function recalc() {
       const r = triggerRef.current?.getBoundingClientRect()
       if (!r) return
-      setPos({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 280) })
+      // The 280px floor overhangs the right edge on a phone, so the panel is
+      // held inside a 12px gutter instead of being pushed off-screen. On wide
+      // viewports neither clamp ever bites and the panel tracks the trigger.
+      const gutter = 12
+      const width = Math.min(Math.max(r.width, 280), window.innerWidth - gutter * 2)
+      const left = Math.max(gutter, Math.min(r.left, window.innerWidth - gutter - width))
+      setPos({ top: r.bottom + 4, left, width })
     }
     recalc()
     window.addEventListener('scroll', recalc, true)
@@ -178,7 +184,7 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
       {open && pos && createPortal(
         <div
           ref={dropdownRef}
-          className="fixed z-[60] rounded-lg border shadow-lg overflow-hidden dropdown-animate"
+          className="fixed z-[60] max-w-[calc(100vw-1.5rem)] rounded-lg border shadow-lg overflow-hidden dropdown-animate"
           style={{
             top: pos.top, left: pos.left, width: pos.width,
             backgroundColor: 'var(--surface-0)',
@@ -204,7 +210,7 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
               <button
                 type="button"
                 onMouseDown={(e) => { e.preventDefault(); commit(null) }}
-                className="w-full text-left px-3 py-1.5 text-sm transition-colors"
+                className="w-full text-left px-3 py-2 sm:py-1.5 text-sm transition-colors"
                 style={{ color: 'var(--ink-3)', fontStyle: 'italic' }}
                 onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
                 onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
@@ -272,7 +278,7 @@ function PartyRow({ party, selected, highlighted, onSelect }: {
     <button
       type="button"
       onMouseDown={(e) => { e.preventDefault(); onSelect() }}
-      className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors"
+      className="w-full flex items-center gap-2 px-3 py-2 sm:py-1.5 text-sm text-left transition-colors"
       style={{
         backgroundColor: highlighted ? 'rgba(15,157,154,0.10)' : 'transparent',
       }}

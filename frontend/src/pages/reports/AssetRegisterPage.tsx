@@ -59,14 +59,14 @@ export default function AssetRegisterPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      <div className="flex items-center justify-between flex-wrap gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Asset Register</h1>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Asset Register</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
             Fixed assets with acquisition-time ITC, accumulated depreciation and net book value.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={() => exportAs('csv')} disabled={rows.length === 0}>
             <Download size={15} />CSV
           </Button>
@@ -77,16 +77,16 @@ export default function AssetRegisterPage() {
       </div>
 
       {/* Acquisition-date filters — leave blank for the full register */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>Acquired From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-auto" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-auto" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button onClick={load} disabled={loading}>
+        <Button className="w-full sm:w-auto" onClick={load} disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>

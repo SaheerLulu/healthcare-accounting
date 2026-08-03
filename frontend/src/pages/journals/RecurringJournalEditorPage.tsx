@@ -177,9 +177,9 @@ export default function RecurringJournalEditorPage() {
       </button>
 
       <div className="mb-5">
-        <div className="flex items-center gap-2 mb-1">
-          <Repeat size={18} className="text-teal-600" />
-          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <Repeat size={18} className="text-teal-600 flex-shrink-0" />
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
             {editingId ? `Edit ${original?.profile_name || 'profile'}` : 'New Recurring Journal'}
           </h1>
         </div>
@@ -188,7 +188,7 @@ export default function RecurringJournalEditorPage() {
         </p>
       </div>
 
-      <Card className="p-5 mb-4">
+      <Card className="p-4 sm:p-5 mb-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Field label="Profile Name" required hint="e.g. 'Monthly depreciation'">
             <Input required value={profileName} onChange={(e) => setProfileName(e.target.value)} />
@@ -206,7 +206,7 @@ export default function RecurringJournalEditorPage() {
         </div>
       </Card>
 
-      <Card className="p-5 mb-4">
+      <Card className="p-4 sm:p-5 mb-4">
         <h2 className="text-sm font-semibold text-slate-900 mb-3">Schedule</h2>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4">
           {FREQUENCIES.map((f) => (
@@ -239,12 +239,12 @@ export default function RecurringJournalEditorPage() {
       </Card>
 
       <Card className="overflow-hidden p-0 mb-4">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-slate-900">Line Items</h2>
           <span className="text-xs text-slate-400">Debits must equal credits</span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="table-scroll">
+          <table className="w-full text-sm min-w-[760px]">
             <thead className="bg-slate-50 border-b border-slate-100">
               <tr>
                 <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide" style={{ width: '32%' }}>Account</th>
@@ -277,7 +277,7 @@ export default function RecurringJournalEditorPage() {
                   </td>
                   <td className="px-2 py-2 align-middle">
                     <button type="button" onClick={() => removeLine(l.uid)} disabled={lines.length <= 1}
-                      className="text-slate-400 hover:text-rose-600 disabled:opacity-30 p-1.5 rounded hover:bg-slate-100">
+                      className="text-slate-400 hover:text-rose-600 disabled:opacity-30 p-2.5 sm:p-1.5 rounded hover:bg-slate-100">
                       <Trash2 size={14} />
                     </button>
                   </td>
@@ -310,7 +310,11 @@ export default function RecurringJournalEditorPage() {
         </div>
       )}
 
-      <div className="sticky bottom-0 -mx-6 px-6 py-3 bg-white border-t border-slate-200 shadow-[0_-4px_12px_rgba(0,0,0,0.04)] flex items-center justify-end gap-2 mt-4">
+      {/* The negative margin has to track the responsive gutter on <main>
+          (px-3 sm:px-4 lg:px-6) or the bar overhangs the page on a phone. */}
+      <div
+        className="sticky bottom-0 -mx-3 px-3 sm:-mx-4 sm:px-4 lg:-mx-6 lg:px-6 py-3 bg-white border-t border-slate-200 shadow-[0_-4px_12px_rgba(0,0,0,0.04)] flex flex-wrap items-center justify-end gap-2 mt-4 safe-bottom"
+      >
         <Button variant="secondary" onClick={() => navigate('/journals/recurring')}>Cancel</Button>
         <Button onClick={handleSave} disabled={saving || !isBalanced}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}

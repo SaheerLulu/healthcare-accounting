@@ -1,16 +1,27 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, Loader2, AlertCircle, CornerDownLeft } from 'lucide-react'
+import { toast } from 'sonner'
 import { login } from '../lib/api'
 
 export default function LoginPage() {
   const navigate = useNavigate()
+  const passwordRef = useRef<HTMLInputElement>(null)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [rememberMe, setRememberMe] = useState(true)
+  const [failedAttempts, setFailedAttempts] = useState(0)
+
+  // Focus has to wait for the render that re-enables the field: the catch
+  // block runs while isSubmitting is still true, and a disabled input cannot
+  // take focus. Keying the effect on the attempt count also re-focuses on a
+  // second consecutive failure, where the message itself does not change.
+  useEffect(() => {
+    if (failedAttempts > 0) passwordRef.current?.focus()
+  }, [failedAttempts])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -32,8 +43,25 @@ export default function LoginPage() {
       localStorage.setItem('refresh_token', res.refresh)
       navigate('/dashboard')
     } catch (err: any) {
-      const detail = err?.response?.data?.detail
-      setError(detail || 'Invalid credentials. Please try again.')
+      // A rejected sign-in answers 401 (SimpleJWT) or 400 (malformed payload).
+      // Anything else — 5xx, or no response at all when the server is down —
+      // is our problem, not the user's, and must not read as a bad password.
+      const status = err?.response?.status
+      const isRejectedCredential = status === 400 || status === 401
+      const message = isRejectedCredential
+        ? 'Incorrect username or password. Please try again.'
+        : 'Something went wrong. Please try again later.'
+
+      // Deliberately the same message for a wrong username as for a wrong
+      // password: naming the field that failed turns the form into an oracle
+      // for which accounts exist.
+      setError(message)
+      toast.error(message)
+
+      // Drop the password so a retry starts clean, but keep the username —
+      // it is usually right, and retyping it is pure friction.
+      setPassword('')
+      setFailedAttempts((n) => n + 1)
     } finally {
       setIsSubmitting(false)
     }
@@ -43,7 +71,7 @@ export default function LoginPage() {
     <div className="min-h-screen grid login-grid" style={{ gridTemplateColumns: '1.1fr 1fr' }}>
       {/* Left — dark product panel */}
       <div
-        className="relative flex flex-col p-10 md:p-14 overflow-hidden"
+        className="relative flex flex-col p-6 sm:p-10 md:p-14 overflow-hidden"
         style={{ background: '#0c1e25', color: 'white' }}
       >
         {/* faint grid */}
@@ -90,7 +118,9 @@ export default function LoginPage() {
           </div>
           <div
             style={{
-              fontSize: 36,
+              // Caps at today's 36px from ~655px wide up, so the desktop
+              // panel is untouched; shrinks only on phones.
+              fontSize: 'clamp(1.5rem, 5.5vw, 36px)',
               fontWeight: 600,
               lineHeight: 1.15,
               letterSpacing: '-0.02em',
@@ -114,8 +144,10 @@ export default function LoginPage() {
         </div>
 
         {/* Trust strip */}
+        {/* Below sm the three columns become rows — swapping display leaves the
+            inline template inert there and byte-identical from sm up. */}
         <div
-          className="relative grid gap-8 md:gap-12"
+          className="relative flex flex-col sm:grid gap-4 sm:gap-8 md:gap-12"
           style={{
             gridTemplateColumns: 'repeat(3, minmax(0,auto))',
             paddingTop: 18,
@@ -159,7 +191,7 @@ export default function LoginPage() {
       </div>
 
       {/* Right — form on warm paper */}
-      <div className="flex flex-col justify-center p-10 md:p-14" style={{ background: '#FAFAF8' }}>
+      <div className="flex flex-col justify-center p-6 sm:p-10 md:p-14" style={{ background: '#FAFAF8' }}>
         <form onSubmit={handleSubmit} className="w-full max-w-sm mx-auto">
           <div
             style={{
@@ -176,6 +208,10 @@ export default function LoginPage() {
           </div>
 
           {error && (
+            // No role="alert" here on purpose: the toast carries the same
+            // sentence in its own live region, and two live regions would
+            // announce the failure twice. This banner is the visual copy that
+            // persists after the toast dismisses.
             <div
               className="mb-5 px-3 py-2.5 rounded-md flex items-start gap-2.5"
               style={{
@@ -257,6 +293,7 @@ export default function LoginPage() {
           <div className="relative">
             <input
               id="password"
+              ref={passwordRef}
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -276,7 +313,7 @@ export default function LoginPage() {
               type="button"
               onClick={() => setShowPassword((s) => !s)}
               aria-label={showPassword ? 'Hide password' : 'Show password'}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded hover:bg-gray-100"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-2.5 sm:p-1.5 rounded hover:bg-gray-100"
               style={{ color: 'var(--ink-2)' }}
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

@@ -230,7 +230,7 @@ export default function BillEditorPage() {
 
       {allStores && (
         <div
-          className="px-4 py-2.5 rounded-lg flex items-center gap-2.5 text-sm"
+          className="px-4 py-2.5 rounded-lg flex flex-wrap items-center gap-x-2.5 gap-y-1 text-sm"
           style={{
             background: 'rgba(245, 158, 11, 0.08)',
             border: '1px solid rgba(245, 158, 11, 0.30)',
@@ -246,7 +246,7 @@ export default function BillEditorPage() {
       )}
 
       <div className="flex items-start justify-between mb-5 gap-3 flex-wrap">
-        <div className="flex items-baseline gap-3">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 min-w-0">
           <span
             className="mono text-xs font-bold px-2 py-0.5 rounded"
             style={{
@@ -258,7 +258,7 @@ export default function BillEditorPage() {
           >
             {voucherConfigs.PURCHASE.fKey}
           </span>
-          <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
+          <h1 className="text-lg sm:text-xl font-semibold min-w-0" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
             {editingId ? `Edit ${original?.bill_no || `Bill #${editingId}`}` : 'New Bill (Purchase Voucher)'}
           </h1>
         </div>
@@ -268,7 +268,7 @@ export default function BillEditorPage() {
       <Card className="p-5 mb-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Vendor" required hint="Pick a known supplier or enter a new vendor name">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select
                 value={vendorId ?? ''}
                 onChange={(e) => {
@@ -303,12 +303,12 @@ export default function BillEditorPage() {
 
       {/* Line items */}
       <Card className="overflow-hidden p-0 mb-4">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <h2 className="text-sm font-semibold text-slate-900">Expense Lines</h2>
           <span className="text-xs text-slate-400">Each line debits an expense account; the total credits Trade Payables</span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="table-scroll">
+          <table className="w-full text-sm min-w-[720px]">
             <thead className="bg-slate-50 border-b border-slate-100">
               <tr>
                 <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide" style={{ width: '34%' }}>Expense Account</th>
@@ -408,11 +408,11 @@ export default function BillEditorPage() {
         </Field>
       </Card>
 
-      {/* Sticky save bar */}
+      {/* Sticky save bar — sits on the F-key bar at md+, on the viewport edge
+          below it, where HotkeyBar is hidden. */}
       <div
-        className="fixed left-0 right-0 z-20 px-6 py-3 flex items-center justify-end gap-2"
+        className="fixed left-0 right-0 z-20 bottom-0 md:bottom-9 px-3 sm:px-6 py-3 flex flex-wrap items-center justify-end gap-2 safe-bottom"
         style={{
-          bottom: 36,
           background: 'var(--surface-0)',
           borderTop: '1px solid var(--line)',
           boxShadow: '0 -4px 12px rgba(0,0,0,0.04)',

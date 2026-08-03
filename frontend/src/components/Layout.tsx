@@ -18,6 +18,8 @@ import {
   Home,
   ArrowLeftRight,
   Loader2,
+  Menu,
+  X,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { cn } from '../lib/utils'
@@ -236,6 +238,7 @@ function Wordmark() {
         lineHeight: 1,
         display: 'inline-flex',
         alignItems: 'baseline',
+        flexShrink: 0,
       }}
     >
       <span style={{ color: 'var(--ink)' }}>seef</span>
@@ -271,10 +274,17 @@ function LocationSelector() {
   const label = activeLocation ? activeLocation.name : canSeeAll ? 'All Stores' : 'No Store'
 
   return (
-    <div className="relative flex-shrink-0" ref={ref}>
+    // `static` below lg hands the panel's containing block up to the <nav>,
+    // which is fixed and spans the viewport — so the panel drops flush under
+    // the bar from the screen's left edge. Anchoring to this button instead
+    // would push a 260px panel off a 320px screen, since below lg the button
+    // sits mid-bar behind the hamburger and wordmark.
+    <div className="static lg:relative min-w-0" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium hover:bg-[var(--color-hover-bg)]"
+        // py-1 is a touch-target bump; lg keeps the original 2px so the
+        // desktop bar is unchanged.
+        className="flex items-center gap-1 max-w-full px-2 py-1 lg:py-0.5 rounded-md text-xs font-medium hover:bg-[var(--color-hover-bg)]"
         style={{
           color: 'var(--ink)',
           border: '1px solid var(--line)',
@@ -282,13 +292,13 @@ function LocationSelector() {
         }}
       >
         <MapPin className="w-3 h-3 flex-shrink-0" style={{ color: 'var(--brand)' }} />
-        <span className="max-w-[110px] truncate">{label}</span>
+        <span className="max-w-[90px] sm:max-w-[110px] truncate">{label}</span>
         <ChevronDown className={cn('w-3 h-3 flex-shrink-0 transition-transform', open && 'rotate-180')} />
       </button>
 
       {open && (
         <div
-          className="absolute top-full left-0 mt-1 rounded-lg shadow-lg py-1 min-w-[220px] z-50 dropdown-animate"
+          className="absolute top-full left-2 lg:left-0 mt-1 rounded-lg shadow-lg py-1 min-w-[220px] max-w-[calc(100vw-1rem)] lg:max-w-none z-50 dropdown-animate"
           style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
         >
           <div
@@ -344,6 +354,202 @@ function LocationSelector() {
   )
 }
 
+/**
+ * Slide-in navigation for viewports below `lg`, where eight top-level
+ * groups cannot share a single bar. Same menu tree as the desktop nav,
+ * rendered as an accordion so a 40-item map reads as eight rows until
+ * you open one. The group holding the current page starts expanded.
+ */
+function MobileNavDrawer({
+  open,
+  onClose,
+  activeItemId,
+}: {
+  open: boolean
+  onClose: () => void
+  activeItemId: string | null
+}) {
+  const { theme, setTheme } = useTheme()
+  const navigate = useNavigate()
+  const activeGroup = useMemo(
+    () => menuGroups.find((g) => allItems(g).some((i) => i.id === activeItemId))?.label ?? null,
+    [activeItemId]
+  )
+  const [expanded, setExpanded] = useState<string | null>(activeGroup)
+
+  // Re-sync the open section whenever the drawer is reopened on a new page.
+  useEffect(() => {
+    if (open) setExpanded(activeGroup)
+  }, [open, activeGroup])
+
+  // Hold the page still behind the drawer, and close on Escape.
+  useEffect(() => {
+    if (!open) return
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [open, onClose])
+
+  if (!open) return null
+
+  function handleLogout() {
+    localStorage.removeItem('token')
+    localStorage.removeItem('refresh_token')
+    onClose()
+    navigate('/login')
+  }
+
+  return (
+    <div className="lg:hidden">
+      <div
+        className="fixed inset-0 z-50 bg-black/40 animate-fade-in"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Main menu"
+        className="fixed inset-y-0 left-0 z-50 w-[min(20rem,85vw)] flex flex-col shadow-xl animate-slide-in-left"
+        style={{ backgroundColor: 'var(--surface-0)', borderRight: '1px solid var(--line)' }}
+      >
+        <div
+          className="h-14 px-4 flex items-center justify-between border-b flex-shrink-0"
+          style={{ borderColor: 'var(--line)' }}
+        >
+          <Wordmark />
+          <button
+            onClick={onClose}
+            className="w-9 h-9 -mr-2 rounded-md flex items-center justify-center hover:bg-[var(--color-hover-bg)]"
+            style={{ color: 'var(--ink-2)' }}
+            aria-label="Close menu"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <nav className="flex-1 overflow-y-auto py-2 overscroll-contain">
+          {menuGroups.map((group) => {
+            const items = allItems(group)
+            const Icon = group.icon
+            const groupActive = items.some((i) => i.id === activeItemId)
+
+            // Gateway and Dashboard are single destinations — no accordion.
+            if (items.length === 1) {
+              return (
+                <NavLink
+                  key={group.label}
+                  to={items[0].to}
+                  end={items[0].to === '/'}
+                  onClick={onClose}
+                  className="flex items-center gap-3 px-4 h-11 text-sm font-medium"
+                  style={
+                    groupActive
+                      ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)' }
+                      : { color: 'var(--ink)' }
+                  }
+                >
+                  <Icon className="w-4 h-4 flex-shrink-0" />
+                  {group.label}
+                </NavLink>
+              )
+            }
+
+            const isExpanded = expanded === group.label
+            return (
+              <div key={group.label}>
+                <button
+                  onClick={() => setExpanded(isExpanded ? null : group.label)}
+                  aria-expanded={isExpanded}
+                  className="w-full flex items-center gap-3 px-4 h-11 text-sm font-medium"
+                  style={{ color: groupActive ? 'var(--brand)' : 'var(--ink)' }}
+                >
+                  <Icon className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 text-left">{group.label}</span>
+                  <ChevronDown
+                    className={cn('w-4 h-4 flex-shrink-0 transition-transform', isExpanded && 'rotate-180')}
+                    style={{ color: 'var(--ink-3)' }}
+                  />
+                </button>
+
+                {isExpanded && (
+                  <div className="pb-1" style={{ backgroundColor: 'var(--surface-1)' }}>
+                    {group.sections.map((section, sectionIdx) => (
+                      <div key={section.title ?? `s${sectionIdx}`}>
+                        {section.title && (
+                          <div
+                            className="px-4 pt-2.5 pb-1 mono uppercase"
+                            style={{
+                              fontSize: 10,
+                              color: 'var(--ink-3)',
+                              letterSpacing: '0.1em',
+                              fontWeight: 600,
+                            }}
+                          >
+                            {section.title}
+                          </div>
+                        )}
+                        {section.items.map((item) => {
+                          const itemActive = item.id === activeItemId
+                          return (
+                            <NavLink
+                              key={item.id}
+                              to={item.to}
+                              end={item.to === '/'}
+                              onClick={onClose}
+                              className="flex items-center pl-11 pr-4 h-10 text-sm"
+                              style={
+                                itemActive
+                                  ? { color: 'var(--brand)', fontWeight: 500 }
+                                  : { color: 'var(--ink-2)' }
+                              }
+                            >
+                              {item.label}
+                            </NavLink>
+                          )
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </nav>
+
+        <div
+          className="flex-shrink-0 border-t px-2 pt-2 safe-bottom"
+          style={{ borderColor: 'var(--line)' }}
+        >
+          <button
+            onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            className="w-full flex items-center gap-3 px-2 h-11 rounded-md text-sm hover:bg-[var(--color-hover-bg)]"
+            style={{ color: 'var(--ink-2)' }}
+          >
+            {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+          </button>
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-2 h-11 rounded-md text-sm hover:bg-[var(--color-hover-bg)]"
+            style={{ color: 'var(--danger)' }}
+          >
+            <LogOut className="w-4 h-4" />
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function findActiveItemId(path: string): string | null {
   let bestId: string | null = null
   let bestLen = -1
@@ -367,6 +573,7 @@ function TopNav() {
   const { theme, setTheme } = useTheme()
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [showProfile, setShowProfile] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const navRef = useRef<HTMLElement>(null)
   const activeItemId = useMemo(() => findActiveItemId(routerLoc.pathname), [routerLoc.pathname])
 
@@ -413,20 +620,38 @@ function TopNav() {
   }
 
   return (
+    <>
     <nav
       ref={navRef}
-      className="h-16 backdrop-blur-lg border-b fixed top-0 left-0 right-0 z-40 flex items-center px-3 gap-1"
+      className="h-14 lg:h-16 backdrop-blur-lg border-b fixed top-0 left-0 right-0 z-40 flex items-center px-2 sm:px-3 gap-1"
       style={{ backgroundColor: 'var(--color-nav-bg)', borderColor: 'var(--color-nav-border)' }}
     >
-      {/* Brand + store selector stacked: logo on top, store selector beneath it. */}
-      <div className="flex flex-col justify-center items-start gap-1 mr-3 flex-shrink-0">
+      {/* Below lg the eight groups move into a drawer. */}
+      <button
+        onClick={() => setDrawerOpen(true)}
+        className="lg:hidden w-9 h-9 -ml-1 rounded-md flex items-center justify-center flex-shrink-0 hover:bg-[var(--color-hover-bg)]"
+        style={{ color: 'var(--ink-2)' }}
+        aria-label="Open menu"
+        aria-expanded={drawerOpen}
+      >
+        <Menu className="w-5 h-5" />
+      </button>
+
+      {/* Brand + store selector: side by side while the bar is mostly empty,
+          stacked once the desktop menu needs the horizontal room. */}
+      <div className="flex items-center gap-2 min-w-0 lg:flex-col lg:justify-center lg:items-start lg:gap-1 lg:mr-3 flex-shrink lg:flex-shrink-0">
+        {/* Wordmark carries its own flex-shrink-0 — wrapping it in a span
+            would put it in a 24px line box and grow the column by 6px. */}
         <Wordmark />
         <LocationSelector />
       </div>
 
+      {/* Pushes the right-hand cluster to the edge while the menu is hidden. */}
+      <div className="flex-1 lg:hidden" />
+
       {/* Menu Groups — flex-1 children with min-w-0 so they shrink and labels
           truncate instead of overflowing the bar on narrow / 100%-zoom screens. */}
-      <div className="flex items-center flex-1 min-w-0 gap-0.5">
+      <div className="hidden lg:flex items-center flex-1 min-w-0 gap-0.5">
         {menuGroups.map((group) => {
           const active = isGroupActive(group)
           const isOpen = openMenu === group.label
@@ -448,10 +673,15 @@ function TopNav() {
                 }
               >
                 <Icon className="w-4 h-4 flex-shrink-0" />
-                <span className="hidden md:inline truncate">{group.label}</span>
+                <span className="truncate">{group.label}</span>
                 {hasSubs && (
+                  // The chevron costs ~16px per group — width the bar can't
+                  // spare at exactly 1024px, where labels would truncate.
                   <ChevronDown
-                    className={cn('w-3 h-3 flex-shrink-0 transition-transform', isOpen && 'rotate-180')}
+                    className={cn(
+                      'w-3 h-3 flex-shrink-0 transition-transform hidden xl:block',
+                      isOpen && 'rotate-180'
+                    )}
                   />
                 )}
                 {active && (
@@ -536,11 +766,12 @@ function TopNav() {
       </div>
 
       {/* Right: Theme + Profile */}
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
         <NotificationBell />
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-          className="p-2 rounded-md hover:bg-[var(--color-hover-bg)]"
+          // On phones this lives in the drawer instead — the bar is full.
+          className="hidden sm:block p-2 rounded-md hover:bg-[var(--color-hover-bg)]"
           style={{ color: 'var(--ink-2)' }}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
@@ -601,6 +832,16 @@ function TopNav() {
         </div>
       </div>
     </nav>
+
+    {/* Outside the <nav> on purpose: `backdrop-blur` makes the bar the
+        containing block for fixed-position descendants, which would pin the
+        full-height drawer to the 56px bar. */}
+    <MobileNavDrawer
+      open={drawerOpen}
+      onClose={() => setDrawerOpen(false)}
+      activeItemId={activeItemId}
+    />
+    </>
   )
 }
 
@@ -638,7 +879,9 @@ export default function Layout() {
       <div className="min-h-screen" style={{ backgroundColor: 'var(--surface-1)' }}>
         <TopNav />
         <GlobalNavShortcuts />
-        <main className="px-6 pb-14 pt-20">
+        {/* Top padding clears the fixed nav (h-14 / lg:h-16); bottom padding
+            clears the F-key bar, which only exists from md up. */}
+        <main className="px-3 sm:px-4 lg:px-6 pt-[4.5rem] lg:pt-20 pb-8 md:pb-14">
           {/* Keyed by store: switching the store remounts the routed page so
               every screen refetches with the new X-Location-Id. */}
           <PageTransition key={activeLocationId ?? 'all'}>

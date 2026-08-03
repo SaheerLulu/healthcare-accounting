@@ -103,9 +103,9 @@ export default function RecurringBillDetailPage() {
 
       <div className="flex items-start justify-between mb-5 gap-4 flex-wrap">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Repeat size={18} className="text-teal-600" />
-            <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{rb.profile_name}</h1>
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <Repeat size={18} className="text-teal-600 flex-shrink-0" />
+            <h1 className="text-lg sm:text-xl font-semibold min-w-0" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{rb.profile_name}</h1>
             <Badge variant={STATUS_BADGE[rb.status]}>{rb.status}</Badge>
             {rb.auto_approve && <Badge variant="info">Auto-approve</Badge>}
           </div>
@@ -171,85 +171,89 @@ export default function RecurringBillDetailPage() {
       </Card>
 
       <Card className="overflow-hidden p-0 mb-4">
-        <div className="px-5 py-3 border-b border-slate-100">
+        <div className="px-4 sm:px-5 py-3 border-b border-slate-100">
           <h2 className="text-sm font-semibold text-slate-900">Line Items</h2>
         </div>
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 border-b border-slate-100">
-            <tr>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Account</th>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Description</th>
-              <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rb.items.map((it) => (
-              <tr key={it.id} className="border-b border-slate-100 last:border-0">
-                <td className="px-4 py-2.5">
-                  <div className="font-medium text-slate-900">{it.account_name}</div>
-                  <div className="text-xs text-slate-400 font-mono">{it.account_code}</div>
-                </td>
-                <td className="px-4 py-2.5 text-sm text-slate-600">{it.description || '—'}</td>
-                <td className="px-4 py-2.5 text-right font-mono">{formatCurrency(it.amount)}</td>
+        <div className="table-scroll">
+          <table className="w-full text-sm min-w-[560px]">
+            <thead className="bg-slate-50 border-b border-slate-100">
+              <tr>
+                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Account</th>
+                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Description</th>
+                <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
               </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t border-slate-200">
-              <td colSpan={2} className="px-4 py-2 text-right text-xs text-slate-500">Subtotal</td>
-              <td className="px-4 py-2 text-right font-mono">{formatCurrency(rb.subtotal)}</td>
-            </tr>
-            {parseFloat(rb.tax_cgst) > 0 && (
-              <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">CGST</td>
-                  <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(rb.tax_cgst)}</td></tr>
-            )}
-            {parseFloat(rb.tax_sgst) > 0 && (
-              <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">SGST</td>
-                  <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(rb.tax_sgst)}</td></tr>
-            )}
-            {parseFloat(rb.tax_igst) > 0 && (
-              <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">IGST</td>
-                  <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(rb.tax_igst)}</td></tr>
-            )}
-            <tr className="bg-slate-50 border-t border-slate-200">
-              <td colSpan={2} className="px-4 py-2.5 text-right font-semibold">Total</td>
-              <td className="px-4 py-2.5 text-right font-mono font-bold">{formatCurrency(rb.total_amount)}</td>
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody>
+              {rb.items.map((it) => (
+                <tr key={it.id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-4 py-2.5">
+                    <div className="font-medium text-slate-900">{it.account_name}</div>
+                    <div className="text-xs text-slate-400 font-mono">{it.account_code}</div>
+                  </td>
+                  <td className="px-4 py-2.5 text-sm text-slate-600">{it.description || '—'}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{formatCurrency(it.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-slate-200">
+                <td colSpan={2} className="px-4 py-2 text-right text-xs text-slate-500">Subtotal</td>
+                <td className="px-4 py-2 text-right font-mono">{formatCurrency(rb.subtotal)}</td>
+              </tr>
+              {parseFloat(rb.tax_cgst) > 0 && (
+                <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">CGST</td>
+                    <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(rb.tax_cgst)}</td></tr>
+              )}
+              {parseFloat(rb.tax_sgst) > 0 && (
+                <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">SGST</td>
+                    <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(rb.tax_sgst)}</td></tr>
+              )}
+              {parseFloat(rb.tax_igst) > 0 && (
+                <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">IGST</td>
+                    <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(rb.tax_igst)}</td></tr>
+              )}
+              <tr className="bg-slate-50 border-t border-slate-200">
+                <td colSpan={2} className="px-4 py-2.5 text-right font-semibold">Total</td>
+                <td className="px-4 py-2.5 text-right font-mono font-bold">{formatCurrency(rb.total_amount)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </Card>
 
       <Card className="overflow-hidden p-0 mb-4">
-        <div className="px-5 py-3 border-b border-slate-100">
+        <div className="px-4 sm:px-5 py-3 border-b border-slate-100">
           <h2 className="text-sm font-semibold text-slate-900">Recently Generated</h2>
         </div>
         {rb.generated_recent.length === 0 ? (
           <div className="text-center py-6 text-sm text-slate-400">No bills generated yet</div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-100">
-              <tr>
-                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Bill #</th>
-                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Date</th>
-                <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
-                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rb.generated_recent.map((b) => (
-                <tr key={b.id} className="border-b border-slate-100 last:border-0">
-                  <td className="px-4 py-2.5">
-                    <Link to={`/bills/${b.id}`} className="text-teal-700 hover:underline font-medium">
-                      {b.bill_no || `BILL-${b.id}`}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-2.5 text-sm text-slate-600">{formatDate(b.bill_date)}</td>
-                  <td className="px-4 py-2.5 text-right font-mono">{formatCurrency(b.total_amount)}</td>
-                  <td className="px-4 py-2.5"><Badge variant="default">{b.status}</Badge></td>
+          <div className="table-scroll">
+            <table className="w-full text-sm min-w-[560px]">
+              <thead className="bg-slate-50 border-b border-slate-100">
+                <tr>
+                  <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Bill #</th>
+                  <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Date</th>
+                  <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
+                  <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rb.generated_recent.map((b) => (
+                  <tr key={b.id} className="border-b border-slate-100 last:border-0">
+                    <td className="px-4 py-2.5">
+                      <Link to={`/bills/${b.id}`} className="text-teal-700 hover:underline font-medium">
+                        {b.bill_no || `BILL-${b.id}`}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-slate-600 whitespace-nowrap">{formatDate(b.bill_date)}</td>
+                    <td className="px-4 py-2.5 text-right font-mono whitespace-nowrap">{formatCurrency(b.total_amount)}</td>
+                    <td className="px-4 py-2.5"><Badge variant="default">{b.status}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
@@ -266,7 +270,7 @@ export default function RecurringBillDetailPage() {
           <p className="text-sm text-slate-600">
             Bills already generated by this profile will not be touched. The template itself will be removed.
           </p>
-          <div className="flex gap-2 justify-end pt-4">
+          <div className="flex flex-wrap gap-2 justify-end pt-4">
             <Button variant="secondary" onClick={() => setConfirmDelete(false)}>Keep</Button>
             <Button variant="destructive" onClick={handleDelete} disabled={busy}>
               {busy && <Loader2 className="animate-spin" size={14} />} Delete

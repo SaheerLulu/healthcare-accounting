@@ -55,16 +55,16 @@ function DeductionsTab() {
     <div>
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <select value={section} onChange={(e) => setSection(e.target.value)}
-          className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
+          className="w-full sm:w-auto px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
           <option value="">All Sections</option>
           {TDS_SECTIONS.map((s) => <option key={s} value={s}>Sec {s}</option>)}
         </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)}
-          className="px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 capitalize">
+          className="w-full sm:w-auto px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 capitalize">
           <option value="">All Statuses</option>
           {TDS_STATUSES.map((s) => <option key={s} value={s} className="capitalize">{s.replace(/_/g, ' ')}</option>)}
         </select>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs text-slate-500 font-medium">Period</label>
           <PeriodPicker value={period} onChange={setPeriod} />
         </div>
@@ -212,7 +212,7 @@ export default function TDSPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>TDS</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>TDS</h1>
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Tax Deducted at Source — Updated rates for FY 2025-26</p>
       </div>
 

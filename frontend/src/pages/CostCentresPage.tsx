@@ -53,7 +53,7 @@ export default function CostCentresPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex items-baseline gap-2">
+        <div className="flex items-baseline gap-2 flex-wrap">
           <Layers size={18} style={{ color: 'var(--brand)' }} />
           <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             Cost Centres
@@ -62,7 +62,7 @@ export default function CostCentresPage() {
             · Tally-style departmental allocation master
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button variant="secondary" onClick={() => { setEditingCategory(null); setShowCategoryForm(true) }}>
             <Plus size={14} /> Category
           </Button>
@@ -89,55 +89,57 @@ export default function CostCentresPage() {
                 No categories yet — add one to start grouping cost centres
               </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
-                  <tr>
-                    <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Name</th>
-                    <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Description</th>
-                    <th className="text-center text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Centres</th>
-                    <th className="text-center text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Active</th>
-                    <th className="w-24" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {categories.map((c) => (
-                    <tr key={c.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
-                      <td className="px-4 py-2.5 font-medium" style={{ color: 'var(--ink)' }}>{c.name}</td>
-                      <td className="px-4 py-2.5" style={{ color: 'var(--ink-2)' }}>{c.description || '—'}</td>
-                      <td className="px-4 py-2.5 text-center mono" style={{ color: 'var(--ink-2)' }}>
-                        {c.centre_count ?? '—'}
-                      </td>
-                      <td className="px-4 py-2.5 text-center">
-                        <Badge variant={c.is_active ? 'success' : 'default'}>
-                          {c.is_active ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </td>
-                      <td className="px-2 py-2.5">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            className="p-1.5 rounded transition-colors"
-                            style={{ color: 'var(--ink-3)' }}
-                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
-                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
-                            onClick={() => { setEditingCategory(c); setShowCategoryForm(true) }}
-                          >
-                            <Pencil size={13} />
-                          </button>
-                          <button
-                            className="p-1.5 rounded transition-colors"
-                            style={{ color: 'var(--ink-3)' }}
-                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--danger)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
-                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
-                            onClick={() => removeCategory(c)}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </td>
+              <div className="table-scroll">
+                <table className="w-full text-sm min-w-[560px]">
+                  <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
+                    <tr>
+                      <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Name</th>
+                      <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Description</th>
+                      <th className="text-center text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Centres</th>
+                      <th className="text-center text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Active</th>
+                      <th className="w-24" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {categories.map((c) => (
+                      <tr key={c.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
+                        <td className="px-4 py-2.5 font-medium" style={{ color: 'var(--ink)' }}>{c.name}</td>
+                        <td className="px-4 py-2.5" style={{ color: 'var(--ink-2)' }}>{c.description || '—'}</td>
+                        <td className="px-4 py-2.5 text-center mono" style={{ color: 'var(--ink-2)' }}>
+                          {c.centre_count ?? '—'}
+                        </td>
+                        <td className="px-4 py-2.5 text-center">
+                          <Badge variant={c.is_active ? 'success' : 'default'}>
+                            {c.is_active ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </td>
+                        <td className="px-2 py-2.5">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              className="p-1.5 rounded transition-colors"
+                              style={{ color: 'var(--ink-3)' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
+                              onClick={() => { setEditingCategory(c); setShowCategoryForm(true) }}
+                            >
+                              <Pencil size={13} />
+                            </button>
+                            <button
+                              className="p-1.5 rounded transition-colors"
+                              style={{ color: 'var(--ink-3)' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--danger)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
+                              onClick={() => removeCategory(c)}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </Card>
 
@@ -151,55 +153,57 @@ export default function CostCentresPage() {
                 No cost centres yet
               </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
-                  <tr>
-                    <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Centre</th>
-                    <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Code</th>
-                    <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Category</th>
-                    <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Parent</th>
-                    <th className="text-center text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Active</th>
-                    <th className="w-24" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {centres.map((c) => (
-                    <tr key={c.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
-                      <td className="px-4 py-2.5 font-medium" style={{ color: 'var(--ink)' }}>{c.name}</td>
-                      <td className="px-4 py-2.5 mono text-xs" style={{ color: 'var(--ink-3)' }}>{c.code || '—'}</td>
-                      <td className="px-4 py-2.5" style={{ color: 'var(--ink-2)' }}>{c.category_name || '—'}</td>
-                      <td className="px-4 py-2.5" style={{ color: 'var(--ink-2)' }}>{c.parent_name || '—'}</td>
-                      <td className="px-4 py-2.5 text-center">
-                        <Badge variant={c.is_active ? 'success' : 'default'}>
-                          {c.is_active ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </td>
-                      <td className="px-2 py-2.5">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            className="p-1.5 rounded transition-colors"
-                            style={{ color: 'var(--ink-3)' }}
-                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
-                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
-                            onClick={() => { setEditingCentre(c); setShowCentreForm(true) }}
-                          >
-                            <Pencil size={13} />
-                          </button>
-                          <button
-                            className="p-1.5 rounded transition-colors"
-                            style={{ color: 'var(--ink-3)' }}
-                            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--danger)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
-                            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
-                            onClick={() => removeCentre(c)}
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        </div>
-                      </td>
+              <div className="table-scroll">
+                <table className="w-full text-sm min-w-[680px]">
+                  <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
+                    <tr>
+                      <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Centre</th>
+                      <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Code</th>
+                      <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Category</th>
+                      <th className="text-left text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Parent</th>
+                      <th className="text-center text-[10px] font-semibold uppercase mono px-4 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Active</th>
+                      <th className="w-24" />
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {centres.map((c) => (
+                      <tr key={c.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
+                        <td className="px-4 py-2.5 font-medium" style={{ color: 'var(--ink)' }}>{c.name}</td>
+                        <td className="px-4 py-2.5 mono text-xs" style={{ color: 'var(--ink-3)' }}>{c.code || '—'}</td>
+                        <td className="px-4 py-2.5" style={{ color: 'var(--ink-2)' }}>{c.category_name || '—'}</td>
+                        <td className="px-4 py-2.5" style={{ color: 'var(--ink-2)' }}>{c.parent_name || '—'}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          <Badge variant={c.is_active ? 'success' : 'default'}>
+                            {c.is_active ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </td>
+                        <td className="px-2 py-2.5">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              className="p-1.5 rounded transition-colors"
+                              style={{ color: 'var(--ink-3)' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
+                              onClick={() => { setEditingCentre(c); setShowCentreForm(true) }}
+                            >
+                              <Pencil size={13} />
+                            </button>
+                            <button
+                              className="p-1.5 rounded transition-colors"
+                              style={{ color: 'var(--ink-3)' }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--danger)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
+                              onClick={() => removeCentre(c)}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </Card>
         </>
@@ -284,7 +288,7 @@ function CategoryForm({ open, onOpenChange, editing, onSaved }: {
       <Field label="Description">
         <Input value={description} onChange={(e) => setDescription(e.target.value)} />
       </Field>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Toggle label="Allocate to Revenue" checked={allocateRev} onChange={setAllocateRev} />
         <Toggle label="Allocate to Non-Revenue" checked={allocateNonRev} onChange={setAllocateNonRev} />
       </div>
@@ -356,7 +360,7 @@ function CentreForm({ open, onOpenChange, editing, categories, centres, onSaved 
       onSubmit={submit}
       saving={saving}
     >
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <Field label="Name" required>
           <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         </Field>
@@ -411,7 +415,7 @@ function FormDialog({ open, onOpenChange, title, onSubmit, saving, children }: {
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 animate-fadeIn" style={{ background: 'rgba(12,30,37,0.45)' }} />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl p-5 animate-slideUp"
+          className="fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl p-5 animate-slideUp max-h-[85dvh] overflow-y-auto"
           style={{ background: 'var(--surface-0)', border: '1px solid var(--line)', boxShadow: '0 12px 40px rgba(0,0,0,0.18)' }}
         >
           <div className="flex items-start justify-between mb-3">

@@ -132,9 +132,9 @@ export default function BillDetailPage() {
 
       <div className="flex items-start justify-between mb-5 gap-4 flex-wrap">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <FileText size={18} className="text-slate-400" />
-            <h1 className="text-xl font-semibold" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <FileText size={18} className="text-slate-400 flex-shrink-0" />
+            <h1 className="text-lg sm:text-xl font-semibold min-w-0 break-all" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>
               {bill.bill_no || `BILL-${bill.id}`}
             </h1>
             <Badge variant={STATUS_BADGE[bill.status]}>{STATUS_LABEL[bill.status]}</Badge>
@@ -183,7 +183,7 @@ export default function BillDetailPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
         <Card className="p-4">
           <div className="text-xs text-slate-500 uppercase tracking-wider">Total</div>
           <div className="text-2xl font-semibold text-slate-900 mt-1 font-mono">{formatCurrency(bill.total_amount)}</div>
@@ -202,104 +202,108 @@ export default function BillDetailPage() {
 
       {/* Lines */}
       <Card className="overflow-hidden p-0 mb-4">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <h2 className="text-sm font-semibold text-slate-900">Line Items</h2>
           {bill.journal_entry_no && (
-            <Link to={`/journals/${bill.journal_entry}`} className="text-xs text-teal-700 hover:underline font-mono">
+            <Link to={`/journals/${bill.journal_entry}`} className="text-xs text-teal-700 hover:underline font-mono break-all">
               JE: {bill.journal_entry_no}
             </Link>
           )}
         </div>
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 border-b border-slate-100">
-            <tr>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Account</th>
-              <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Description</th>
-              <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {bill.lines.map((l) => (
-              <tr key={l.id} className="border-b border-slate-100 last:border-0">
-                <td className="px-4 py-2.5">
-                  <div className="font-medium text-slate-900">{l.account_name}</div>
-                  <div className="text-xs text-slate-400 font-mono">{l.account_code}</div>
-                </td>
-                <td className="px-4 py-2.5 text-slate-600 text-sm">{l.description || '—'}</td>
-                <td className="px-4 py-2.5 text-right font-mono">{formatCurrency(l.amount)}</td>
+        <div className="table-scroll">
+          <table className="w-full text-sm min-w-[560px]">
+            <thead className="bg-slate-50 border-b border-slate-100">
+              <tr>
+                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Account</th>
+                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Description</th>
+                <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
               </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="border-t border-slate-200">
-              <td colSpan={2} className="px-4 py-2 text-right text-xs text-slate-500">Subtotal</td>
-              <td className="px-4 py-2 text-right font-mono">{formatCurrency(bill.subtotal)}</td>
-            </tr>
-            {parseFloat(bill.tax_cgst) > 0 && (
-              <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">CGST</td>
-                  <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(bill.tax_cgst)}</td></tr>
-            )}
-            {parseFloat(bill.tax_sgst) > 0 && (
-              <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">SGST</td>
-                  <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(bill.tax_sgst)}</td></tr>
-            )}
-            {parseFloat(bill.tax_igst) > 0 && (
-              <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">IGST</td>
-                  <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(bill.tax_igst)}</td></tr>
-            )}
-            <tr className="bg-slate-50 border-t border-slate-200">
-              <td colSpan={2} className="px-4 py-2.5 text-right font-semibold text-slate-900">Total</td>
-              <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{formatCurrency(bill.total_amount)}</td>
-            </tr>
-          </tfoot>
-        </table>
+            </thead>
+            <tbody>
+              {bill.lines.map((l) => (
+                <tr key={l.id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-4 py-2.5">
+                    <div className="font-medium text-slate-900">{l.account_name}</div>
+                    <div className="text-xs text-slate-400 font-mono">{l.account_code}</div>
+                  </td>
+                  <td className="px-4 py-2.5 text-slate-600 text-sm">{l.description || '—'}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{formatCurrency(l.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-slate-200">
+                <td colSpan={2} className="px-4 py-2 text-right text-xs text-slate-500">Subtotal</td>
+                <td className="px-4 py-2 text-right font-mono">{formatCurrency(bill.subtotal)}</td>
+              </tr>
+              {parseFloat(bill.tax_cgst) > 0 && (
+                <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">CGST</td>
+                    <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(bill.tax_cgst)}</td></tr>
+              )}
+              {parseFloat(bill.tax_sgst) > 0 && (
+                <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">SGST</td>
+                    <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(bill.tax_sgst)}</td></tr>
+              )}
+              {parseFloat(bill.tax_igst) > 0 && (
+                <tr><td colSpan={2} className="px-4 py-1.5 text-right text-xs text-slate-500">IGST</td>
+                    <td className="px-4 py-1.5 text-right font-mono">{formatCurrency(bill.tax_igst)}</td></tr>
+              )}
+              <tr className="bg-slate-50 border-t border-slate-200">
+                <td colSpan={2} className="px-4 py-2.5 text-right font-semibold text-slate-900">Total</td>
+                <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{formatCurrency(bill.total_amount)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </Card>
 
       {/* Payments */}
       <Card className="overflow-hidden p-0 mb-4">
-        <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <h2 className="text-sm font-semibold text-slate-900">Payments</h2>
           <span className="text-xs text-slate-400">{bill.payments.length} payment{bill.payments.length === 1 ? '' : 's'}</span>
         </div>
         {bill.payments.length === 0 ? (
           <div className="text-center py-6 text-sm text-slate-400">No payments recorded yet</div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-100">
-              <tr>
-                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Date</th>
-                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Mode</th>
-                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Reference</th>
-                <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
-                <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">JE</th>
-                <th className="w-10" />
-              </tr>
-            </thead>
-            <tbody>
-              {bill.payments.map((p) => (
-                <tr key={p.id} className="border-b border-slate-100 last:border-0">
-                  <td className="px-4 py-2.5 text-sm text-slate-600">{formatDate(p.date)}</td>
-                  <td className="px-4 py-2.5">
-                    <Badge variant={p.mode === 'bank' ? 'info' : 'warning'}>{p.mode === 'bank' ? 'Bank' : 'Cash'}</Badge>
-                  </td>
-                  <td className="px-4 py-2.5 text-sm text-slate-500">{p.reference || '—'}</td>
-                  <td className="px-4 py-2.5 text-right font-mono font-medium text-emerald-700">{formatCurrency(p.amount)}</td>
-                  <td className="px-4 py-2.5">
-                    {p.journal_entry_no ? (
-                      <Link to={`/journals/${p.journal_entry}`} className="text-xs text-teal-700 hover:underline font-mono">{p.journal_entry_no}</Link>
-                    ) : '—'}
-                  </td>
-                  <td className="px-2 py-2.5">
-                    <button onClick={() => handleDeletePayment(p.id)}
-                      className="p-1.5 text-slate-300 hover:text-rose-600 rounded hover:bg-slate-100"
-                      title="Void payment">
-                      <Trash2 size={13} />
-                    </button>
-                  </td>
+          <div className="table-scroll">
+            <table className="w-full text-sm min-w-[680px]">
+              <thead className="bg-slate-50 border-b border-slate-100">
+                <tr>
+                  <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Date</th>
+                  <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Mode</th>
+                  <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Reference</th>
+                  <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
+                  <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">JE</th>
+                  <th className="w-10" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {bill.payments.map((p) => (
+                  <tr key={p.id} className="border-b border-slate-100 last:border-0">
+                    <td className="px-4 py-2.5 text-sm text-slate-600 whitespace-nowrap">{formatDate(p.date)}</td>
+                    <td className="px-4 py-2.5">
+                      <Badge variant={p.mode === 'bank' ? 'info' : 'warning'}>{p.mode === 'bank' ? 'Bank' : 'Cash'}</Badge>
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-slate-500">{p.reference || '—'}</td>
+                    <td className="px-4 py-2.5 text-right font-mono font-medium text-emerald-700 whitespace-nowrap">{formatCurrency(p.amount)}</td>
+                    <td className="px-4 py-2.5">
+                      {p.journal_entry_no ? (
+                        <Link to={`/journals/${p.journal_entry}`} className="text-xs text-teal-700 hover:underline font-mono whitespace-nowrap">{p.journal_entry_no}</Link>
+                      ) : '—'}
+                    </td>
+                    <td className="px-2 py-2.5">
+                      <button onClick={() => handleDeletePayment(p.id)}
+                        className="p-2.5 sm:p-1.5 text-slate-300 hover:text-rose-600 rounded hover:bg-slate-100"
+                        title="Void payment">
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
@@ -319,7 +323,7 @@ export default function BillDetailPage() {
           <p className="text-sm text-slate-600">
             Cancelling reverses the bill journal entry. Any recorded payments must be voided first.
           </p>
-          <div className="flex gap-2 justify-end pt-4">
+          <div className="flex flex-wrap gap-2 justify-end pt-4">
             <Button variant="secondary" onClick={() => setConfirmCancel(false)}>Keep open</Button>
             <Button variant="destructive" onClick={handleCancel} disabled={busy}>
               {busy && <Loader2 className="animate-spin" size={14} />} Cancel Bill
@@ -333,7 +337,7 @@ export default function BillDetailPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>Delete this draft bill?</DialogTitle></DialogHeader>
           <p className="text-sm text-slate-600">This cannot be undone. Drafts have no journal entry to reverse.</p>
-          <div className="flex gap-2 justify-end pt-4">
+          <div className="flex flex-wrap gap-2 justify-end pt-4">
             <Button variant="secondary" onClick={() => setConfirmDelete(false)}>Keep</Button>
             <Button variant="destructive" onClick={handleDelete} disabled={busy}>
               {busy && <Loader2 className="animate-spin" size={14} />} Delete
@@ -520,7 +524,7 @@ function AttachmentsCard({ bill, onChange }: { bill: Bill; onChange: () => void 
 
   return (
     <Card className="overflow-hidden p-0 mb-4">
-      <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+      <div className="px-4 sm:px-5 py-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
         <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
           <Paperclip size={14} className="text-slate-400" />
           Attachments
@@ -607,19 +611,21 @@ function AttachmentsCard({ bill, onChange }: { bill: Bill; onChange: () => void 
                     {a.uploaded_by_name && ` · ${a.uploaded_by_name}`}
                   </div>
                 </div>
+                {/* Touch devices never fire :hover, so the row actions have to
+                    be visible outright below the desktop breakpoint. */}
                 <a
                   href={a.file_url}
                   download={a.original_name}
                   target="_blank"
                   rel="noreferrer"
-                  className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 opacity-0 group-hover:opacity-100"
+                  className="p-2.5 sm:p-1.5 flex-shrink-0 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
                   title="Download"
                 >
                   <Download size={14} />
                 </a>
                 <button
                   onClick={() => handleDelete(a)}
-                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 opacity-0 group-hover:opacity-100"
+                  className="p-2.5 sm:p-1.5 flex-shrink-0 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
                   title="Remove"
                 >
                   <Trash2 size={14} />

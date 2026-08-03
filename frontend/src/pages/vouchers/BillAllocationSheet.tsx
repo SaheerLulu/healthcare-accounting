@@ -115,81 +115,85 @@ export function BillAllocationSheet({ open, onOpenChange, vendorId, vendorName, 
                 No outstanding bills for this supplier
               </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead className="border-b" style={{ borderColor: 'var(--line)' }}>
-                  <tr>
-                    <th className="w-8 px-2 py-2" />
-                    <th className="text-left text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Bill #</th>
-                    <th className="text-left text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Date</th>
-                    <th className="text-left text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Due</th>
-                    <th className="text-right text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Total</th>
-                    <th className="text-right text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Balance Due</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bills.map((b) => {
-                    const isSel = selected.has(b.id)
-                    const overdue = b.due_date && b.due_date < today
-                    return (
-                      <tr
-                        key={b.id}
-                        onClick={() => toggle(b.id)}
-                        className="border-b cursor-pointer transition-colors"
-                        style={{
-                          borderColor: 'var(--line)',
-                          backgroundColor: isSel ? 'rgba(15,157,154,0.08)' : 'transparent',
-                        }}
-                        onMouseEnter={(e) => {
-                          if (!isSel) e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)'
-                        }}
-                        onMouseLeave={(e) => {
-                          if (!isSel) e.currentTarget.style.backgroundColor = 'transparent'
-                        }}
-                      >
-                        <td className="px-2 py-2">
-                          <span
-                            className="inline-flex items-center justify-center w-4 h-4 rounded border"
-                            style={{
-                              borderColor: isSel ? 'var(--brand)' : 'var(--line)',
-                              background: isSel ? 'var(--brand)' : 'transparent',
-                              color: '#fff',
-                            }}
-                          >
-                            {isSel && <Check size={10} />}
-                          </span>
+              <div className="table-scroll">
+                {/* 440px stays inside the sheet's own content width, so the rail
+                    only engages once the sheet goes full-screen on a phone. */}
+                <table className="w-full text-sm min-w-[440px]">
+                  <thead className="border-b" style={{ borderColor: 'var(--line)' }}>
+                    <tr>
+                      <th className="w-8 px-2 py-2" />
+                      <th className="text-left text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Bill #</th>
+                      <th className="text-left text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Date</th>
+                      <th className="text-left text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Due</th>
+                      <th className="text-right text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Total</th>
+                      <th className="text-right text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Balance Due</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bills.map((b) => {
+                      const isSel = selected.has(b.id)
+                      const overdue = b.due_date && b.due_date < today
+                      return (
+                        <tr
+                          key={b.id}
+                          onClick={() => toggle(b.id)}
+                          className="border-b cursor-pointer transition-colors"
+                          style={{
+                            borderColor: 'var(--line)',
+                            backgroundColor: isSel ? 'rgba(15,157,154,0.08)' : 'transparent',
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isSel) e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)'
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isSel) e.currentTarget.style.backgroundColor = 'transparent'
+                          }}
+                        >
+                          <td className="px-2 py-2">
+                            <span
+                              className="inline-flex items-center justify-center w-4 h-4 rounded border"
+                              style={{
+                                borderColor: isSel ? 'var(--brand)' : 'var(--line)',
+                                background: isSel ? 'var(--brand)' : 'transparent',
+                                color: '#fff',
+                              }}
+                            >
+                              {isSel && <Check size={10} />}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 mono text-xs" style={{ color: 'var(--ink)' }}>
+                            {b.bill_no || `BILL-${b.id}`}
+                          </td>
+                          <td className="px-2 py-2 text-xs" style={{ color: 'var(--ink-2)' }}>
+                            {formatDate(b.bill_date)}
+                          </td>
+                          <td className="px-2 py-2 text-xs" style={{ color: overdue ? 'var(--danger)' : 'var(--ink-2)' }}>
+                            {b.due_date ? formatDate(b.due_date) : '—'}
+                          </td>
+                          <td className="px-2 py-2 text-right font-mono" style={{ color: 'var(--ink-2)' }}>
+                            {formatCurrency(b.total_amount)}
+                          </td>
+                          <td className="px-2 py-2 text-right font-mono font-semibold" style={{ color: 'var(--ink)' }}>
+                            {formatCurrency(b.balance_due)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                  {selected.size > 0 && (
+                    <tfoot>
+                      <tr style={{ background: 'var(--surface-1)' }}>
+                        <td colSpan={5} className="px-2 py-2 text-right text-xs font-semibold" style={{ color: 'var(--ink)' }}>
+                          Selected ({selected.size}) total
                         </td>
-                        <td className="px-2 py-2 mono text-xs" style={{ color: 'var(--ink)' }}>
-                          {b.bill_no || `BILL-${b.id}`}
-                        </td>
-                        <td className="px-2 py-2 text-xs" style={{ color: 'var(--ink-2)' }}>
-                          {formatDate(b.bill_date)}
-                        </td>
-                        <td className="px-2 py-2 text-xs" style={{ color: overdue ? 'var(--danger)' : 'var(--ink-2)' }}>
-                          {b.due_date ? formatDate(b.due_date) : '—'}
-                        </td>
-                        <td className="px-2 py-2 text-right font-mono" style={{ color: 'var(--ink-2)' }}>
-                          {formatCurrency(b.total_amount)}
-                        </td>
-                        <td className="px-2 py-2 text-right font-mono font-semibold" style={{ color: 'var(--ink)' }}>
-                          {formatCurrency(b.balance_due)}
+                        <td className="px-2 py-2 text-right font-mono font-bold" style={{ color: 'var(--brand)' }}>
+                          {formatCurrency(totals.sum)}
                         </td>
                       </tr>
-                    )
-                  })}
-                </tbody>
-                {selected.size > 0 && (
-                  <tfoot>
-                    <tr style={{ background: 'var(--surface-1)' }}>
-                      <td colSpan={5} className="px-2 py-2 text-right text-xs font-semibold" style={{ color: 'var(--ink)' }}>
-                        Selected ({selected.size}) total
-                      </td>
-                      <td className="px-2 py-2 text-right font-mono font-bold" style={{ color: 'var(--brand)' }}>
-                        {formatCurrency(totals.sum)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
             )}
           </SheetBody>
           <SheetFooter>

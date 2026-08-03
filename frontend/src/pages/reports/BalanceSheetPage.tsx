@@ -27,7 +27,7 @@ function Section({
   const c = SECTION_COLORS[color]
   return (
     <Card className="overflow-hidden p-0">
-      <div className="px-5 py-3 border-b" style={{ background: c.bg, borderColor: c.border }}>
+      <div className="px-4 sm:px-5 py-3 border-b" style={{ background: c.bg, borderColor: c.border }}>
         <h2 className="text-sm font-semibold" style={{ color: c.fg }}>{title}</h2>
       </div>
       <Table>
@@ -76,7 +76,7 @@ export default function BalanceSheetPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-5">
       <div>
-        <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Balance Sheet</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Balance Sheet</h1>
         <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>Financial position at a point in time.</p>
       </div>
 
@@ -97,12 +97,12 @@ export default function BalanceSheetPage() {
       )}
 
       {/* Filter */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>As of</label>
-          <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-auto" />
+      <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+        <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-none">
+          <label className="text-xs font-medium mono uppercase whitespace-nowrap" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>As of</label>
+          <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button onClick={load} disabled={loading}>
+        <Button onClick={load} disabled={loading} className="w-full sm:w-auto">
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>
@@ -128,13 +128,13 @@ export default function BalanceSheetPage() {
 
           <Card>
             <CardContent>
-              <div className="flex items-center justify-between py-2 border-b" style={{ borderColor: 'var(--line)' }}>
+              <div className="flex items-center justify-between gap-3 py-2 border-b" style={{ borderColor: 'var(--line)' }}>
                 <span className="text-sm font-medium" style={{ color: 'var(--ink-2)' }}>Total Assets</span>
-                <span className="mono font-semibold" style={{ color: 'var(--info)' }}>{formatCurrency(report.assets.total)}</span>
+                <span className="mono font-semibold whitespace-nowrap" style={{ color: 'var(--info)' }}>{formatCurrency(report.assets.total)}</span>
               </div>
-              <div className="flex items-center justify-between py-2">
+              <div className="flex items-center justify-between gap-3 py-2">
                 <span className="text-sm font-medium" style={{ color: 'var(--ink-2)' }}>Total Liabilities + Equity</span>
-                <span className="mono font-semibold" style={{ color: 'var(--ink)' }}>{formatCurrency(report.total_liabilities_equity)}</span>
+                <span className="mono font-semibold whitespace-nowrap" style={{ color: 'var(--ink)' }}>{formatCurrency(report.total_liabilities_equity)}</span>
               </div>
             </CardContent>
           </Card>

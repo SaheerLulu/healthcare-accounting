@@ -45,9 +45,9 @@ export default function NotificationsPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-5">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
         <div>
-          <h1 className="text-xl font-semibold flex items-center gap-2"
+          <h1 className="text-lg sm:text-xl font-semibold flex items-center gap-2"
               style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             <Bell size={20} /> Notifications
           </h1>
@@ -83,8 +83,8 @@ export default function NotificationsPage() {
                 {items.map((n) => (
                   <Card key={n.id} className={`p-4 ${n.is_read ? 'opacity-60' : ''}`}>
                     <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
                           <Badge variant={PRIORITY_VARIANT[n.priority] || 'default'}>{n.priority}</Badge>
                           <span className="text-xs" style={{ color: 'var(--ink-3)' }}>{n.kind}</span>
                           <span className="text-xs" style={{ color: 'var(--ink-3)' }}>· {formatDate(n.created_at.slice(0, 10))}</span>
@@ -96,7 +96,7 @@ export default function NotificationsPage() {
                         )}
                       </div>
                       {!n.is_read && (
-                        <Button size="sm" variant="ghost" onClick={async () => {
+                        <Button size="sm" variant="ghost" className="flex-shrink-0" onClick={async () => {
                           try { await markNotificationRead(n.id); load() }
                           catch { toast.error('Failed') }
                         }}>Mark read</Button>
@@ -150,7 +150,7 @@ function PreferencesPanel() {
 
   return (
     <Card className="overflow-hidden p-0">
-      <div className="px-5 py-3 border-b" style={{ borderColor: 'var(--line)', background: 'var(--surface-1)' }}>
+      <div className="px-4 sm:px-5 py-3 border-b" style={{ borderColor: 'var(--line)', background: 'var(--surface-1)' }}>
         <h2 className="text-sm font-semibold" style={{ color: 'var(--ink)' }}>Notification kinds</h2>
         <p className="text-xs mt-0.5" style={{ color: 'var(--ink-3)' }}>
           Muted kinds disappear from the bell and the inbox. Other users (and other
@@ -159,13 +159,13 @@ function PreferencesPanel() {
       </div>
       <ul className="divide-y" style={{ borderColor: 'var(--line)' }}>
         {rows.map((r) => (
-          <li key={r.kind} className="flex items-center justify-between px-5 py-3"
+          <li key={r.kind} className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3"
               style={{ borderColor: 'var(--line)' }}>
-            <div>
+            <div className="min-w-0">
               <div className="text-sm font-medium" style={{ color: 'var(--ink)' }}>{r.label}</div>
-              <div className="text-xs mono" style={{ color: 'var(--ink-3)' }}>{r.kind}</div>
+              <div className="text-xs mono break-all" style={{ color: 'var(--ink-3)' }}>{r.kind}</div>
             </div>
-            <div className="inline-flex items-center gap-2.5">
+            <div className="inline-flex items-center gap-2.5 flex-shrink-0">
               <span className="text-xs" style={{ color: r.muted ? 'var(--ink-3)' : 'var(--ink-2)' }}>
                 {r.muted ? 'Muted' : 'Active'}
               </span>

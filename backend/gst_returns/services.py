@@ -198,13 +198,21 @@ class GSTR1Generator:
                 rate=gst_rate,
             ))
 
-            # Collect HSN data from lines
+            # Collect HSN data from lines. A clinical service line has no product
+            # and no HSN — it reports its SAC (Chapter 99) and its own description.
+            # Before POSOrderLineRO.product became nullable, the `if line.product`
+            # guard below did not save you: Django's forward-FK descriptor raises
+            # RelatedObjectDoesNotExist on a NULL column of a null=False FK.
             pos_segment = 'B2B' if customer_gstin else 'B2C'
             for line in pos.lines.all():
-                hsn = line.product.pharma_hsn_code if line.product else ''
+                if getattr(line, 'is_service', False):
+                    hsn = line.sac_code or ''
+                    label = line.service_description or 'Service'
+                else:
+                    hsn = line.product.pharma_hsn_code if line.product_id else ''
+                    label = line.product.name if line.product_id else ''
                 rate = line.tax_percent
-                bucket = _hsn_bucket(hsn, rate, pos_segment,
-                                     line.product.name if line.product else '')
+                bucket = _hsn_bucket(hsn, rate, pos_segment, label)
                 line_inclusive = line.line_total
                 line_taxable = back_calculate_taxable(line_inclusive, rate)
                 line_split = compute_tax_split(line_taxable, rate, supply_type)

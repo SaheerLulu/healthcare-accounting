@@ -87,7 +87,7 @@ export default function RecurringBillsListPage() {
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Recurring Bills</h1>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Recurring Bills</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
             Templates that auto-generate bills on a schedule (rent, utilities, retainers).
             {counts.due > 0 && (
@@ -97,7 +97,7 @@ export default function RecurringBillsListPage() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button variant="secondary" size="sm" onClick={handleRunDue} disabled={running}>
             {running ? <Loader2 className="animate-spin" size={14} /> : <Play size={14} />}
             Run Due Now
@@ -191,7 +191,7 @@ function Pill({ label, count, active, dotColor, onClick }: {
   return (
     <button
       onClick={onClick}
-      className="inline-flex items-center gap-2 px-3 h-8 rounded-full text-xs font-medium transition-colors"
+      className="inline-flex items-center gap-2 px-3 h-9 sm:h-8 rounded-full text-xs font-medium transition-colors"
       style={{
         background: active ? 'rgba(15,157,154,0.10)' : 'var(--surface-0)',
         border: `1px solid ${active ? 'rgba(15,157,154,0.35)' : 'var(--line)'}`,

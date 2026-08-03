@@ -28,6 +28,8 @@ const SheetContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { width?: 'sm' | 'md' | 'lg' | 'xl' }
 >(({ className, children, width = 'md', ...props }, ref) => {
+  // Below each cap the sheet is simply full-width — a phone has no room
+  // for the underlying page to show through, so it reads as a full screen.
   const widthMap = {
     sm: 'max-w-sm',
     md: 'max-w-md',
@@ -57,7 +59,7 @@ SheetContent.displayName = 'SheetContent'
 function SheetHeader({ children, className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('flex items-center justify-between px-5 py-4 border-b', className)}
+      className={cn('flex items-center justify-between px-4 sm:px-5 py-4 border-b flex-shrink-0', className)}
       style={{ borderColor: 'var(--color-card-border)' }}
       {...props}
     >
@@ -84,7 +86,7 @@ SheetTitle.displayName = 'SheetTitle'
 
 function SheetBody({ children, className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn('flex-1 overflow-y-auto px-5 py-4', className)} {...props}>
+    <div className={cn('flex-1 overflow-y-auto overscroll-contain px-4 sm:px-5 py-4', className)} {...props}>
       {children}
     </div>
   )
@@ -93,7 +95,7 @@ function SheetBody({ children, className, ...props }: React.HTMLAttributes<HTMLD
 function SheetFooter({ children, className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('flex items-center justify-end gap-2 px-5 py-3 border-t', className)}
+      className={cn('flex flex-wrap items-center justify-end gap-2 px-4 sm:px-5 py-3 border-t safe-bottom', className)}
       style={{ borderColor: 'var(--color-card-border)', backgroundColor: 'var(--color-grey-light)' }}
       {...props}
     >

@@ -54,21 +54,24 @@ export default function ReceivablesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
-  // Customer-level outstanding deduped — same party appearing on multiple
-  // invoices contributes once to the header total.
+  // Each row now carries its own remaining balance, so the total is a plain
+  // sum. It used to read customer_outstanding — the party's whole balance —
+  // once per party, because per-invoice figures did not net part-receipts.
   const totals = useMemo(() => {
-    const perCustomer = new Map<number, number>()
-    for (const r of rows) perCustomer.set(r.party_id, parseFloat((r.customer_outstanding ?? '0')) || 0)
+    const customers = new Set<number>()
     let sum = 0
-    perCustomer.forEach((v) => { sum += v })
-    return { invoiceCount: rows.length, customerCount: perCustomer.size, totalOutstanding: sum }
+    for (const r of rows) {
+      customers.add(r.party_id)
+      sum += parseFloat(r.outstanding_amount ?? r.amount ?? '0') || 0
+    }
+    return { invoiceCount: rows.length, customerCount: customers.size, totalOutstanding: sum }
   }, [rows])
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             Receivables
           </h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>
@@ -81,17 +84,17 @@ export default function ReceivablesPage() {
             . Click Receive on an invoice to record a payment from that customer.
           </p>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap w-full sm:w-auto">
           <Input
             type="text"
             placeholder="Search invoice # or customer…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-56"
+            className="w-full sm:w-56"
           />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>As of</label>
-            <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-auto" />
+            <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-full sm:w-auto" />
           </div>
         </div>
       </div>
@@ -114,7 +117,7 @@ export default function ReceivablesPage() {
                 <Th className="text-left">Type</Th>
                 <Th className="text-left">Customer</Th>
                 <Th className="text-right px-3">Invoice Amount</Th>
-                <Th className="text-right px-3">Customer Outstanding</Th>
+                <Th className="text-right px-3">Outstanding</Th>
                 <Th className="w-[140px]" />
               </Tr>
             </Thead>
@@ -135,7 +138,7 @@ export default function ReceivablesPage() {
                       style={{ color: 'var(--ink)' }}
                     >
                       {r.party_name}
-                      <ExternalLink size={11} className="opacity-0 group-hover:opacity-100" style={{ color: 'var(--brand)' }} />
+                      <ExternalLink size={11} className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100" style={{ color: 'var(--brand)' }} />
                     </Link>
                   </Td>
                   <Td className="text-right mono px-3" style={{ color: 'var(--ink)' }}>
@@ -143,10 +146,10 @@ export default function ReceivablesPage() {
                   </Td>
                   <Td className="text-right mono font-semibold px-3"
                     style={{ color: 'var(--warning)' }}>
-                    {formatCurrency((r.customer_outstanding ?? '0'))}
+                    {formatCurrency(r.outstanding_amount ?? r.amount)}
                   </Td>
                   <Td className="text-right pr-3">
-                    <div className="flex items-center justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center justify-end gap-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                       <Button size="sm" onClick={() => setReceiving(r)}>
                         <Wallet size={13} /> Receive
                       </Button>
@@ -230,7 +233,7 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
           </SheetHeader>
           <SheetBody>
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Date" required>
                   <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
                 </Field>

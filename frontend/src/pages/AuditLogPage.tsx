@@ -130,16 +130,16 @@ export default function AuditLogPage() {
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div>
-        <h1 className="text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Audit Log</h1>
+        <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Audit Log</h1>
         <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>Track all create, update, delete, and system actions.</p>
       </div>
 
       {/* Filters */}
       <form onSubmit={handleSearch} className="flex flex-wrap gap-2 items-end">
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
           <Input
-            className="pl-8 pr-3 w-52"
+            className="pl-8 pr-3 w-full sm:w-52"
             placeholder="Search object / user…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -147,7 +147,7 @@ export default function AuditLogPage() {
         </div>
 
         <select
-          className="h-9 px-3 text-sm rounded-md outline-none"
+          className="h-9 px-3 text-sm rounded-md outline-none flex-1 sm:flex-initial"
           style={{ border: '1px solid var(--line)', background: 'var(--surface-0)', color: 'var(--ink)' }}
           value={filterAction}
           onChange={(e) => { setFilterAction(e.target.value); setPage(1) }}
@@ -159,7 +159,7 @@ export default function AuditLogPage() {
         </select>
 
         <select
-          className="h-9 px-3 text-sm rounded-md outline-none"
+          className="h-9 px-3 text-sm rounded-md outline-none flex-1 sm:flex-initial"
           style={{ border: '1px solid var(--line)', background: 'var(--surface-0)', color: 'var(--ink)' }}
           value={filterModel}
           onChange={(e) => { setFilterModel(e.target.value); setPage(1) }}
@@ -170,16 +170,18 @@ export default function AuditLogPage() {
           ))}
         </select>
 
-        <div className="flex items-center gap-1.5">
-          <Input type="date" className="w-auto" value={dateFrom}
+        {/* A date input can't render below ~172px, so a side-by-side range
+            overflows a 320px phone however hard flex tries to shrink it. */}
+        <div className="flex flex-col sm:flex-row w-full sm:w-auto sm:items-center gap-1.5">
+          <Input type="date" className="w-full sm:w-auto sm:flex-initial" value={dateFrom}
             onChange={(e) => { setDateFrom(e.target.value); setPage(1) }} />
-          <span className="text-sm" style={{ color: 'var(--ink-3)' }}>–</span>
-          <Input type="date" className="w-auto" value={dateTo}
+          <span className="hidden sm:inline text-sm" style={{ color: 'var(--ink-3)' }}>–</span>
+          <Input type="date" className="w-full sm:w-auto sm:flex-initial" value={dateTo}
             onChange={(e) => { setDateTo(e.target.value); setPage(1) }} />
         </div>
 
-        <Button type="submit" size="sm">Search</Button>
-        <Button type="button" size="sm" variant="secondary" onClick={handleExport} disabled={exporting}>
+        <Button type="submit" size="sm" className="flex-1 sm:flex-initial">Search</Button>
+        <Button type="button" size="sm" variant="secondary" className="flex-1 sm:flex-initial" onClick={handleExport} disabled={exporting}>
           <Download size={14} /> {exporting ? 'Exporting…' : 'Export CSV'}
         </Button>
       </form>

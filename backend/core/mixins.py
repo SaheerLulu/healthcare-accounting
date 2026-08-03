@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
@@ -51,13 +52,27 @@ def assert_location_access(request, location_id):
 def require_location_or_all_access(request):
     """Resolve the active location for report-style endpoints.
 
-    Returns the active location, or None for admin/all-access users (the
-    consolidated all-stores view). Regular users without a valid
-    X-Location-Id header are refused instead of silently falling through
-    to unscoped, all-location data.
+    Returns the active location, or None for the consolidated all-stores view.
+    Regular users without a valid X-Location-Id header are refused instead of
+    silently falling through to unscoped, all-location data.
+
+    "All stores" means *no header*. A header that was sent but did not resolve
+    — a stale store id left in localStorage, say — is an error, not a licence
+    to widen the query: an all-access user would otherwise get every branch's
+    money reported under the one store name the switcher is still showing.
     """
     location = get_active_location(request)
-    if location is None and not _has_all_location_access(request.user):
+    if location is not None:
+        return location
+
+    requested = (request.META.get('HTTP_X_LOCATION_ID') or '').strip()
+    if requested and requested.lower() != 'all':
+        raise PermissionDenied(
+            'The selected store could not be resolved. Re-pick it from the '
+            'store switcher.'
+        )
+
+    if not _has_all_location_access(request.user):
         raise PermissionDenied(
             'A valid X-Location-Id header for a location you are assigned '
             'to is required.'
@@ -98,6 +113,13 @@ class LocationFilterMixin:
             if isinstance(data, dict) and data.get('location_id') not in (None, ''):
                 assert_location_access(request, data.get('location_id'))
 
+    # Whether a row with no location is company-wide (visible from every store)
+    # or simply unscoped. Off by default: for transactional models an untagged
+    # row is a data defect, and surfacing it in every store would leak. Master
+    # records that are genuinely shared — a single company bank account — opt
+    # in, and must have a write guard that agrees.
+    location_allows_null = False
+
     def get_queryset(self):
         qs = super().get_queryset()
         location = get_active_location(self.request)
@@ -106,6 +128,11 @@ class LocationFilterMixin:
             return qs
 
         if location:
+            if self.location_allows_null:
+                return qs.filter(
+                    Q(**{self.location_field: location.id})
+                    | Q(**{f'{self.location_field}__isnull': True})
+                )
             return qs.filter(**{self.location_field: location.id})
 
         return qs.none()

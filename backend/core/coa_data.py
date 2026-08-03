@@ -193,7 +193,7 @@ LEAVES = [
     ('4300', 'Sales - Lab Services',           'REVENUE',   'Sales',             '4000', None),
     ('4310', 'Sales - Diagnostic Services',    'REVENUE',   'Sales',             '4000', None),
     ('4320', 'Sales - Consultation',           'REVENUE',   'Sales',             '4000', 'CONSULTATION_INCOME'),
-    ('4330', 'Sales - Procedure / Day-care',   'REVENUE',   'Sales',             '4000', None),
+    ('4330', 'Sales - Procedure / Day-care',   'REVENUE',   'Sales',             '4000', 'SERVICE_INCOME'),
     ('4340', 'Sales - Insurance Settlement',   'REVENUE',   'Sales',             '4000', None),
     # Contra-revenue
     ('5200', 'Sales Returns',                  'REVENUE',   'Other_Expense',     '4000', 'SALES_RETURNS'),
@@ -339,4 +339,7 @@ OPERATIONAL_KEYS = frozenset({
     'INVENTORY_LOSS', 'EXPIRY_LOSS', 'STOCK_AUDIT_VARIANCE',
     # Doctor / front-office consultation income
     'CONSULTATION_INCOME',
+    # Taxable clinical services billed at the pharmacy counter (a cosmetic or
+    # aesthetic procedure is NOT exempt, so it must not land in 4320).
+    'SERVICE_INCOME',
 })
