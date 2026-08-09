@@ -798,6 +798,17 @@ class PettyCashTxnRO(models.Model):
     txn_date = models.DateField()
     description = models.CharField(max_length=255, blank=True)
     bank_reference = models.CharField(max_length=255, blank=True)
+    # The GL account the counter picked for this movement — a bank account for
+    # a deposit, an expense head for an expense. Pharmacy writes it as a bare
+    # core_chartofaccount.id (it owns no FK to our tables and must not declare
+    # one), so it stays an integer here rather than becoming a relation. NULL
+    # means "use the AccountMapping default" — which is every row written
+    # before the pharmacy grew the column.
+    #
+    # This column only exists once pharmacy migration inventory.0011 has run.
+    # Deploy pharmacy first: an accounting image that selects it against an
+    # un-migrated database raises ProgrammingError on every petty-cash row.
+    ledger_account = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField()
 
     class Meta:

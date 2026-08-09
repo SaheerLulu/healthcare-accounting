@@ -1720,6 +1720,74 @@ class JournalAutoGenerationService:
         entry.post()
         return entry
 
+    # Mapping keys whose accounts the stock integration posts on its own. A
+    # manual petty-cash movement against one of them silently breaks the
+    # stock-to-GL reconciliation. Mirrors _SYSTEM_POSTED_KEYS in the pharmacy's
+    # inventory/accounting_accounts.py — keep the two in step.
+    SYSTEM_POSTED_PETTY_CASH_KEYS = (
+        'COGS', 'CLOSING_STOCK', 'INVENTORY_LOSS', 'EXPIRY_LOSS',
+        'STOCK_AUDIT_VARIANCE',
+    )
+
+    def _picked_petty_cash_account(self, txn, loc):
+        """The chart account a petty-cash movement names, or None for default.
+
+        `getattr` with a default, never a bare attribute read: the RO mirror
+        may not declare `ledger_account` yet (a stale accounting deploy), and
+        the test doubles this service is handed are plain namespaces. Same
+        reason `generate_sales_return` reads `refund_method` this way.
+
+        Validation repeats the pharmacy's entry-time checks on purpose. There
+        is no foreign key between the two apps and there cannot be one, so an
+        account can be renamed, deactivated, turned into a group account or
+        deleted between entry and posting. On a bad pick this RAISES rather
+        than quietly falling back to the mapping default: `sync_petty_cash`
+        turns the raise into a visible SyncError that `retry_failed` re-drives
+        once the chart is fixed, whereas a silent fallback would post the
+        WRONG account and look like a success.
+        """
+        chosen = getattr(txn, 'ledger_account', None)
+        if not chosen:
+            return None
+        from core.models import ChartOfAccount
+        # banking.services imports THIS module at import time, so this one has
+        # to stay function-local or the two deadlock on import.
+        from banking.services import _assert_account_usable
+
+        role = 'deposit' if txn.txn_type == 'deposit' else 'expense'
+        try:
+            account = ChartOfAccount.objects.get(pk=chosen)
+        except ChartOfAccount.DoesNotExist:
+            raise ValueError(
+                f'Petty cash #{txn.id} names chart account {chosen}, which no '
+                f'longer exists.')
+        # Leaf / active / not-another-store's-clone, shared with the banking API.
+        _assert_account_usable(account, loc, role=role)
+        if role == 'deposit':
+            if account.account_subtype != 'Bank':
+                raise ValueError(
+                    f'{account.account_code} {account.account_name} is not a bank '
+                    f'account — a cash deposit must debit one.')
+        elif (account.account_type != 'EXPENSE'
+                or account.account_subtype != 'Other_Expense'):
+            raise ValueError(
+                f'{account.account_code} {account.account_name} is not an expense '
+                f'head — a petty expense must debit one.')
+        # COGS and the stock-loss heads are perfectly ordinary EXPENSE leaves,
+        # so nothing above stops a petty expense landing in cost of goods sold
+        # and detaching gross margin from the stock ledger. The pharmacy hides
+        # and refuses these too; this is the backstop that does not depend on
+        # which pharmacy version wrote the row.
+        if AccountMapping.objects.filter(
+                account_id=account.id,
+                key__in=self.SYSTEM_POSTED_PETTY_CASH_KEYS).exists():
+            raise ValueError(
+                f'{account.account_code} {account.account_name} is posted '
+                f'automatically by the stock integration and cannot take a '
+                f'petty-cash movement.')
+        return account
+
+    @transaction.atomic
     def generate_petty_cash(self, txn_id):
         """Auto-post a pharmacy-counter petty-cash movement.
 
@@ -1729,6 +1797,14 @@ class JournalAutoGenerationService:
         Cash POS sales already accumulate in the 1110 Cash GL via sync_pos;
         deposits move that cash to the bank and expenses drain it. Idempotent
         via reference_type='PettyCash' (reference_id = the PettyCashTxn id).
+
+        The DEBIT leg honours the account the counter picked
+        (`txn.ledger_account`) — a store has several banks and a whole family
+        of expense heads, so collapsing every movement onto the single
+        AccountMapping default made the books useless. NULL falls back to that
+        default, which is what every pre-feature row does, so history re-posts
+        byte-identically under a full resync. The CREDIT leg is always Cash:
+        the money leaves the drawer either way.
         """
         if self._entry_exists('PettyCash', txn_id):
             return None
@@ -1736,18 +1812,21 @@ class JournalAutoGenerationService:
         amount = Decimal(str(txn.amount or 0)).quantize(Decimal('0.01'))
         if amount <= 0:
             return None
+        if txn.txn_type not in ('deposit', 'expense'):
+            return None
         loc = txn.location_id
         cash_acct = self._acct('CASH', loc)
+        # Resolve every account BEFORE the entry is created, so a rejected
+        # pick cannot leave a half-written unposted entry behind.
+        picked = self._picked_petty_cash_account(txn, loc)
         if txn.txn_type == 'deposit':
-            debit_acct = self._acct('BANK', loc)
+            debit_acct = picked or self._acct('BANK', loc)
             default_note = 'Cash deposited to bank'
             voucher = 'CONTRA'
-        elif txn.txn_type == 'expense':
-            debit_acct = self._acct('PETTY_EXPENSE', loc)
+        else:
+            debit_acct = picked or self._acct('PETTY_EXPENSE', loc)
             default_note = 'Petty cash expense'
             voucher = 'PAYMENT'
-        else:
-            return None
 
         narration = (txn.description or default_note)
         if txn.bank_reference:
