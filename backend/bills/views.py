@@ -34,6 +34,14 @@ class BillViewSet(LocationFilterMixin, viewsets.ModelViewSet):
     """Bills (vendor invoices for non-inventory expenses)."""
 
     queryset = Bill.objects.prefetch_related('lines__account', 'payments').select_related('journal_entry', 'created_by')
+    # The default PAGE_SIZE of 50 silently truncated every bill list: Payables
+    # and the Bills list compute their totals, footer count and tab badges from
+    # the rows they received, and neither screen has a pager — so bill 51 and
+    # beyond were unreachable and their Pay button could never be clicked.
+    # PageNumberPagination ships with no page_size_query_param either, so
+    # ?page_size=200 was a no-op. Unpaginated, like the ~20 other master/list
+    # viewsets in this codebase.
+    pagination_class = None
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):

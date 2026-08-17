@@ -199,7 +199,13 @@ class JournalEntrySerializer(serializers.ModelSerializer):
 class JournalEntryLineCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = JournalEntryLine
+        # 'id' is echoed back on create/update because the voucher screens key
+        # their bill-wise allocations off the saved line pk — without it every
+        # `if (drLine?.id)` guard was false and createBillReference never ran,
+        # so no voucher in the app could write a bill allocation. DRF marks the
+        # pk read-only, so it never reaches create()/update()'s **line_data.
         fields = [
+            'id',
             'account',
             'debit',
             'credit',
@@ -207,6 +213,7 @@ class JournalEntryLineCreateSerializer(serializers.ModelSerializer):
             'party_type',
             'party_id',
         ]
+        read_only_fields = ['id']
 
     def validate(self, data):
         debit = data.get('debit', 0)

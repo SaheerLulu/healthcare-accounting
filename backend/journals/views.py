@@ -39,8 +39,9 @@ class JournalEntryFilter(django_filters.FilterSet):
     is_posted = django_filters.BooleanFilter(field_name='is_posted')
     narration = django_filters.CharFilter(field_name='narration', lookup_expr='icontains')
     entry_no = django_filters.CharFilter(field_name='entry_no', lookup_expr='icontains')
-    # One search box on the journals page matches either the voucher number
-    # or the narration — ANDing the two separate filters would return nothing.
+    # One search box on the journals page matches the voucher number, the
+    # narration, or the source-document number — ANDing the separate filters
+    # would return nothing.
     q = django_filters.CharFilter(method='filter_q')
     # WP 619 — extra filters
     account = django_filters.NumberFilter(method='filter_account')
@@ -56,9 +57,33 @@ class JournalEntryFilter(django_filters.FilterSet):
                   'narration', 'entry_no', 'account', 'party_type', 'party_id',
                   'amount_min', 'amount_max', 'cost_center']
 
+    # reference_id is a PositiveIntegerField — anything past this ceiling can
+    # never match a row, and handing it to Postgres risks an out-of-range error.
+    REFERENCE_ID_MAX = 2147483647
+
     def filter_q(self, qs, name, value):
+        """Voucher no. / narration / source-document no.
+
+        The journals list renders the source document as "PurchaseReturn #4021"
+        (reference_type + reference_id), but that number was unsearchable — a
+        purely numeric term now also matches reference_id.
+
+        Deliberately kept join-free: filter_q is declared BEFORE
+        amount_min/amount_max, so a join here would leave their
+        annotate(Sum('lines__debit')) totalling only the joined rows (and would
+        make .distinct() mandatory). If a joined condition is ever needed, use
+        the non-joining `qs.filter(pk__in=JournalEntry.objects.filter(Q(...)).values('pk'))`.
+        """
         from django.db.models import Q
-        return qs.filter(Q(entry_no__icontains=value) | Q(narration__icontains=value))
+        term = value.strip()
+        cond = Q(entry_no__icontains=term) | Q(narration__icontains=term)
+        # Length-bound the conversion first: str→int on a several-thousand-digit
+        # search string raises outright on Python 3.11+ (and is a CPU sink).
+        if len(term) <= 10 and term.isascii() and term.isdigit():
+            ref_id = int(term)
+            if ref_id <= self.REFERENCE_ID_MAX:
+                cond |= Q(reference_id=ref_id)
+        return qs.filter(cond)
 
     def filter_account(self, qs, name, value):
         return qs.filter(lines__account_id=value).distinct()

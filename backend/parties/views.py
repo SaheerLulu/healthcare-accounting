@@ -75,6 +75,9 @@ class SuppliersListView(APIView):
             'Supplier',
             location_id=loc.id if loc else None,
             search=request.query_params.get('search', ''),
+            # `date` (not `as_of`) to match the AR/AP and aging reports these
+            # figures have to agree with. Absent = today, as there.
+            as_of=_parse_date(request.query_params.get('date')),
         )
         return Response({'rows': rows, 'count': len(rows)})
 
@@ -86,6 +89,7 @@ class CustomersListView(APIView):
             'Customer',
             location_id=loc.id if loc else None,
             search=request.query_params.get('search', ''),
+            as_of=_parse_date(request.query_params.get('date')),
         )
         return Response({'rows': rows, 'count': len(rows)})
 
@@ -98,7 +102,8 @@ class SupplierDetailView(APIView):
         loc = require_location_or_all_access(request)
         data = _supplier_dict(supplier)
         data['summary'] = services.party_overview(
-            'Supplier', supplier.id, location_id=loc.id if loc else None
+            'Supplier', supplier.id, location_id=loc.id if loc else None,
+            as_of=_parse_date(request.query_params.get('date')),
         )
         return Response(data)
 
@@ -109,7 +114,8 @@ class CustomerDetailView(APIView):
         loc = require_location_or_all_access(request)
         data = _customer_dict(customer)
         data['summary'] = services.party_overview(
-            'Customer', customer.id, location_id=loc.id if loc else None
+            'Customer', customer.id, location_id=loc.id if loc else None,
+            as_of=_parse_date(request.query_params.get('date')),
         )
         return Response(data)
 

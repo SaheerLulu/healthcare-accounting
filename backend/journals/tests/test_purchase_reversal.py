@@ -38,7 +38,8 @@ def _make_purchase_order(*, po_id=601, location_id=1, supplier_gstin='27ABCDE123
 
 
 def _make_reversal(*, reversal_id=701, po_id=601, rev_type='full',
-                   location_id=1, supplier_gstin='27ABCDE1234A1Z5', lines=None):
+                   location_id=1, supplier_gstin='27ABCDE1234A1Z5', lines=None,
+                   bill_no='PO-RV1'):
     if lines is None:
         lines = [SimpleNamespace(
             taxable_amount=Decimal('1000.00'), cgst_amount=Decimal('0'),
@@ -53,6 +54,10 @@ def _make_reversal(*, reversal_id=701, po_id=601, rev_type='full',
         id=reversal_id, status='confirmed', reversal_type=rev_type,
         reversal_no='PREV-1', reversal_date=date(2026, 5, 2),
         original_purchase_order_id=po_id,
+        # The real RO row carries the FK object too (select_related joins it) —
+        # the narration reads bill_no off it, so the stub must supply it rather
+        # than only the raw id.
+        original_purchase_order=SimpleNamespace(id=po_id, bill_no=bill_no),
         supplier=SimpleNamespace(gst_no=supplier_gstin), supplier_id=9,
         location_id=location_id, lines=_Lines(),
     )
@@ -131,6 +136,28 @@ class PurchaseReversalJournalTests(TestCase):
         total_credit = sum(l.credit for l in lines)
         self.assertEqual(total_debit, total_credit)          # balanced
         self.assertEqual(total_debit, Decimal('560.00'))     # 500 taxable + 60 tax
+
+    def test_narration_names_the_supplier_bill(self):
+        po = _make_purchase_order()
+        self._post_original_purchase(po)
+        entry = self._gen_reversal(_make_reversal(po_id=po.id, rev_type='full'))
+        self.assertIn('against Bill PO-RV1', entry.narration)
+
+    def test_partial_narration_names_the_supplier_bill(self):
+        entry = self._gen_reversal(_make_reversal(
+            reversal_id=704, rev_type='partial', bill_no='INV-2233'))
+        self.assertIn('against Bill INV-2233', entry.narration)
+        self.assertIn('partial', entry.narration)
+
+    def test_full_reversal_recovers_the_bill_from_the_original_entry(self):
+        # The PO row can be gone (db_constraint=False), but the entry we are
+        # swapping still carries "Purchase Invoice: <bill_no> from Supplier ID".
+        po = _make_purchase_order(po_id=605)
+        self._post_original_purchase(po)
+        rev = _make_reversal(reversal_id=705, po_id=605, rev_type='full')
+        del rev.original_purchase_order
+        entry = self._gen_reversal(rev)
+        self.assertIn('against Bill PO-RV1', entry.narration)
 
     def test_idempotent(self):
         rev = _make_reversal(reversal_id=703, rev_type='partial', lines=[

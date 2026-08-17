@@ -3,10 +3,10 @@ import { Link } from 'react-router-dom'
 import { Loader2, Banknote, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  getBills, recordBillPayment, getOpenSupplierInvoices,
+  getAllBills, recordBillPayment, getOpenSupplierInvoices,
   type Bill, type OpenPartyInvoice,
 } from '../lib/api'
-import { formatCurrency, formatDate, cn } from '../lib/utils'
+import { formatCurrency, formatDate, todayISO, cn } from '../lib/utils'
 import { Input } from '../components/ui/input'
 import { Card } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
@@ -50,11 +50,15 @@ export default function PayablesPage() {
       if (search) params.search = search
       const supplierParams: Record<string, string> = {}
       if (search) supplierParams.search = search
-      const [billRes, supplierRes] = await Promise.all([
-        getBills(params),
+      // getAllBills, not one page: this page sums the bills, counts them in the
+      // tab badge and footer, and hangs a Pay button off every row. Reading a
+      // single DRF page (PAGE_SIZE 50) understated all three and made bill 51
+      // onwards impossible to pay — there is no paginator to click to.
+      const [allBills, supplierRes] = await Promise.all([
+        getAllBills(params),
         getOpenSupplierInvoices(supplierParams).catch(() => ({ rows: [] as OpenPartyInvoice[] })),
       ])
-      setBills(billRes.results)
+      setBills(allBills)
       setSupplierInvoices(supplierRes.rows)
     } catch {
       toast.error('Failed to load payables')
@@ -72,7 +76,9 @@ export default function PayablesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
-  const today = new Date().toISOString().slice(0, 10)
+  // Local date, not UTC: toISOString() is a day behind in IST until 05:30, and
+  // every bill due today would flash up as overdue in that window.
+  const today = todayISO()
   const totals = useMemo(() => {
     return bills.reduce((acc, b) => {
       const due = parseFloat(b.balance_due) || 0
@@ -156,8 +162,12 @@ export default function PayablesPage() {
                   </Tr>
                 </Thead>
                 <Tbody>
-                  {supplierInvoices.map((r) => (
-                    <Tr key={`${r.invoice_no}-${r.party_id}`}>
+                  {/* Index in the key: untagged rows (party_id null — a
+                      vendor-less credit posted straight to the control account)
+                      all share the same "…-null" suffix, and one entry can
+                      contribute two of them. */}
+                  {supplierInvoices.map((r, i) => (
+                    <Tr key={`${r.invoice_no}-${r.party_id ?? 'untagged'}-${i}`}>
                       <Td className="font-medium mono">{r.invoice_no}</Td>
                       <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(r.date)}</Td>
                       <Td className="text-sm" style={{ color: 'var(--ink)' }}>{r.party_name}</Td>
@@ -294,7 +304,7 @@ function PayBillSheet({ bill, onClose, onSuccess }: {
   onClose: () => void
   onSuccess: () => void
 }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(todayISO())
   const [amount, setAmount] = useState(bill.balance_due)
   const [mode, setMode] = useState<'bank' | 'cash'>('bank')
   const [reference, setReference] = useState('')

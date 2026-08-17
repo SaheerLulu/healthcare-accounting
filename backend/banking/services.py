@@ -309,6 +309,26 @@ def set_excluded(txn: BankTransaction, excluded: bool = True):
 
 # ─── Categorize (create JE on the fly) ─────────────────────────────────────
 
+def _trade_control_party_types():
+    """{account_id: required party_type} for the Trade Payables/Receivables
+    controls, across every store's chart.
+
+    Keyed on account IDENTITY (the AccountMapping rows), never on
+    account_subtype: 'Payable'/'Receivable' is shared by PF, ESI, PT, Net
+    Salary, provisions, loans, deposits and prepaids, so a subtype test would
+    both reject those legitimate categorisations and mis-route a PF payment
+    into a supplier's ledger. Same identity set journals.serializers routes
+    party lines on, so both posting paths agree on what a control account is.
+    """
+    from core.models import AccountMapping
+    required = {'TRADE_RECEIVABLES': 'Customer', 'TRADE_PAYABLES': 'Supplier'}
+    return {
+        row['account_id']: required[row['key']]
+        for row in AccountMapping.objects.filter(key__in=required)
+        .values('key', 'account_id')
+    }
+
+
 @transaction.atomic
 def categorize_transaction(txn: BankTransaction, *, account_id: int,
                            party_type: str = '', party_id: int | None = None,
@@ -317,7 +337,9 @@ def categorize_transaction(txn: BankTransaction, *, account_id: int,
 
     For money in (txn.amount > 0): Dr Bank, Cr `account_id`.
     For money out (txn.amount < 0): Dr `account_id`, Cr Bank.
-    Optional party_type/party_id let receivable/payable lines stay tagged for outstanding tracking.
+    party_type/party_id keep the line tagged for outstanding tracking — optional
+    everywhere except the Trade Receivables/Payables controls, which are
+    MEANINGLESS without a party and are rejected untagged.
     """
     if txn.status == 'matched' and txn.matched_journal_entry_id:
         raise ValidationError('Already matched — unmatch first to re-categorize.')
@@ -331,6 +353,26 @@ def categorize_transaction(txn: BankTransaction, *, account_id: int,
         raise ValidationError('Selected account does not exist.')
     _assert_account_usable(other, txn.bank_account.location_id,
                            role='category')
+
+    # A trade control may only be posted to WITH a party. party_type/party_id
+    # are optional on the payload and the picker offers them independently of
+    # the account, so an untagged line here minted an invisible receivable
+    # (money out) or an untagged credit that drained the control while every
+    # named customer's ledger stayed put (money in) — a balance nobody can
+    # collect and no statement can explain. Reject rather than drop the tag:
+    # the UI pre-selects party_type='Supplier' for every outflow, so a silent
+    # drop is exactly how the bad rows were made.
+    controls = _trade_control_party_types()
+    needs_party = controls.get(other.id)
+    if needs_party and (party_type != needs_party or not party_id):
+        who = needs_party.lower()
+        raise ValidationError(
+            f'{other.account_code} {other.account_name} is the trade control '
+            f'account — pick the {who} this '
+            f"{'receipt' if txn.amount > 0 else 'payment'} belongs to, or "
+            f'categorise it to a different account. Untagged, the amount sits '
+            f"in the control and never reaches a {who}'s ledger.")
+
     bank_gl = txn.bank_account.chart_account
     abs_amt = abs(txn.amount)
 
@@ -356,14 +398,21 @@ def categorize_transaction(txn: BankTransaction, *, account_id: int,
         JournalEntryLine.objects.create(entry=entry, account=bank_gl, credit=abs_amt)
 
     if party_type in ('Customer', 'Supplier') and party_id:
-        # If categorised against a generic receivable/payable control, redirect
-        # to the party's own ledger so the GL line matches the party tag.
-        if other.account_subtype in ('Receivable', 'Payable'):
+        # If categorised against a generic trade control, redirect to the
+        # party's own ledger so the GL line matches the party tag. Identity
+        # test, not subtype — see _trade_control_party_types.
+        if other.id in controls:
             from core.party_ledgers import resolve_party_account
             line2['account'] = resolve_party_account(
                 party_type, party_id, other, location_id=txn.bank_account.location_id)
         line2['party_type'] = party_type
         line2['party_id'] = party_id
+    elif other.party_id is not None:
+        # The chosen account IS a party's own ledger, so it already names the
+        # party — carry that onto the line instead of letting the untagged line
+        # trip JournalEntryLine's tag↔ledger guard with a cryptic message.
+        line2['party_type'] = other.party_type
+        line2['party_id'] = other.party_id
     JournalEntryLine.objects.create(**line2)
     entry.post()
 

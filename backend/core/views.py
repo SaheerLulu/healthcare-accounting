@@ -424,6 +424,15 @@ def _get_fy_dates():
     return fy_start, fy_end
 
 
+def _month_span(start, end):
+    """Calendar months from `start`'s month to `end`'s month, inclusive.
+
+    Negative when `end` precedes `start` — callers clamp at 0 rather than
+    getting a silently wrong count.
+    """
+    return (end.year - start.year) * 12 + (end.month - start.month) + 1
+
+
 class UserLocationsView(APIView):
     def get(self, request):
         from .middleware import _has_all_location_access
@@ -603,6 +612,17 @@ class DashboardView(APIView):
         if range_start > range_end:
             range_start, range_end = range_end, range_start
 
+        # Nothing on this dashboard may read past today. The DEFAULT window ends
+        # on the LAST day of the financial year, so an unclamped `<= range_end`
+        # swept post-dated vouchers into the Receivables/Payables cards and
+        # dated them "as of 2027-03-31" — money nobody owes yet. It also let the
+        # Revenue/Expense KPIs count future months that the chart below stops
+        # short of, so the sparkline and the number it sits under disagreed.
+        # Both now stop at `as_of`, which is what `balances_as_of` reports.
+        # Reuse the `today` computed above: `timezone` is NOT imported in this
+        # module and adding timezone.localdate() here would 500 the endpoint.
+        as_of = min(range_end, today)
+
         from core.mixins import require_location_or_all_access
         location = require_location_or_all_access(request)
 
@@ -613,7 +633,7 @@ class DashboardView(APIView):
             entry__is_posted=True,
             entry__is_optional=False,
             entry__is_memorandum=False,
-            entry__date__range=[range_start, range_end],
+            entry__date__range=[range_start, as_of],
         )
         if location:
             fy_lines = fy_lines.filter(entry__location_id=location.id)
@@ -642,7 +662,7 @@ class DashboardView(APIView):
             entry__is_posted=True,
             entry__is_optional=False,
             entry__is_memorandum=False,
-            entry__date__lte=range_end,
+            entry__date__lte=as_of,
         )
         if location:
             subtype_qs = subtype_qs.filter(entry__location_id=location.id)
@@ -662,7 +682,10 @@ class DashboardView(APIView):
         input_gst = get_subtype_balance('Input_GST')
         gst_payable = output_gst - input_gst
 
-        # Current month
+        # Current month — deliberately the REAL calendar month intersected with
+        # the selected window, so it reads 0 for any range that ended before
+        # this month. Left as-is because no screen renders these two keys; if
+        # one ever does, make them follow the range instead of the wall clock.
         month_lines = fy_lines.filter(entry__date__range=[month_start, month_end])
         month_type_agg = month_lines.values('account__account_type').annotate(
             total_debit=Sum('debit'), total_credit=Sum('credit'),
@@ -693,15 +716,25 @@ class DashboardView(APIView):
             elif row['account__account_type'] == 'EXPENSE':
                 monthly_map[key]['expenses'] += (row['total_debit'] or Decimal('0')) - (row['total_credit'] or Decimal('0'))
 
+        # Bounded at 36 buckets so an extreme range can't bloat the payload —
+        # but a 72-month range used to return KPIs for 72 months over a chart of
+        # the first 36 with nothing saying so. `monthly_truncated` /
+        # `monthly_months_total` let the UI admit the chart is a partial view.
+        MONTHLY_BUCKET_CAP = 36
+        monthly_months_total = _month_span(range_start, range_end)
+        # Months the chart could draw if the cap didn't exist: everything up to
+        # `as_of`, and 0 for a window that hasn't started yet.
+        chart_months = max(0, _month_span(range_start, as_of))
+        monthly_truncated = chart_months > MONTHLY_BUCKET_CAP
+
         monthly_data = []
         fy_month = range_start.month
         fy_year = range_start.year
-        # Bounded at 36 buckets so an extreme range can't bloat the payload.
-        for i in range(36):
+        for i in range(MONTHLY_BUCKET_CAP):
             m = (fy_month - 1 + i) % 12 + 1
             y = fy_year + (fy_month - 1 + i) // 12
             m_start = date(y, m, 1)
-            if m_start > range_end or m_start > today:
+            if m_start > as_of:
                 break
             data = monthly_map.get((y, m), {'revenue': Decimal('0'), 'expenses': Decimal('0')})
             monthly_data.append({
@@ -723,7 +756,10 @@ class DashboardView(APIView):
             'financial_year_end': str(fy_end),
             'range_start': str(range_start),
             'range_end': str(range_end),
+            'balances_as_of': str(as_of),
             'monthly_data': monthly_data,
+            'monthly_truncated': monthly_truncated,
+            'monthly_months_total': monthly_months_total,
         })
 
 

@@ -6,7 +6,7 @@ import {
   getOpenCustomerInvoices, createReceiptVoucher,
   type OpenCustomerInvoice,
 } from '../lib/api'
-import { formatCurrency, formatDate, cn } from '../lib/utils'
+import { formatCurrency, formatDate, todayISO, cn } from '../lib/utils'
 import { Input } from '../components/ui/input'
 import { Card } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
@@ -28,7 +28,9 @@ import { useLocation as useActiveLocation } from '../contexts/LocationContext'
 export default function ReceivablesPage() {
   const [rows, setRows] = useState<OpenCustomerInvoice[]>([])
   const [loading, setLoading] = useState(true)
-  const [asOf, setAsOf] = useState(new Date().toISOString().split('T')[0])
+  // Local calendar date. toISOString() is UTC, which in IST is YESTERDAY until
+  // 05:30 — an early-morning open would silently hide invoices dated today.
+  const [asOf, setAsOf] = useState(todayISO())
   const [search, setSearch] = useState('')
   const [receiving, setReceiving] = useState<OpenCustomerInvoice | null>(null)
 
@@ -60,11 +62,21 @@ export default function ReceivablesPage() {
   const totals = useMemo(() => {
     const customers = new Set<number>()
     let sum = 0
+    let untagged = 0
     for (const r of rows) {
-      customers.add(r.party_id)
+      // An untagged row is a receivable posted without a party (walk-in counter
+      // sales). It belongs in the total — it IS money owed — but it is not a
+      // customer, so counting it as one would inflate the customer count.
+      if (r.party_id == null) untagged += 1
+      else customers.add(r.party_id)
       sum += parseFloat(r.outstanding_amount ?? r.amount ?? '0') || 0
     }
-    return { invoiceCount: rows.length, customerCount: customers.size, totalOutstanding: sum }
+    return {
+      invoiceCount: rows.length,
+      customerCount: customers.size,
+      untaggedCount: untagged,
+      totalOutstanding: sum,
+    }
   }, [rows])
 
   return (
@@ -81,6 +93,12 @@ export default function ReceivablesPage() {
             <span className="font-medium mono" style={{ color: 'var(--warning)' }}>
               {formatCurrency(totals.totalOutstanding)}
             </span>
+            {totals.untaggedCount > 0 && (
+              <>
+                {' '}(including <span className="mono">{totals.untaggedCount}</span> untagged
+                {' '}walk-in{totals.untaggedCount === 1 ? '' : 's'})
+              </>
+            )}
             . Click Receive on an invoice to record a payment from that customer.
           </p>
         </div>
@@ -122,46 +140,77 @@ export default function ReceivablesPage() {
               </Tr>
             </Thead>
             <Tbody>
-              {rows.map((r) => (
-                <Tr key={`${r.party_id}-${r.invoice_no}`} className="group">
-                  <Td>
-                    <span className="font-medium mono" style={{ color: 'var(--brand)' }}>
-                      {r.invoice_no}
-                    </span>
-                  </Td>
-                  <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(r.date)}</Td>
-                  <Td className="text-xs" style={{ color: 'var(--ink-2)' }}>{r.voucher_type}</Td>
-                  <Td className="font-medium">
-                    <Link
-                      to={`/parties/customers/${r.party_id}`}
-                      className="inline-flex items-center gap-1 hover:underline"
-                      style={{ color: 'var(--ink)' }}
-                    >
-                      {r.party_name}
-                      <ExternalLink size={11} className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100" style={{ color: 'var(--brand)' }} />
-                    </Link>
-                  </Td>
-                  <Td className="text-right mono px-3" style={{ color: 'var(--ink)' }}>
-                    {formatCurrency(r.amount)}
-                  </Td>
-                  <Td className="text-right mono font-semibold px-3"
-                    style={{ color: 'var(--warning)' }}>
-                    {formatCurrency(r.outstanding_amount ?? r.amount)}
-                  </Td>
-                  <Td className="text-right pr-3">
-                    <div className="flex items-center justify-end gap-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                      <Button size="sm" onClick={() => setReceiving(r)}>
-                        <Wallet size={13} /> Receive
-                      </Button>
-                    </div>
-                  </Td>
-                </Tr>
-              ))}
+              {rows.map((r, i) => {
+                const untagged = r.party_id == null
+                return (
+                  // The index keeps the key unique: untagged rows all collapse
+                  // to the same "null-…" prefix, and two of them can share an
+                  // invoice number (JV-… for a day's counter sales).
+                  <Tr key={`${r.party_id ?? 'untagged'}-${r.invoice_no}-${i}`} className="group">
+                    <Td>
+                      <span className="font-medium mono" style={{ color: 'var(--brand)' }}>
+                        {r.invoice_no}
+                      </span>
+                    </Td>
+                    <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(r.date)}</Td>
+                    <Td className="text-xs" style={{ color: 'var(--ink-2)' }}>{r.voucher_type}</Td>
+                    <Td className="font-medium">
+                      {untagged ? (
+                        // No party record to open — this balance sits on the
+                        // control account itself.
+                        <span style={{ color: 'var(--ink-2)' }}>
+                          {r.party_name || 'Untagged'}
+                        </span>
+                      ) : (
+                        <Link
+                          to={`/parties/customers/${r.party_id}`}
+                          className="inline-flex items-center gap-1 hover:underline"
+                          style={{ color: 'var(--ink)' }}
+                        >
+                          {r.party_name}
+                          <ExternalLink size={11} className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100" style={{ color: 'var(--brand)' }} />
+                        </Link>
+                      )}
+                    </Td>
+                    <Td className="text-right mono px-3" style={{ color: 'var(--ink)' }}>
+                      {formatCurrency(r.amount)}
+                    </Td>
+                    <Td className="text-right mono font-semibold px-3"
+                      style={{ color: 'var(--warning)' }}>
+                      {formatCurrency(r.outstanding_amount ?? r.amount)}
+                    </Td>
+                    <Td className="text-right pr-3">
+                      {/* Title sits on the wrapper because a disabled Button
+                          carries pointer-events-none and never gets a hover. */}
+                      <div
+                        className="flex items-center justify-end gap-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
+                        title={untagged
+                          ? 'Untagged balance — assign this sale to a customer before recording a receipt'
+                          : undefined}
+                      >
+                        {/* Disabled without a party, and not merely for tidiness:
+                            the receipt endpoint takes party_id as optional and
+                            gates its over-receipt check on `if party_id`, so a
+                            receipt posted from this row would skip the AR guard
+                            entirely and could be banked for more than is owed.
+                            The credit itself does now net this row down — every
+                            id-less posting on the control shares one pile — but
+                            an unguarded receipt is still the wrong way in. Tag
+                            the sale to a customer first. */}
+                        <Button size="sm" disabled={untagged} onClick={() => setReceiving(r)}>
+                          <Wallet size={13} /> Receive
+                        </Button>
+                      </div>
+                    </Td>
+                  </Tr>
+                )
+              })}
             </Tbody>
             <tfoot>
               <tr style={{ borderTop: '2px solid var(--line)', background: 'var(--color-grey-light)' }} className="font-semibold">
                 <td colSpan={5} className="py-3 px-4 text-sm" style={{ color: 'var(--ink-2)' }}>
                   Total · {totals.customerCount} customer{totals.customerCount === 1 ? '' : 's'}
+                  {totals.untaggedCount > 0 && ` + ${totals.untaggedCount} untagged`}
                 </td>
                 <td className="py-3 px-3 text-right mono" style={{ color: 'var(--warning)' }}>
                   {formatCurrency(totals.totalOutstanding)}
@@ -189,7 +238,7 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
   onClose: () => void
   onSuccess: () => void
 }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [date, setDate] = useState(todayISO())
   const [amount, setAmount] = useState(row.amount)
   const [mode, setMode] = useState<'bank' | 'cash'>('bank')
   const [narration, setNarration] = useState(`Receipt from ${row.party_name} (${row.invoice_no})`)
@@ -200,6 +249,13 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
     e.preventDefault()
     const amt = parseFloat(amount) || 0
     if (amt <= 0) { toast.error('Amount must be > 0'); return }
+    // Belt-and-braces behind the disabled Receive button: an untagged row has
+    // no party to credit, and posting without one skips the server's AR
+    // over-receipt check instead of clearing the balance.
+    if (row.party_id == null) {
+      toast.error('This balance is not tagged to a customer — tag the sale before receiving against it')
+      return
+    }
     if (activeLocationId === null) {
       toast.error('Select a specific location before recording a receipt')
       return

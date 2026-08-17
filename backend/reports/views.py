@@ -615,6 +615,78 @@ def _age_open_invoices(invoices, payments, as_of):
     return buckets
 
 
+# Netting key for AR/AP that names no party — a walk-in credit sale, a
+# vendor-less credit asset acquisition, a Receipt voucher saved with the party
+# field blank. One shared pile, because every one of those is the same fact:
+# money owed, counterparty unrecorded. A named party always has an integer id
+# and its own key, so nothing here can touch a real customer's balance.
+# A sentinel rather than None so it survives a dict key set that also holds
+# integer ids without colliding with a genuine absence. See _party_bucket.
+UNTAGGED_PARTY = '__untagged__'
+
+
+def _party_control_ids(key):
+    """Account ids mapped to ONE control key — 'TRADE_RECEIVABLES' for
+    customers, 'TRADE_PAYABLES' for suppliers — across every location.
+
+    Untagged AR/AP has to be scoped by account IDENTITY, never by
+    account_subtype alone: 'Receivable' is shared with 1310-1330 (supplier /
+    staff / customer advances), 1340-1350 (deposits) and 1360-1380 (prepaids),
+    and 'Payable' with PF/ESI/PT/Net Salary, provisions and loans. Widening on
+    the subtype surfaced lakhs of prepaids and deposits as "customer invoices".
+    """
+    from core.models import AccountMapping
+    return set(AccountMapping.objects.filter(key=key)
+               .values_list('account_id', flat=True))
+
+
+def _party_lines_q(party_type, control_ids):
+    """Which lines belong on a party's receivables/payables surface.
+
+    The tagged ones — plus untagged postings sitting on the generic control
+    leaf. journals.services._sale_settlement deliberately drops the party tag
+    for a credit sale with no named customer (core/party_ledgers.py:15 states
+    walk-ins never get their own ledger), so requiring the tag made the posting
+    layer create receivables the reporting layer could not show.
+
+    A NULL party_id only qualifies ON A CONTROL LEAF — including when the row
+    carries a party_type but no id (generate_receipt / generate_payment /
+    generate_sales_return stamp the type around a possibly-NULL id). Without
+    the `party_id__isnull=False` on the tagged branch, those half-tagged rows
+    entered the surface from ANY account sharing the subtype — 1310-1330
+    advances, 1340-1350 deposits, 1360-1380 prepaids — and could then net
+    against genuine trade debt.
+    """
+    return (Q(party_type=party_type, party_id__isnull=False)
+            | Q(party_id__isnull=True, account_id__in=control_ids))
+
+
+def _party_bucket(party_type, row_party_type, party_id):
+    """Netting key for one line: the party id when there is one, else the
+    shared UNTAGGED_PARTY pile.
+
+    Every NULL-id row reaching here sits on a trade control (see
+    _party_lines_q), so a party_type with no id carries no more information
+    than no tag at all — 'Customer, unknown which' IS the walk-in pile. They
+    have to share one key or the debt can never be settled: the walk-in credit
+    sale posts wholly untagged, while the receipt that clears it comes from a
+    Receipt voucher whose party is blank and which therefore stamps
+    party_type='Customer' with a NULL id. Splitting the two left the obligation
+    on the report for ever with no path to zero — an overstatement, and a worse
+    failure than the understatement this whole surface was widened to fix.
+    """
+    if party_id is not None:
+        return party_id
+    return UNTAGGED_PARTY
+
+
+def _unnamed_party_label(party_type):
+    """Row label when there is no inventory party behind the balance. Beats the
+    literal 'Customer #None' the aging report used to render for NULL ids."""
+    return ('Walk-in / Cash Customer' if party_type == 'Customer'
+            else 'Unnamed Supplier')
+
+
 def _party_tax_details(party_type, party_ids):
     """Bulk-resolve display name + tax-filing identifiers for a set of parties:
     {party_id: {name, gstin, state, pan, msme_category, msme_udyam_no}}.
@@ -630,21 +702,25 @@ def _party_tax_details(party_type, party_ids):
     details = {pid: {'name': '', 'gstin': '', 'state': '', 'pan': '',
                      'msme_category': '', 'msme_udyam_no': ''}
                for pid in party_ids}
-    if not party_ids:
+    # The UNTAGGED_PARTY bucket has no party behind it: it keeps its blank
+    # placeholder but must never reach id__in — a non-integer pk raises on the
+    # way to SQL.
+    real_ids = [pid for pid in party_ids if isinstance(pid, int)]
+    if not real_ids:
         return details
 
     if party_type == 'Customer':
         model, name_field = CustomerRO, 'customer_name'
     else:
         model, name_field = SupplierRO, 'company_name'
-    for row in model.objects.filter(id__in=list(party_ids)).values(
+    for row in model.objects.filter(id__in=real_ids).values(
             'id', 'gst_no', 'state', name_field):
         details[row['id']]['name'] = row[name_field] or ''
         details[row['id']]['gstin'] = row['gst_no'] or ''
         details[row['id']]['state'] = row['state'] or ''
 
     for meta in PartyMetadata.objects.filter(
-            party_type=party_type, party_id__in=list(party_ids)):
+            party_type=party_type, party_id__in=real_ids):
         d = details.get(meta.party_id)
         if d is None:
             continue
@@ -664,9 +740,9 @@ class ReceivablesAgingView(APIView):
         lines_qs = JournalEntryLine.objects.filter(
             entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
             entry__date__lte=as_of_date,
-            party_type='Customer',
             account__account_subtype='Receivable'
-        )
+        ).filter(_party_lines_q('Customer',
+                                _party_control_ids('TRADE_RECEIVABLES')))
 
         if location:
             lines_qs = lines_qs.filter(entry__location_id=location.id)
@@ -674,13 +750,16 @@ class ReceivablesAgingView(APIView):
         customer_balances = defaultdict(Decimal)
         customer_dates = defaultdict(list)
 
-        # Only the 4 needed columns — not full line+entry instances.
-        for line in lines_qs.values('party_id', 'debit', 'credit', 'entry__date'):
+        # Only the 5 needed columns — not full line+entry instances. party_type
+        # comes along because it separates the two untagged shapes.
+        for line in lines_qs.values('party_type', 'party_id', 'debit', 'credit',
+                                    'entry__date'):
+            key = _party_bucket('Customer', line['party_type'], line['party_id'])
             net = line['debit'] - line['credit']
             if net != 0:
-                customer_balances[line['party_id']] += net
+                customer_balances[key] += net
                 if line['debit'] > 0:
-                    customer_dates[line['party_id']].append(
+                    customer_dates[key].append(
                         (line['entry__date'], line['debit']))
 
         tax_details = _party_tax_details('Customer', set(customer_balances.keys()))
@@ -689,15 +768,18 @@ class ReceivablesAgingView(APIView):
         for customer_id, balance in customer_balances.items():
             if balance <= 0:
                 continue
+            linked = isinstance(customer_id, int)
             d = tax_details.get(customer_id, {})
-            name = d.get('name') or f'Customer #{customer_id}'
+            name = d.get('name') or (f'Customer #{customer_id}' if linked
+                                     else _unnamed_party_label('Customer'))
 
             invoices = customer_dates.get(customer_id, [])
             payments = sum((amt for _, amt in invoices), Decimal('0')) - balance
             aging = _age_open_invoices(invoices, payments, as_of)
 
             rows.append({
-                'customer_id': customer_id,
+                # NULL, not the sentinel: there is no customer to drill into.
+                'customer_id': customer_id if linked else None,
                 'customer_name': name,
                 'gstin': d.get('gstin', ''),
                 'pan': d.get('pan', ''),
@@ -783,10 +865,11 @@ def _open_party_invoices(request, *, party_type):
     net_key = 'supplier_outstanding' if is_supplier else 'customer_outstanding'
     ZERO = Decimal('0')
 
+    control_key = 'TRADE_PAYABLES' if is_supplier else 'TRADE_RECEIVABLES'
     base = JournalEntryLine.objects.filter(
         entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False, entry__date__lte=as_of_date,
-        party_type=party_type, account__account_subtype=subtype,
-    )
+        account__account_subtype=subtype,
+    ).filter(_party_lines_q(party_type, _party_control_ids(control_key)))
     if location:
         base = base.filter(entry__location_id=location.id)
     if party_id_param:
@@ -811,8 +894,8 @@ def _open_party_invoices(request, *, party_type):
     # come off it by any means. Their difference gates fully-settled parties out.
     invoiced = defaultdict(lambda: Decimal('0'))
     settled = defaultdict(lambda: Decimal('0'))
-    for l in base.values('party_id', 'debit', 'credit'):
-        pid = l['party_id']
+    for l in base.values('party_type', 'party_id', 'debit', 'credit'):
+        pid = _party_bucket(party_type, l['party_type'], l['party_id'])
         if is_supplier:
             invoiced[pid] += l['credit']
             settled[pid] += l['debit']
@@ -825,7 +908,10 @@ def _open_party_invoices(request, *, party_type):
     allocated = defaultdict(lambda: Decimal('0'))
     if entry_nos:
         ref_qs = BillReference.objects.filter(
-            kind='AGAINST', ref_no__in=entry_nos,
+            # A reference carrying a bill_id settles a bills-app Bill, never a
+            # GL invoice. Without this, a bill_no that happens to equal a JE
+            # entry_no would net that JE invoice a second time.
+            kind='AGAINST', ref_no__in=entry_nos, bill_id__isnull=True,
             line__party_type=party_type,
             line__account__account_subtype=subtype,
         )
@@ -838,9 +924,23 @@ def _open_party_invoices(request, *, party_type):
     # remainder is on-account and gets applied oldest-first in the row loop.
     explicit = defaultdict(lambda: Decimal('0'))
     for l in invoice_lines:
-        explicit[l.party_id] += allocated.get(l.entry.entry_no, ZERO)
+        explicit[_party_bucket(party_type, l.party_type, l.party_id)] += \
+            allocated.get(l.entry.entry_no, ZERO)
     pool = {pid: max(amount - explicit.get(pid, ZERO), ZERO)
             for pid, amount in settled.items()}
+
+    # Guard-rail, NOT the cure for the double-netting bug (that fix lives in the
+    # allocation write path). Cap the oldest-first pool at what the GL still
+    # owes, so on-account money can never be drawn against invoices it does not
+    # belong to — the shape behind "supplier with 30,000 of GL debt + a
+    # cancelled 50,000 bills-app bill wiped a Payables total of 80,000 to 0".
+    # It is deliberately belt-and-braces: `pool > gl_open` reduces to
+    # `settled > invoiced`, i.e. exactly the `net <= 0` case the row loop
+    # already skips, so today it changes no output. Keep it anyway — it makes
+    # the pool's invariant local instead of depending on that gate staying put.
+    gl_open = {pid: max(invoiced.get(pid, ZERO) - explicit.get(pid, ZERO), ZERO)
+               for pid in invoiced}
+    pool = {pid: min(amt, gl_open.get(pid, ZERO)) for pid, amt in pool.items()}
 
     if is_supplier:
         from inventory_reader.models import SupplierRO as RO
@@ -850,7 +950,8 @@ def _open_party_invoices(request, *, party_type):
         name_field = 'customer_name'
     names = {}
     try:
-        for obj in RO.objects.filter(id__in={l.party_id for l in invoice_lines}):
+        for obj in RO.objects.filter(
+                id__in={l.party_id for l in invoice_lines if l.party_id is not None}):
             names[obj.id] = getattr(obj, name_field)
     except Exception:
         pass
@@ -859,21 +960,25 @@ def _open_party_invoices(request, *, party_type):
     cents = Decimal('0.01')
     for l in invoice_lines:
         pid = l.party_id
-        net = invoiced.get(pid, ZERO) - settled.get(pid, ZERO)
+        # The gate below is per BUCKET, so an untagged walk-in balance can never
+        # be netted away by a named party's settlements (or vice versa).
+        key = _party_bucket(party_type, l.party_type, pid)
+        net = invoiced.get(key, ZERO) - settled.get(key, ZERO)
         if net <= 0:
             continue
         original = (l.credit if is_supplier else l.debit).quantize(cents)
         outstanding = (original - allocated.get(l.entry.entry_no, ZERO)).quantize(cents)
         # Draw down the party's on-account settlement, oldest invoice first.
-        available = pool.get(pid, ZERO)
+        available = pool.get(key, ZERO)
         if outstanding > 0 and available > 0:
             applied = min(available, outstanding)
             outstanding = (outstanding - applied).quantize(cents)
-            pool[pid] = available - applied
+            pool[key] = available - applied
         if outstanding <= 0:
             continue
         paid = (original - outstanding).quantize(cents)
-        name = names.get(pid, f'{party_type} #{pid}')
+        name = (names.get(pid, f'{party_type} #{pid}') if pid is not None
+                else _unnamed_party_label(party_type))
         if search and search not in name.lower() \
                 and search not in (l.entry.entry_no or '').lower():
             continue
@@ -920,12 +1025,15 @@ class PayablesAgingView(APIView):
 
         as_of = date.fromisoformat(as_of_date)
 
+        # Widened symmetrically with the receivables side: fixed_assets posts a
+        # vendor-less credit acquisition straight onto the Trade Payables
+        # control untagged, and OpenSupplierInvoicesView (which now shows those
+        # rows) is expected to reconcile with this report's total.
         lines_qs = JournalEntryLine.objects.filter(
             entry__is_posted=True, entry__is_optional=False, entry__is_memorandum=False,
             entry__date__lte=as_of_date,
-            party_type='Supplier',
             account__account_subtype='Payable'
-        )
+        ).filter(_party_lines_q('Supplier', _party_control_ids('TRADE_PAYABLES')))
 
         if location:
             lines_qs = lines_qs.filter(entry__location_id=location.id)
@@ -933,13 +1041,15 @@ class PayablesAgingView(APIView):
         supplier_balances = defaultdict(Decimal)
         supplier_dates = defaultdict(list)
 
-        # Only the 4 needed columns — not full line+entry instances.
-        for line in lines_qs.values('party_id', 'debit', 'credit', 'entry__date'):
+        # Only the 5 needed columns — not full line+entry instances.
+        for line in lines_qs.values('party_type', 'party_id', 'debit', 'credit',
+                                    'entry__date'):
+            key = _party_bucket('Supplier', line['party_type'], line['party_id'])
             net = line['credit'] - line['debit']
             if net != 0:
-                supplier_balances[line['party_id']] += net
+                supplier_balances[key] += net
                 if line['credit'] > 0:
-                    supplier_dates[line['party_id']].append(
+                    supplier_dates[key].append(
                         (line['entry__date'], line['credit']))
 
         tax_details = _party_tax_details('Supplier', set(supplier_balances.keys()))
@@ -948,15 +1058,18 @@ class PayablesAgingView(APIView):
         for supplier_id, balance in supplier_balances.items():
             if balance <= 0:
                 continue
+            linked = isinstance(supplier_id, int)
             d = tax_details.get(supplier_id, {})
-            name = d.get('name') or f'Supplier #{supplier_id}'
+            name = d.get('name') or (f'Supplier #{supplier_id}' if linked
+                                     else _unnamed_party_label('Supplier'))
 
             invoices = supplier_dates.get(supplier_id, [])
             payments = sum((amt for _, amt in invoices), Decimal('0')) - balance
             aging = _age_open_invoices(invoices, payments, as_of)
 
             rows.append({
-                'supplier_id': supplier_id,
+                # NULL, not the sentinel: there is no supplier to drill into.
+                'supplier_id': supplier_id if linked else None,
                 'supplier_name': name,
                 'gstin': d.get('gstin', ''),
                 'pan': d.get('pan', ''),

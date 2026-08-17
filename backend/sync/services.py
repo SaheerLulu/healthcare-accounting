@@ -425,10 +425,17 @@ class InventorySyncService:
                         live,
                         reference_type='PurchaseAmendment',
                         reference_id=am.id,
+                        # The bill number has to ride along here too: the
+                        # regeneration below immediately re-posts a second
+                        # full-value "Purchase Invoice: INV-2233", so a search
+                        # for that bill number returns two purchases with the
+                        # netting reversal invisible between them unless the
+                        # reversal names the bill as well.
                         narration=(
                             f'Purchase amendment #{am.id} — reverses {live.entry_no} '
-                            f'(values superseded by re-approved correction)'
-                        ),
+                            f'(values superseded by re-approved correction): '
+                            f'{live.narration}'
+                        ).strip(': '),
                     )
                     fresh = self.journal_service.generate_purchase(
                         am.purchase_order_id, force=True,
@@ -675,11 +682,19 @@ class InventorySyncService:
         with transaction.atomic():
             reversal = JournalEntry.objects.create(
                 date=date_cls.today(),
+                # Append the original's narration — that is where the bill /
+                # invoice number lives ("Purchase Invoice: INV-2233"). Without
+                # it a ledger search for the bill number found the posting but
+                # not the reversal that cancelled it, so a fully backed-out
+                # document still read as outstanding. Same
+                # `: {narration}`.strip(': ') shape as the manual reverse action
+                # (journals/views.py) and the auto_reverse command, so an empty
+                # source narration leaves no dangling separator.
                 narration=narration or (
                     f'Auto-reversal — {original.reference_type} '
                     f'#{original.reference_id} cancelled upstream '
-                    f'(reverses {original.entry_no})'
-                ),
+                    f'(reverses {original.entry_no}): {original.narration}'
+                ).strip(': '),
                 voucher_type=original.voucher_type,
                 reference_type=reference_type or original.reference_type,
                 reference_id=reference_id if reference_id is not None else original.reference_id,

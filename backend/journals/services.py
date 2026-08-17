@@ -1,5 +1,6 @@
 import logging
 from decimal import Decimal
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.db.models import Sum
 from inventory_reader.models import (
@@ -24,6 +25,7 @@ def _dec(obj, name, default='0'):
     that predate newly-added fields)."""
     return Decimal(str(getattr(obj, name, None) or default))
 from core.models import AccountMapping, LocationTaxProfile
+from core.date_utils import as_local_date
 from core.party_ledgers import resolve_party_account
 from decimal import ROUND_HALF_UP
 from core.gst_utils import (
@@ -416,7 +418,7 @@ class JournalAutoGenerationService:
             # Nothing to book — empty batch or all zero-value lines.
             return None
 
-        entry_date = os_header.opening_date or os_header.created_at.date()
+        entry_date = os_header.opening_date or as_local_date(os_header.created_at)
         loc = os_header.location_id
         entry = JournalEntry.objects.create(
             date=entry_date,
@@ -501,7 +503,7 @@ class JournalAutoGenerationService:
         if delta_value == 0 and delta_tax == 0:
             return None
 
-        entry_date = (corr.reviewed_at or corr.created_at).date()
+        entry_date = as_local_date(corr.reviewed_at or corr.created_at)
         loc = corr.location_id
         entry = JournalEntry.objects.create(
             date=entry_date,
@@ -652,7 +654,7 @@ class JournalAutoGenerationService:
                          - (addl_discount if discount_received_ac else Decimal('0.00')))
 
         entry = JournalEntry.objects.create(
-            date=po.bill_date or po.created_at.date(),
+            date=po.bill_date or as_local_date(po.created_at),
             narration=f"Purchase Invoice: {po.bill_no} from Supplier ID {po.supplier_id}",
             voucher_type='PURCHASE',
             reference_type='PurchaseOrder',
@@ -777,7 +779,7 @@ class JournalAutoGenerationService:
         loc = pos.location_id
         is_service_doc = getattr(pos, 'doc_type', 'goods') == 'service'
         entry = JournalEntry.objects.create(
-            date=pos.sale_date.date() if hasattr(pos.sale_date, 'date') else pos.sale_date,
+            date=as_local_date(pos.sale_date),
             narration=(f"Service Bill: {pos.invoice_no}" if is_service_doc
                        else f"POS Sale: {pos.invoice_no}"),
             voucher_type='SALE',
@@ -940,7 +942,7 @@ class JournalAutoGenerationService:
 
         loc = order.location_id
         entry = JournalEntry.objects.create(
-            date=order.sale_date or order.created_at.date(),
+            date=order.sale_date or as_local_date(order.created_at),
             narration=f"B2B Sale: {order.invoice_no} to Customer ID {order.customer_id}",
             voucher_type='SALE',
             reference_type='B2BSalesOrder',
@@ -1064,7 +1066,7 @@ class JournalAutoGenerationService:
 
         loc = ret.location_id
         entry = JournalEntry.objects.create(
-            date=ret.return_date.date() if hasattr(ret.return_date, 'date') else ret.return_date,
+            date=as_local_date(ret.return_date),
             narration=f"Sales Return: {ret.return_no}",
             voucher_type='CREDIT_NOTE',
             reference_type='SalesReturn',
@@ -1161,11 +1163,18 @@ class JournalAutoGenerationService:
         if self._entry_exists('PurchaseReturn', return_id):
             return None
 
-        ret = PurchaseReturnRO.objects.select_related('supplier').prefetch_related('lines').get(id=return_id)
+        # original_purchase_order is select_related for correctness, not speed:
+        # the FK is db_constraint=False, so a dangling id dereferenced lazily
+        # raises DoesNotExist, which sync_purchase_returns swallows into a
+        # SyncError and the JE silently never posts. Joining it up front turns
+        # a broken link into a plain NULL instead.
+        ret = (PurchaseReturnRO.objects
+               .select_related('supplier', 'original_purchase_order')
+               .prefetch_related('lines')
+               .get(id=return_id))
         if ret.status not in ('confirmed', 'completed', 'approved'):
             return None
 
-        taxable_amount = Decimal('0.00')
         cgst_amount = Decimal('0.00')
         sgst_amount = Decimal('0.00')
         igst_amount = Decimal('0.00')
@@ -1178,8 +1187,32 @@ class JournalAutoGenerationService:
         # Same approach as generate_purchase: sum total tax from lines, then re-split
         # per our supply_type so any inventory-side miscategorization is corrected.
         lines_data = list(ret.lines.all())
-        for line in lines_data:
-            taxable_amount += Decimal(str(line.quantity)) * line.purchase_rate
+        gross_base = sum(
+            (Decimal(str(l.quantity)) * l.purchase_rate for l in lines_data),
+            Decimal('0.00'),
+        )
+
+        # Prefer the header subtotal the pharmacy already computed. qty × rate
+        # ignores the line trade discount and
+        # values free goods at full rate, so a return with free goods at a 10%
+        # discount was reported booking 1086.40 against the pharmacy's own
+        # 806.40 — an overstated debit note to the supplier. The per-line product
+        # survives only as the fallback for rows whose subtotal was never written
+        # (PurchaseReturnLineRO carries neither discount nor free_qty, so there
+        # is nothing better to reconstruct it from).
+        # ret.round_off stays out of this deliberately: upstream excludes it from
+        # total_amount too, so folding it in would create a fresh mismatch.
+        # subtotal is read here as EX-tax, which is what the separate
+        # total_cgst/total_sgst/total_igst columns on this model imply — the same
+        # shape as B2BSalesOrderRO (total = subtotal + tax + …). Do NOT copy this
+        # into generate_sales_return: SalesReturnRO carries no tax columns and its
+        # subtotal is tax-INCLUSIVE, which is exactly why that function
+        # back-calculates the taxable amount out of line_total instead. Reading
+        # an inclusive subtotal as exclusive here would inflate the stock credit
+        # AND charge GST on top of GST.
+        taxable_amount = Decimal(str(ret.subtotal or 0))
+        if taxable_amount == Decimal('0.00'):
+            taxable_amount = gross_base
 
         total_tax = sum(
             (Decimal(str(l.cgst_amount or 0)) +
@@ -1188,8 +1221,14 @@ class JournalAutoGenerationService:
             for l in lines_data
         )
         if total_tax == Decimal('0.00'):
+            # Source carried no tax split — derive it from each line's own rate
+            # (mixed-rate returns are normal). Each line is prorated onto the
+            # authoritative base first, otherwise the derived tax would be
+            # charged on the pre-discount value the base no longer uses. With no
+            # discount the share is 1 and this is the original computation.
+            share = (taxable_amount / gross_base) if gross_base > 0 else Decimal('0')
             for line in lines_data:
-                line_taxable = Decimal(str(line.quantity)) * line.purchase_rate
+                line_taxable = Decimal(str(line.quantity)) * line.purchase_rate * share
                 line_tax = (line_taxable * Decimal(str(line.tax_percent or 0)) / Decimal('100')).quantize(
                     Decimal('0.01'), rounding=ROUND_HALF_UP,
                 )
@@ -1203,10 +1242,19 @@ class JournalAutoGenerationService:
 
         total_return = taxable_amount + cgst_amount + sgst_amount + igst_amount
 
+        # Lead with the supplier's bill number. Journal search matches entry_no
+        # and narration only, and return_no is a bare PRET-<timestamp> that
+        # nobody outside the sync ever sees — so a search for "INV-2233" found
+        # the purchase but never the debit note that undid it. getattr is doubly
+        # defensive because the FK is nullable AND db_constraint=False.
+        bill_no = getattr(getattr(ret, 'original_purchase_order', None), 'bill_no', '') or ''
+        against_bill = f" against Bill {bill_no}" if bill_no else ''
+
         loc = ret.location_id
         entry = JournalEntry.objects.create(
-            date=ret.return_date,
-            narration=f"Purchase Return: {ret.return_no} to Supplier ID {ret.supplier_id}",
+            date=as_local_date(ret.return_date),
+            narration=(f"Purchase Return{against_bill}: {ret.return_no} "
+                       f"to Supplier ID {ret.supplier_id}"),
             voucher_type='DEBIT_NOTE',
             reference_type='PurchaseReturn',
             reference_id=return_id,
@@ -1255,6 +1303,13 @@ class JournalAutoGenerationService:
         if self._entry_exists('PurchaseReversal', reversal_id):
             return None
 
+        # original_purchase_order is deliberately NOT select_related here, unlike
+        # on PurchaseReturnRO: this FK is NOT NULL, so Django joins it INNER —
+        # and db_constraint=False means the id can dangle. A dangling id would
+        # then drop the reversal row out of the join entirely, turning `.get()`
+        # into DoesNotExist, which sync_purchase_reversals swallows into a
+        # SyncError — i.e. eagerly joining it to protect the narration is the
+        # very thing that stops the reversal posting at all.
         rev = (PurchaseReversalRO.objects
                .select_related('supplier')
                .prefetch_related('lines')
@@ -1263,9 +1318,21 @@ class JournalAutoGenerationService:
             return None
 
         loc = rev.location_id
-        rev_date = rev.reversal_date
-        if hasattr(rev_date, 'date'):
-            rev_date = rev_date.date()
+        # reversal_date is a plain DateField upstream; as_local_date passes a
+        # date straight through and only bites if that column ever becomes a
+        # timestamp, where a bare .date() would book 00:00–05:30 IST a day early.
+        rev_date = as_local_date(rev.reversal_date)
+
+        # The supplier's bill number is what an accountant searches for; the
+        # original_purchase_order_id this used to print is an internal PK the
+        # pharmacy UI never shows. The lazy dereference raises DoesNotExist for
+        # a dangling id (and AttributeError for a row that never carried the
+        # relation) — both mean "no bill number", never "abandon the reversal".
+        try:
+            original_po = rev.original_purchase_order
+        except (ObjectDoesNotExist, AttributeError):
+            original_po = None
+        bill_no = getattr(original_po, 'bill_no', '') or ''
 
         # FULL: post an exact swap of the original purchase entry.
         if rev.reversal_type == 'full':
@@ -1278,9 +1345,17 @@ class JournalAutoGenerationService:
                 # The purchase was never booked (e.g. reversed before its own
                 # sync) — there is nothing to reverse in the books.
                 return None
+            if not bill_no:
+                # Last resort when the PO row is gone: the entry we are swapping
+                # was written as "Purchase Invoice: <bill_no> from Supplier ID …",
+                # so the number we want is still sitting in its narration.
+                prefix = 'Purchase Invoice: '
+                if (original.narration or '').startswith(prefix):
+                    bill_no = original.narration[len(prefix):].split(' from Supplier ID')[0].strip()
             entry = JournalEntry.objects.create(
                 date=rev_date,
-                narration=f"Purchase Reversal: {rev.reversal_no} (reverses PO {rev.original_purchase_order_id})",
+                narration=(f"Purchase Reversal{f' against Bill {bill_no}' if bill_no else ''}: "
+                           f"{rev.reversal_no} (reverses PO {rev.original_purchase_order_id})"),
                 voucher_type='DEBIT_NOTE',
                 reference_type='PurchaseReversal',
                 reference_id=reversal_id,
@@ -1324,7 +1399,8 @@ class JournalAutoGenerationService:
 
         entry = JournalEntry.objects.create(
             date=rev_date,
-            narration=f"Purchase Reversal: {rev.reversal_no} (partial; reverses PO {rev.original_purchase_order_id})",
+            narration=(f"Purchase Reversal{f' against Bill {bill_no}' if bill_no else ''}: "
+                       f"{rev.reversal_no} (partial; reverses PO {rev.original_purchase_order_id})"),
             voucher_type='DEBIT_NOTE',
             reference_type='PurchaseReversal',
             reference_id=reversal_id,
@@ -1640,7 +1716,7 @@ class JournalAutoGenerationService:
         stock_acct = self._acct('CLOSING_STOCK', loc)
 
         entry = JournalEntry.objects.create(
-            date=mv.created_at.date(),
+            date=as_local_date(mv.created_at),
             narration=(mv.notes or f'Stock write-off ({mv.movement_type})')
                       + f' — movement #{movement_id}',
             voucher_type='JOURNAL',
@@ -1691,7 +1767,7 @@ class JournalAutoGenerationService:
         stock_acct = self._acct('CLOSING_STOCK', loc)
 
         entry = JournalEntry.objects.create(
-            date=mv.created_at.date(),
+            date=as_local_date(mv.created_at),
             narration=(mv.notes or 'Stock audit adjustment')
                       + f' — movement #{movement_id}',
             voucher_type='JOURNAL',
@@ -1889,7 +1965,7 @@ class JournalAutoGenerationService:
                 f'(src={src}, dst={dst}); cannot post stock-transfer JV.'
             )
 
-        entry_date = po.bill_date or po.created_at.date()
+        entry_date = po.bill_date or as_local_date(po.created_at)
         indent_ref = f' (Indent #{po.source_indent_id})' if po.source_indent_id else ''
 
         out_entry = JournalEntry.objects.create(
@@ -1956,8 +2032,7 @@ class JournalAutoGenerationService:
         settle_acct = self._refund_account(fee.payment_mode, loc)  # Cash vs Bank
         income_acct = self._acct('CONSULTATION_INCOME', loc)
 
-        collected = fee.collected_at or fee.created_at
-        entry_date = collected.date() if hasattr(collected, 'date') else collected
+        entry_date = as_local_date(fee.collected_at or fee.created_at)
         receipt = f' (receipt {fee.receipt_number})' if fee.receipt_number else ''
 
         entry = JournalEntry.objects.create(

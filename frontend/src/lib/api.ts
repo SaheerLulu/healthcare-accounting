@@ -262,6 +262,17 @@ export interface DashboardData {
   gst_payable: number | string
   range_start?: string
   range_end?: string
+  /**
+   * The date the balance-sheet figures (receivables/payables/GST) are stated
+   * as of = min(range_end, today). A range ending in the future cannot have
+   * balances "as of" its end date, so the server reports what it actually
+   * computed instead of letting the UI claim the end date.
+   */
+  balances_as_of?: string
+  /** True when monthly_data was capped and shows fewer months than the range spans. */
+  monthly_truncated?: boolean
+  /** Months the selected range really covers, whether or not they are charted. */
+  monthly_months_total?: number
   monthly_data?: {
     month: string
     revenue: number
@@ -710,11 +721,43 @@ export interface BillWritePayload {
   lines: { account: number; description: string; amount: string }[]
 }
 
+/**
+ * One page of bills. The viewset may or may not opt out of DRF pagination, so
+ * both shapes are normalised here: `count`/`next` only exist in the paginated
+ * envelope and stay optional rather than being cast into existence — a caller
+ * that trusts a `count` the server never sent shows a wrong total.
+ *
+ * Callers that need EVERY match (totals, counts, per-row actions) must use
+ * getAllBills — one page is 50 rows and rows past that are unreachable.
+ */
 export async function getBills(params?: Record<string, string>) {
   const res = await api.get('/bills/bills/', { params })
-  // Pagination wraps the list when DEFAULT pagination is on; otherwise it's an array.
-  if (Array.isArray(res.data)) return { results: res.data as Bill[], count: res.data.length }
-  return res.data as { results: Bill[]; count: number }
+  if (Array.isArray(res.data)) {
+    return { results: res.data as Bill[], count: res.data.length, next: null as string | null }
+  }
+  const page = res.data as { results?: Bill[]; count?: number; next?: string | null }
+  return {
+    results: page.results ?? [],
+    count: typeof page.count === 'number' ? page.count : undefined,
+    next: page.next ?? null,
+  }
+}
+
+/**
+ * Every bill matching `params`, following the pagination cursor until the
+ * server says there is no next page. Correct whichever way BillViewSet is
+ * configured: unpaginated it is a single request (next is null), paginated it
+ * walks the pages, and the extra `page` param is ignored in the former case.
+ * Bounded so a runaway dataset cannot spin forever.
+ */
+export async function getAllBills(params?: Record<string, string>, maxPages = 40): Promise<Bill[]> {
+  const all: Bill[] = []
+  for (let page = 1; page <= maxPages; page++) {
+    const res = await getBills({ ...(params ?? {}), page: String(page) })
+    all.push(...res.results)
+    if (!res.next || res.results.length === 0) break
+  }
+  return all
 }
 
 export async function getBill(id: number) {
@@ -1920,7 +1963,14 @@ export interface OpenPartyInvoice {
   invoice_no: string
   voucher_type: string
   date: string
-  party_id: number
+  /**
+   * null for an UNTAGGED balance — a receivable/payable posted to the control
+   * account without a party (walk-in counter sales). Such a row is visible but
+   * not actionable: a receipt/payment against it cannot be party-allocated, so
+   * the AR/AP over-application guard (which keys off party_id) would be
+   * skipped. UI must not offer Receive/Pay on these.
+   */
+  party_id: number | null
   party_name: string
   /** Original invoice amount. */
   amount: string
