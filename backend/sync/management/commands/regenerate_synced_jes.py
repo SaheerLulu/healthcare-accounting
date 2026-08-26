@@ -30,9 +30,10 @@ AUTO_REFERENCE_TYPES = [
     'B2BSalesOrder',
     'SalesReturn',
     'PurchaseReturn',
-    # Amendment swap markers must be wiped with the purchase JEs they reverse,
-    # or a resync would leave orphaned reversal pairs.
+    # Amendment swap markers must be wiped with the purchase / sales JEs they
+    # reverse, or a resync would leave orphaned reversal pairs.
     'PurchaseAmendment',
+    'B2BSalesOrderEdit',
 ]
 
 

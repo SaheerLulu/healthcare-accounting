@@ -5,7 +5,8 @@ import traceback
 from decimal import Decimal
 from django.db import transaction, connection
 from inventory_reader.models import (
-    PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, SalesReturnRO, PurchaseReturnRO,
+    PurchaseOrderRO, POSOrderRO, B2BSalesOrderRO, B2BSalesOrderEditRO,
+    SalesReturnRO, PurchaseReturnRO,
     PurchaseReversalRO, PurchaseAmendmentRO,
     OpeningStockRO, OpeningStockCorrectionRO, StockMovementRO, PettyCashTxnRO,
     FeeCollectionRO,
@@ -459,6 +460,106 @@ class InventorySyncService:
         self._record_metrics('purchase_amendment', started, errors_before)
         return count
 
+    def sync_b2b_amendments(self, since_id: int = 0) -> int:
+        """Apply amendments to already-issued B2B tax invoices.
+
+        An issued invoice that an admin corrected in pharmacy (B2BSalesOrderEdit)
+        keeps its invoice number, so the sales JE posted from the pre-edit values
+        is still live under `reference_type='B2BSalesOrder'`. `sync_b2b` will not
+        touch it — that pass skips anything already synced — so without this the
+        stock and the invoice move while the books stay on the original figures.
+
+        Swap it, exactly as sync_purchase_amendments does for a re-approved
+        purchase: post a balanced reversal of the stale entry, then regenerate
+        the sale JE from the order's corrected values. The original is never
+        deleted — the ledger reads original → reversal → corrected, which is the
+        trail an auditor expects and the only version that survives a GST
+        reconciliation against the amended invoice.
+
+        Idempotency: the reversal carries reference_type='B2BSalesOrderEdit' /
+        reference_id=<edit id>, so a processed amendment drops out of the
+        standard anti-join. An amendment whose live JE was posted AFTER it was
+        applied needs no swap — `sync_b2b` already posted the corrected values —
+        and is skipped by the timestamp guard. (Such a row is re-examined on
+        each run and skipped again; the anti-join is DB-side, so that costs one
+        row read, the same way the purchase pass behaves.)
+        """
+        started = time.monotonic()
+        errors_before = SyncError.objects.filter(sync_type='b2b_amendment', resolved=False).count()
+        already_synced = self._synced_ids('B2BSalesOrderEdit')
+        try:
+            edits = list(
+                B2BSalesOrderEditRO.objects
+                .exclude(id__in=already_synced)
+                .select_related('sales_order').order_by('id')
+            )
+        except Exception as e:
+            # The edit table ships with the pharmacy app — during a deploy
+            # window where accounting is updated first it may not exist yet.
+            # Skip quietly; the anti-join self-heals on a later run.
+            logger.warning('b2b_amendment sync skipped — source unavailable: %s', e)
+            return 0
+
+        count = 0
+        last_id = since_id
+        for edit in edits:
+            try:
+                order = edit.sales_order
+                # A cancelled invoice is `reverse_cancelled`'s job, not ours —
+                # backing it out here would leave a corrected JE for a sale that
+                # no longer exists.
+                if order.status not in ('confirmed', 'delivered', 'invoiced'):
+                    continue
+                # Inter-store transfer legs never posted a sale to begin with.
+                if getattr(order, 'source_indent_id', None):
+                    continue
+                live = (
+                    JournalEntry.objects.filter(
+                        reference_type='B2BSalesOrder',
+                        reference_id=order.id,
+                        is_posted=True,
+                        reversal_of__isnull=True,
+                        reversal_entry__isnull=True,
+                    ).order_by('-id').first()
+                )
+                if live is None or live.created_at >= edit.created_at:
+                    continue
+                with transaction.atomic():
+                    self._reverse_entry(
+                        live,
+                        reference_type='B2BSalesOrderEdit',
+                        reference_id=edit.id,
+                        # The invoice number rides along: the regeneration below
+                        # immediately re-posts a second full-value entry naming
+                        # the same invoice, so without it a ledger search for
+                        # that number returns two sales with the netting
+                        # reversal invisible between them.
+                        narration=(
+                            f'B2B invoice amendment #{edit.id} — reverses {live.entry_no} '
+                            f'(values superseded by an admin correction): '
+                            f'{live.narration}'
+                        ).strip(': '),
+                    )
+                    fresh = self.journal_service.generate_b2b_sale(order.id, force=True)
+                    if fresh is None:
+                        # Never leave a reversed sale without its corrected
+                        # replacement — roll the swap back and surface the error.
+                        raise ValueError(
+                            f'Regeneration produced no entry for B2B order {order.id}'
+                        )
+                count += 1
+                self._resolve_error('b2b_amendment', edit.id)
+                last_id = max(last_id, edit.id)
+            except Exception as e:
+                self._log_error('b2b_amendment', edit.id, e)
+
+        SyncLog.objects.update_or_create(
+            sync_type='b2b_amendment',
+            defaults={'last_synced_id': last_id, 'records_processed': count}
+        )
+        self._record_metrics('b2b_amendment', started, errors_before)
+        return count
+
     def sync_stock_writeoffs(self, since_id: int = 0) -> int:
         """Post a loss JV for every inventory write-off (damage/wastage/expiry).
 
@@ -778,6 +879,7 @@ class InventorySyncService:
                     'reason': 'another sync is already running',
                     'opening_stocks': 0, 'os_corrections': 0, 'purchases': 0, 'pos': 0, 'b2b': 0,
                     'returns': 0, 'purchase_returns': 0, 'purchase_amendments': 0,
+                    'b2b_amendments': 0,
                     'stock_writeoffs': 0, 'stock_adjustments': 0, 'petty_cash': 0,
                     'stock_transfers': 0, 'fee_collections': 0,
                     'reversed_cancelled': 0,
@@ -828,6 +930,10 @@ class InventorySyncService:
         purchase_return_count = self.sync_purchase_returns(SyncLog.get_last_id('purchase_return'))
         purchase_reversal_count = self.sync_purchase_reversals(SyncLog.get_last_id('purchase_reversal'))
         purchase_amendment_count = self.sync_purchase_amendments(SyncLog.get_last_id('purchase_amendment'))
+        # After sync_b2b: an invoice raised and amended between two runs must
+        # post its original entry first, or there is nothing to swap and the
+        # timestamp guard would (correctly) skip the amendment forever.
+        b2b_amendment_count = self.sync_b2b_amendments(SyncLog.get_last_id('b2b_amendment'))
         writeoff_count = self.sync_stock_writeoffs(SyncLog.get_last_id('stock_writeoff'))
         adjustment_count = self.sync_stock_adjustments(SyncLog.get_last_id('stock_adjustment'))
         petty_cash_count = self.sync_petty_cash(SyncLog.get_last_id('petty_cash'))
@@ -841,7 +947,7 @@ class InventorySyncService:
         total = (opening_stock_count + os_correction_count + purchase_count
                  + pos_count + b2b_count
                  + return_count + purchase_return_count + purchase_reversal_count
-                 + purchase_amendment_count
+                 + purchase_amendment_count + b2b_amendment_count
                  + writeoff_count + adjustment_count + petty_cash_count
                  + stock_transfer_count + fee_collection_count)
         SyncLog.objects.create(
@@ -860,6 +966,7 @@ class InventorySyncService:
             'purchase_returns': purchase_return_count,
             'purchase_reversals': purchase_reversal_count,
             'purchase_amendments': purchase_amendment_count,
+            'b2b_amendments': b2b_amendment_count,
             'stock_writeoffs': writeoff_count,
             'stock_adjustments': adjustment_count,
             'petty_cash': petty_cash_count,
@@ -878,6 +985,7 @@ AUTO_GEN_REF_TYPES = (
     'OpeningStock', 'OpeningStockCorrection',
     'PurchaseOrder', 'POSOrder', 'B2BSalesOrder',
     'SalesReturn', 'PurchaseReturn', 'PurchaseReversal', 'PurchaseAmendment',
+    'B2BSalesOrderEdit',
     'StockWriteOff', 'StockAdjustment',
     'PettyCash', 'StockTransferIn', 'StockTransferOut', 'FeeCollection',
 )

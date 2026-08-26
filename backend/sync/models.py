@@ -8,6 +8,7 @@ class SyncLog(models.Model):
         ('b2b', 'B2B Sales Orders'),
         ('return', 'Sales Returns'),
         ('purchase_return', 'Purchase Returns'),
+        ('b2b_amendment', 'B2B Invoice Amendments'),
         ('all', 'All'),
     ]
 

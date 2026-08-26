@@ -549,6 +549,37 @@ class PurchaseReversalLineRO(models.Model):
         db_table = 'purchase_reversal_purchasereversalline'
 
 
+class B2BSalesOrderEditRO(models.Model):
+    """Read-only proxy for an amendment to an ALREADY-ISSUED B2B tax invoice.
+
+    Pharmacy restricts these to admins (`page_b2b_sales__edit`) and writes one
+    row per amendment, snapshotting the pre-edit header + lines. The invoice
+    keeps its number, so the stale sales JE posted from the original values
+    stays live under the same reference — the sync has to reverse it and repost
+    from the corrected order. Same contract as PurchaseAmendmentRO; see
+    sync_b2b_amendments.
+
+    `created_at` is the moment the correction was applied (the row is written
+    inside the amending transaction), which is what the timestamp guard in the
+    sync compares the live JE against.
+    """
+    sales_order = models.ForeignKey(
+        B2BSalesOrderRO, on_delete=models.DO_NOTHING,
+        related_name='edits', db_constraint=False,
+    )
+    reason = models.CharField(max_length=255, blank=True)
+    original_data = models.JSONField(null=True, blank=True)
+    edited_by_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'b2b_sales_b2bsalesorderedit'
+
+    def __str__(self):
+        return f"B2BEDIT#{self.id} order {self.sales_order_id}"
+
+
 class PurchaseAmendmentRO(models.Model):
     """Read-only proxy for purchase amendments (in-place correction of a
     confirmed purchase that went back through approval). Once `applied`, the

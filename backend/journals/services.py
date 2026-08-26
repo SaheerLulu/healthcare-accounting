@@ -882,9 +882,13 @@ class JournalAutoGenerationService:
         return entry
 
     @transaction.atomic
-    def generate_b2b_sale(self, b2b_id):
-        """Generate journal entry for a B2B sales order with proper IGST support."""
-        if self._entry_exists('B2BSalesOrder', b2b_id):
+    def generate_b2b_sale(self, b2b_id, force=False):
+        """Generate journal entry for a B2B sales order with proper IGST support.
+
+        ``force=True`` skips the already-synced guard — used by the invoice
+        amendment sync, which has just reversed the stale entry and needs a
+        fresh one posted from the order's corrected values."""
+        if not force and self._entry_exists('B2BSalesOrder', b2b_id):
             return None
 
         order = B2BSalesOrderRO.objects.select_related('customer').prefetch_related('lines').get(id=b2b_id)
