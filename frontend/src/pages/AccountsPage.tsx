@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  getChartOfAccounts, getAccountCounts,
+  getChartOfAccounts, getAccountCounts, getNextAccountCode,
   createAccount, updateAccount, deleteAccount, toggleAccountActive,
   type Account, type AccountCounts,
 } from '../lib/api'
@@ -63,6 +63,11 @@ const blankForm: AccountForm = {
 
 export default function AccountsPage() {
   const { canSeeAll } = useLocation()
+  // The code the server would assign if the field is left blank. Shown as the
+  // input's placeholder while creating — a suggestion, not a reservation: the
+  // real allocation happens again on save, so two people creating at once
+  // still get different codes.
+  const [suggestedCode, setSuggestedCode] = useState('')
   const [view, setView] = useState<'list' | 'tree'>('list')
   const [accounts, setAccounts] = useState<Account[]>([])
   const [counts, setCounts] = useState<AccountCounts | null>(null)
@@ -101,14 +106,32 @@ export default function AccountsPage() {
 
   useEffect(() => { load() }, [locationScope])
 
+  // Preview the auto-code for the drawer. Create only — an existing account
+  // keeps the code it already has, so a suggestion there would just be noise.
+  // A failed preview leaves the placeholder blank rather than surfacing an
+  // error: the field is still optional and the server will number it anyway.
+  useEffect(() => {
+    if (!sheetOpen || editing) return
+    let cancelled = false
+    getNextAccountCode({
+      account_type: form.account_type,
+      parent: form.parent ? Number(form.parent) : null,
+    })
+      .then((code) => { if (!cancelled) setSuggestedCode(code) })
+      .catch(() => { if (!cancelled) setSuggestedCode('') })
+    return () => { cancelled = true }
+  }, [sheetOpen, editing, form.account_type, form.parent])
+
   function openCreate() {
     setEditing(null)
     setForm(blankForm)
+    setSuggestedCode('')
     setSheetOpen(true)
   }
 
   function openEdit(acc: Account) {
     setEditing(acc)
+    setSuggestedCode('')
     setForm({
       account_code: acc.account_code,
       account_name: acc.account_name,
@@ -346,12 +369,20 @@ export default function AccountsPage() {
             <SheetBody>
               <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Field label="Account Code" required>
+                  <Field
+                    label="Account Code"
+                    required={!!editing}
+                    hint={editing
+                      ? undefined
+                      : suggestedCode
+                        ? `Leave blank to use ${suggestedCode}`
+                        : 'Leave blank to number it automatically'}
+                  >
                     <Input
-                      required
+                      required={!!editing}
                       value={form.account_code}
                       onChange={(e) => setForm({ ...form, account_code: e.target.value })}
-                      placeholder="e.g. 1110"
+                      placeholder={editing ? 'e.g. 1110' : (suggestedCode || 'Auto')}
                     />
                   </Field>
                   <Field label="Account Type" required>

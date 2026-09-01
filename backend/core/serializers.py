@@ -83,6 +83,14 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
     parent_code = serializers.CharField(source='parent.account_code', read_only=True, default=None)
     parent_name = serializers.CharField(source='parent.account_name', read_only=True, default=None)
     documents_count = serializers.SerializerMethodField()
+    # Optional on the way in: left blank, the server numbers the account next
+    # to the family it joins (core.account_codes). A code typed by hand still
+    # wins — an accountant migrating a chart needs to keep their own numbers.
+    account_code = serializers.CharField(
+        required=False, allow_blank=True, max_length=20,
+        help_text='Leave blank to auto-generate the next free code for this '
+                  'account type and parent.',
+    )
 
     class Meta:
         model = ChartOfAccount
@@ -106,6 +114,35 @@ class ChartOfAccountSerializer(serializers.ModelSerializer):
         if annotated is not None:
             return annotated
         return obj.journal_lines.count()
+
+    def to_internal_value(self, data):
+        """Allocate a missing account_code here rather than in validate().
+
+        The model's (account_code, location_id) UniqueConstraint becomes a
+        UniqueTogetherValidator, which runs BETWEEN this method and validate()
+        — and it both refuses a create with the field absent and is the last
+        line of defence against two allocations racing. Filling the code here
+        satisfies the first and lets the second check the number we actually
+        intend to save.
+
+        On UPDATE a blank code means "unchanged", never "renumber me": an
+        account's code is printed on every past report and is what the ledger
+        route resolves.
+        """
+        attrs = super().to_internal_value(data)
+        code = (attrs.get('account_code') or '').strip()
+        if code:
+            attrs['account_code'] = code
+        elif self.instance is not None:
+            attrs.pop('account_code', None)
+        else:
+            from .account_codes import next_account_code
+            try:
+                attrs['account_code'] = next_account_code(
+                    attrs.get('account_type'), attrs.get('parent'))
+            except ValueError as exc:
+                raise serializers.ValidationError({'account_code': str(exc)})
+        return attrs
 
     def validate(self, attrs):
         # Account names must be unique within a location scope, mirroring the

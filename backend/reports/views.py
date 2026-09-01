@@ -949,10 +949,16 @@ def _open_party_invoices(request, *, party_type):
         from inventory_reader.models import CustomerRO as RO
         name_field = 'customer_name'
     names = {}
+    # Payment terms, for the due date below. Comes from the inventory master
+    # (SupplierRO.credit_days / CustomerRO.credit_days) because neither the
+    # purchase order nor the JE carries a due date of its own.
+    credit_days = {}
     try:
-        for obj in RO.objects.filter(
-                id__in={l.party_id for l in invoice_lines if l.party_id is not None}):
-            names[obj.id] = getattr(obj, name_field)
+        for row in RO.objects.filter(
+                id__in={l.party_id for l in invoice_lines if l.party_id is not None}
+        ).values('id', name_field, 'credit_days'):
+            names[row['id']] = row[name_field]
+            credit_days[row['id']] = row['credit_days'] or 0
     except Exception:
         pass
 
@@ -982,10 +988,18 @@ def _open_party_invoices(request, *, party_type):
         if search and search not in name.lower() \
                 and search not in (l.entry.entry_no or '').lower():
             continue
+        # Invoice date + the party's credit days. `terms` is None only for an
+        # untagged row — there is no party, so there are no terms and no due
+        # date to state. 0 credit days is NOT that case: it means due on
+        # presentation, so the due date is the invoice date.
+        terms = credit_days.get(pid) if pid is not None else None
+        due = l.entry.date + timedelta(days=terms) if terms is not None else None
         rows.append({
             'invoice_no': l.entry.entry_no,
             'voucher_type': l.entry.voucher_type,
             'date': l.entry.date.isoformat(),
+            'due_date': due.isoformat() if due is not None else None,
+            'credit_days': terms,
             'party_id': pid,
             'party_name': name,
             'amount': str(original),

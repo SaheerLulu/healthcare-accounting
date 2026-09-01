@@ -96,6 +96,15 @@ export default function PayablesPage() {
       (s, r) => s + (parseFloat(r.outstanding_amount || r.amount) || 0), 0),
     [supplierInvoices],
   )
+  // Overdue = past the due date the supplier's credit days imply. Rows whose
+  // supplier has no terms on file carry due_date null and are never counted
+  // overdue — an unknown due date is not a missed one.
+  const supplierOverdue = useMemo(
+    () => supplierInvoices.reduce(
+      (s, r) => s + (r.due_date && r.due_date < today
+        ? parseFloat(r.outstanding_amount || r.amount) || 0 : 0), 0),
+    [supplierInvoices, today],
+  )
   const grandTotal = totals.total + supplierTotal
 
   return (
@@ -110,6 +119,14 @@ export default function PayablesPage() {
             <span className="font-medium mono" style={{ color: 'var(--warning)' }}>{formatCurrency(grandTotal)}</span>
             {' '}— <span className="mono">{formatCurrency(supplierTotal)}</span> supplier invoices,{' '}
             <span className="mono">{formatCurrency(totals.total)}</span> vendor bills
+            {supplierOverdue > 0 && (
+              <>
+                {' '}·{' '}
+                <span className="font-medium mono" style={{ color: 'var(--danger)' }}>
+                  {formatCurrency(supplierOverdue)} invoices overdue
+                </span>
+              </>
+            )}
             {totals.overdue > 0 && (
               <>
                 {' '}·{' '}
@@ -142,7 +159,7 @@ export default function PayablesPage() {
 
         <TabsContent value="supplier-invoices">
           {loading ? (
-            <SkeletonTable rows={6} cols={5} />
+            <SkeletonTable rows={6} cols={6} />
           ) : supplierInvoices.length === 0 ? (
             <EmptyState
               icon={Banknote}
@@ -156,6 +173,7 @@ export default function PayablesPage() {
                   <Tr>
                     <Th className="text-left">Invoice #</Th>
                     <Th className="text-left">Date</Th>
+                    <Th className="text-left">Due</Th>
                     <Th className="text-left">Supplier</Th>
                     <Th className="text-right px-3">Amount</Th>
                     <Th className="text-right px-3">Outstanding</Th>
@@ -166,10 +184,21 @@ export default function PayablesPage() {
                       vendor-less credit posted straight to the control account)
                       all share the same "…-null" suffix, and one entry can
                       contribute two of them. */}
-                  {supplierInvoices.map((r, i) => (
+                  {supplierInvoices.map((r, i) => {
+                    const overdue = !!r.due_date && r.due_date < today
+                    return (
                     <Tr key={`${r.invoice_no}-${r.party_id ?? 'untagged'}-${i}`}>
                       <Td className="font-medium mono">{r.invoice_no}</Td>
                       <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(r.date)}</Td>
+                      {/* Bill date + the supplier's credit days. An em dash
+                          means the supplier has no terms on file, not that the
+                          invoice has no deadline. */}
+                      <Td className={cn('text-sm', overdue && 'font-medium')}
+                        style={{ color: overdue ? 'var(--danger)' : 'var(--ink-2)' }}
+                        title={r.credit_days != null ? `${r.credit_days} credit days` : 'No credit terms on file'}>
+                        {r.due_date ? formatDate(r.due_date) : '—'}
+                        {overdue && <span className="ml-1 text-xs">(overdue)</span>}
+                      </Td>
                       <Td className="text-sm" style={{ color: 'var(--ink)' }}>{r.party_name}</Td>
                       <Td className="text-right mono px-3" style={{ color: 'var(--ink)' }}>
                         {formatCurrency(r.amount)}
@@ -178,11 +207,12 @@ export default function PayablesPage() {
                         {formatCurrency(r.outstanding_amount || r.amount)}
                       </Td>
                     </Tr>
-                  ))}
+                    )
+                  })}
                 </Tbody>
                 <tfoot>
                   <tr style={{ borderTop: '2px solid var(--line)', background: 'var(--color-grey-light)' }} className="font-semibold">
-                    <td colSpan={4} className="py-3 px-4 text-sm" style={{ color: 'var(--ink-2)' }}>
+                    <td colSpan={5} className="py-3 px-4 text-sm" style={{ color: 'var(--ink-2)' }}>
                       Total · {supplierInvoices.length} invoice{supplierInvoices.length === 1 ? '' : 's'}
                     </td>
                     <td className="py-3 px-3 text-right mono" style={{ color: 'var(--warning)' }}>

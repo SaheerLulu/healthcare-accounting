@@ -118,7 +118,7 @@ export default function ReceivablesPage() {
       </div>
 
       {loading ? (
-        <SkeletonTable rows={6} cols={7} />
+        <SkeletonTable rows={6} cols={8} />
       ) : rows.length === 0 ? (
         <EmptyState
           icon={Wallet}
@@ -132,6 +132,7 @@ export default function ReceivablesPage() {
               <Tr>
                 <Th className="text-left">Invoice #</Th>
                 <Th className="text-left">Date</Th>
+                <Th className="text-left">Due</Th>
                 <Th className="text-left">Type</Th>
                 <Th className="text-left">Customer</Th>
                 <Th className="text-right px-3">Invoice Amount</Th>
@@ -142,6 +143,10 @@ export default function ReceivablesPage() {
             <Tbody>
               {rows.map((r, i) => {
                 const untagged = r.party_id == null
+                // Overdue against the AS-OF date the toolbar is showing, not
+                // the wall clock — an as-of in the past must not brand an
+                // invoice overdue on the strength of days it hadn't yet lived.
+                const overdue = !!r.due_date && r.due_date < asOf
                 return (
                   // The index keeps the key unique: untagged rows all collapse
                   // to the same "null-…" prefix, and two of them can share an
@@ -153,6 +158,14 @@ export default function ReceivablesPage() {
                       </span>
                     </Td>
                     <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(r.date)}</Td>
+                    {/* Invoice date + the customer's credit days. An em dash
+                        means no terms on file, not "no deadline". */}
+                    <Td className={cn('text-sm', overdue && 'font-medium')}
+                      style={{ color: overdue ? 'var(--danger)' : 'var(--ink-2)' }}
+                      title={r.credit_days != null ? `${r.credit_days} credit days` : 'No credit terms on file'}>
+                      {r.due_date ? formatDate(r.due_date) : '—'}
+                      {overdue && <span className="ml-1 text-xs">(overdue)</span>}
+                    </Td>
                     <Td className="text-xs" style={{ color: 'var(--ink-2)' }}>{r.voucher_type}</Td>
                     <Td className="font-medium">
                       {untagged ? (

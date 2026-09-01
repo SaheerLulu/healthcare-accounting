@@ -296,9 +296,29 @@ def transaction_list(party_type: str, party_id: int, *, location_id=None,
     return rows
 
 
+def _party_master_in_store(location_id):
+    """Which inventory party-master rows belong to a store's list.
+
+    The store's own rows PLUS the store-less ones. `location` is nullable on
+    both masters and the shared counterparties every store trades with — the
+    'Unregistered Supplier' / walk-in customer rows the pharmacy auto-creates —
+    are exactly the ones left NULL. Filtering on `location_id=` alone dropped
+    them from Parties, so a supplier that HAD an outstanding balance in this
+    store (the balance aggregate below scopes by the ENTRY's location, not the
+    master row's) had no row to show it on, and no way to reach a payment from.
+    Same widening as the Cash Book's per-store ledger filter.
+    """
+    return Q(location_id=location_id) | Q(location_id__isnull=True)
+
+
 def list_parties(party_type: str, *, location_id=None, search: str = '',
-                 as_of=None) -> list:
-    """List all suppliers or customers from inventory with rolled-up balance metrics."""
+                 as_of=None, customer_type: str = '') -> list:
+    """List all suppliers or customers from inventory with rolled-up balance metrics.
+
+    `customer_type` filters the Customer list to one or more inventory types
+    (comma-separated, e.g. 'Hospital,B2B' — the same shape the pharmacy
+    customer API accepts). Ignored for suppliers, which have no such field.
+    """
     from inventory_reader.models import SupplierRO, CustomerRO
 
     as_of = _resolve_as_of(as_of)
@@ -306,16 +326,19 @@ def list_parties(party_type: str, *, location_id=None, search: str = '',
     if party_type == 'Supplier':
         qs = SupplierRO.objects.all()
         if location_id:
-            qs = qs.filter(location_id=location_id)
+            qs = qs.filter(_party_master_in_store(location_id))
         if search:
             qs = qs.filter(company_name__icontains=search)
         qs = qs.order_by('company_name')
     else:
         qs = CustomerRO.objects.all()
         if location_id:
-            qs = qs.filter(location_id=location_id)
+            qs = qs.filter(_party_master_in_store(location_id))
         if search:
             qs = qs.filter(customer_name__icontains=search)
+        wanted = [t.strip() for t in (customer_type or '').split(',') if t.strip()]
+        if wanted:
+            qs = qs.filter(customer_type__in=wanted)
         qs = qs.order_by('customer_name')
 
     # One pass over the balance-relevant journal lines, then map back to

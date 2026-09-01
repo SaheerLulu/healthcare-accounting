@@ -17,6 +17,9 @@ import {
   Users,
   Building,
   Receipt,
+  Banknote,
+  Landmark,
+  Scale,
   ArrowUpRight,
   AlertTriangle,
 } from 'lucide-react'
@@ -35,6 +38,9 @@ const EMPTY: DashboardData = {
   total_receivables: 0,
   total_payables: 0,
   gst_payable: 0,
+  cash_balance: 0,
+  bank_balance: 0,
+  total_assets: 0,
   monthly_data: [],
 }
 
@@ -50,6 +56,12 @@ function pctDelta(series: number[]): number {
   if (!prev) return 0
   return ((last - prev) / Math.abs(prev)) * 100
 }
+
+// Nine cards in three rows of three: performance, then what is owed, then
+// what is held. Deliberately NOT 4-up on xl — that would strand a tenth of a
+// row — and the skeleton shares the class so the grid does not reflow when
+// the data lands.
+const KPI_GRID = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4'
 
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -197,6 +209,9 @@ export default function DashboardPage() {
   const receivables = Number(data.total_receivables) || 0
   const payables = Number(data.total_payables) || 0
   const gstPayable = Number(data.gst_payable) || 0
+  const cash = Number(data.cash_balance) || 0
+  const bank = Number(data.bank_balance) || 0
+  const totalAssets = Number(data.total_assets) || 0
   const hasMonthly = monthly.length > 0
   // One complete month gives nothing to compare against, so no trend is shown
   // rather than a flat 0%.
@@ -272,13 +287,13 @@ export default function DashboardPage() {
           the whole page, toolbar included, so every keystroke in a date field
           unmounted the field being typed into. */}
       {loading ? (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
+        <div className={KPI_GRID}>
+          {Array.from({ length: 9 }).map((_, i) => (
             <SkeletonCard key={i} />
           ))}
         </div>
       ) : (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className={KPI_GRID}>
         <KpiCard
           title="Revenue"
           value={formatCurrency(data.total_revenue)}
@@ -350,6 +365,38 @@ export default function DashboardPage() {
           color="#7c3aed"
           bgColor="rgba(124,58,237,0.10)"
           onClick={() => navigate('/gst/gstr3b')}
+        />
+        {/* Cash, bank and total assets are as-of balances like Receivables/
+            Payables, not period flows — they do not move with the From/To
+            window except through its end date. A negative cash or bank figure
+            is real (an overdraft, or a cash ledger posted below zero), so it
+            turns red rather than being clamped away. */}
+        <KpiCard
+          title="Cash balance"
+          value={formatCurrency(cash)}
+          subtitle={`${cash < 0 ? 'Overdrawn' : 'In hand'} as of ${balancesLabel}`}
+          icon={Banknote}
+          color={cash < 0 ? 'var(--danger)' : 'var(--success)'}
+          bgColor={cash < 0 ? 'rgba(192,57,43,0.10)' : 'rgba(31,138,76,0.10)'}
+          onClick={() => navigate('/reports/cash-book')}
+        />
+        <KpiCard
+          title="Bank balance"
+          value={formatCurrency(bank)}
+          subtitle={`${bank < 0 ? 'Overdrawn' : 'Available'} as of ${balancesLabel}`}
+          icon={Landmark}
+          color={bank < 0 ? 'var(--danger)' : 'var(--info)'}
+          bgColor={bank < 0 ? 'rgba(192,57,43,0.10)' : 'rgba(37,99,235,0.10)'}
+          onClick={() => navigate('/reports/bank-book')}
+        />
+        <KpiCard
+          title="Total assets"
+          value={formatCurrency(totalAssets)}
+          subtitle={`Book value as of ${balancesLabel}`}
+          icon={Scale}
+          color="var(--brand)"
+          bgColor="rgba(15,157,154,0.10)"
+          onClick={() => navigate('/reports/balance-sheet')}
         />
       </div>
       )}

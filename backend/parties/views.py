@@ -90,6 +90,9 @@ class CustomersListView(APIView):
             location_id=loc.id if loc else None,
             search=request.query_params.get('search', ''),
             as_of=_parse_date(request.query_params.get('date')),
+            # Comma-separated, matching the pharmacy customer API's own
+            # ?customer_type=Hospital,B2B.
+            customer_type=request.query_params.get('customer_type', ''),
         )
         return Response({'rows': rows, 'count': len(rows)})
 

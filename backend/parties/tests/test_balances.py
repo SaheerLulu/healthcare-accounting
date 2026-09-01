@@ -22,6 +22,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest import mock
 
+from django.db.models import Q
 from django.test import TestCase, override_settings
 
 from core.models import AccountMapping, ChartOfAccount
@@ -80,6 +81,27 @@ def _payables_report_balance(party_id, *, location_id=None, as_of=None):
                Decimal('0.00'))
 
 
+def _q_matches(q, row):
+    """Evaluate one of the small Q trees list_parties builds against a fake
+    row. Deliberately narrow — it understands exactly the lookups the service
+    uses, and raises on anything else so a new filter can't silently pass here
+    while doing nothing."""
+    results = []
+    for child in q.children:
+        if isinstance(child, Q):
+            results.append(_q_matches(child, row))
+            continue
+        key, value = child
+        if key == 'location_id':
+            results.append(row.location_id == value)
+        elif key == 'location_id__isnull':
+            results.append((row.location_id is None) is value)
+        else:
+            raise AssertionError(f'fake queryset cannot evaluate Q({key}=…)')
+    matched = any(results) if q.connector == Q.OR else all(results)
+    return not matched if q.negated else matched
+
+
 class _FakePartyQS:
     """Duck-typed stand-in for SupplierRO.objects / CustomerRO.objects — the
     inventory proxy tables are managed=False and absent from the test DB."""
@@ -90,10 +112,15 @@ class _FakePartyQS:
     def all(self):
         return self
 
-    def filter(self, **kw):
+    def filter(self, *args, **kw):
         rows = self.rows
+        for q in args:
+            rows = [r for r in rows if _q_matches(q, r)]
         if 'location_id' in kw:
             rows = [r for r in rows if r.location_id == kw['location_id']]
+        if 'customer_type__in' in kw:
+            wanted = set(kw['customer_type__in'])
+            rows = [r for r in rows if getattr(r, 'customer_type', None) in wanted]
         for key in ('company_name__icontains', 'customer_name__icontains'):
             if key in kw:
                 needle = kw[key].lower()

@@ -156,6 +156,56 @@ class JournalAutoGenerationService:
             tag = {}
         return account, tag
 
+    def _purchase_settlement(self, payment_type, supplier_id, loc):
+        """Credit account + party tag for the supplier side of a purchase — the
+        mirror of _sale_settlement.
+
+        A CREDIT purchase becomes a payable on that supplier's own ledger,
+        party-tagged so AP aging is accurate. UPI/Card/Cheque were paid out of
+        the bank, Cash came out of the drawer; neither is money still owed, so
+        neither is tagged — a tag on a settled line would put a paid bill back
+        onto Payables.
+
+        Until this existed every synced purchase credited Trade Payables
+        whatever the PO said, so a cash purchase was booked as debt and
+        Payables overstated by the whole of it — while the sales side had
+        always branched.
+
+        A BLANK payment type means Credit, matching the inventory PO model's
+        own default. This is the deliberate asymmetry with _sale_settlement,
+        where blank falls through to Cash: an unknown sale is a counter sale
+        whose money demonstrably came in, whereas crediting Cash for a bill we
+        cannot prove was paid would drain the cash book and make a real
+        liability disappear. Unknown purchases stay owed. Matched
+        case-insensitively so a lowercase 'credit' can never fall through.
+        """
+        pt = (payment_type or '').strip().lower()
+        if not pt or pt == 'credit':
+            account = self._party_account(
+                'Supplier', supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc)
+            tag = dict(party_type='Supplier', party_id=supplier_id) if supplier_id else {}
+        elif pt in self.BANK_SETTLEMENT_MODES:
+            account = self._acct('BANK', loc)
+            tag = {}
+        else:
+            account = self._acct('CASH', loc)
+            tag = {}
+        return account, tag
+
+    @staticmethod
+    def _original_payment_type(original_po, default='Credit'):
+        """How the purchase a return/reversal undoes was settled.
+
+        Defaults to Credit — the inventory PO model's own default — so a
+        document whose original row is missing or dangling still reduces the
+        payable rather than refunding cash that never moved. Both FKs are
+        db_constraint=False, and one is nullable, so dereferencing can raise
+        as well as return None.
+        """
+        if original_po is None:
+            return default
+        return getattr(original_po, 'payment_type', '') or default
+
     def _refund_account(self, payment_type, loc):
         """Credit account when refunding a sale — mirrors where the money
         originally landed (Bank for UPI/Card/Cheque, Cash otherwise)."""
@@ -593,9 +643,17 @@ class JournalAutoGenerationService:
         sgst_amount = Decimal('0.00')
         igst_amount = Decimal('0.00')
 
-        # Always re-derive supply_type — pre-populated po.supply_type from inventory has been observed wrong.
+        # Always re-derive supply_type — pre-populated po.supply_type from
+        # inventory has been observed wrong. The supplier's STATE is passed as
+        # the fallback, exactly as the three sales generators do: a supplier
+        # whose gst_no is blank or a placeholder ('UNREG', 'NA', …) carries no
+        # state in the GSTIN, and without this the purchase side had no second
+        # source and fell back to the intra default by luck rather than by
+        # knowing where the supplier is.
         supply_type = self._get_supply_type(
-            po.supplier.gst_no if po.supplier else '', location_id=po.location_id)
+            po.supplier.gst_no if po.supplier else '',
+            self._counterparty_state_code(po.supplier),
+            location_id=po.location_id)
 
         # Pre-computed line.cgst_amount/sgst_amount/igst_amount carry the inventory's
         # (possibly wrong) classification. Sum the total tax across lines and re-split
@@ -673,13 +731,13 @@ class JournalAutoGenerationService:
         if igst_amount > 0:
             JournalEntryLine.objects.create(entry=entry, account=self._acct('INPUT_IGST', loc), debit=igst_amount)
         if total_payable > 0:
+            # Credit purchase -> the supplier's payable ledger; cash/UPI/card/
+            # cheque -> the drawer or the bank, because the money has already
+            # left. See _purchase_settlement.
+            settle_ac, settle_tag = self._purchase_settlement(
+                getattr(po, 'payment_type', ''), po.supplier_id, loc)
             JournalEntryLine.objects.create(
-                entry=entry,
-                account=self._party_account(
-                    'Supplier', po.supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc),
-                credit=total_payable,
-                party_type='Supplier',
-                party_id=po.supplier_id,
+                entry=entry, account=settle_ac, credit=total_payable, **settle_tag,
             )
         if addl_discount > 0 and discount_received_ac is not None:
             JournalEntryLine.objects.create(
@@ -1185,6 +1243,7 @@ class JournalAutoGenerationService:
 
         supply_type = self._get_supply_type(
             ret.supplier.gst_no if ret.supplier else '',
+            self._counterparty_state_code(ret.supplier),
             location_id=ret.location_id,
         )
 
@@ -1265,15 +1324,17 @@ class JournalAutoGenerationService:
             location_id=loc,
         )
 
-        # Debit: Trade Payables (reduce liability)
+        # Debit: wherever the original purchase was settled — the payable for
+        # a credit bill, otherwise the cash/bank the supplier refunds into.
+        # Debiting Payables for a cash purchase would leave the supplier owing
+        # US money on Payables for goods we had already paid for.
         if total_return > 0:
+            settle_ac, settle_tag = self._purchase_settlement(
+                self._original_payment_type(
+                    getattr(ret, 'original_purchase_order', None)),
+                ret.supplier_id, loc)
             JournalEntryLine.objects.create(
-                entry=entry,
-                account=self._party_account(
-                    'Supplier', ret.supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc),
-                debit=total_return,
-                party_type='Supplier',
-                party_id=ret.supplier_id,
+                entry=entry, account=settle_ac, debit=total_return, **settle_tag,
             )
         # Credit: Closing Stock directly — perpetual inventory never debited
         # Purchases on the original purchase, so we don't credit Purchase
@@ -1392,7 +1453,8 @@ class JournalAutoGenerationService:
                     Decimal('0.01'), rounding=ROUND_HALF_UP)
 
         supply_type = self._get_supply_type(
-            rev.supplier.gst_no if rev.supplier else '', location_id=loc)
+            rev.supplier.gst_no if rev.supplier else '',
+            self._counterparty_state_code(rev.supplier), location_id=loc)
         if supply_type == 'inter_state':
             cgst_amount, sgst_amount, igst_amount = Decimal('0.00'), Decimal('0.00'), total_tax
         else:
@@ -1410,14 +1472,14 @@ class JournalAutoGenerationService:
             reference_id=reversal_id,
             location_id=loc,
         )
-        # Debit: Trade Payables (reduce supplier liability for the reversed lines)
+        # Debit: wherever the original purchase was settled, as in
+        # generate_purchase_return. `original_po` was resolved above (and is
+        # None for a dangling FK), so no second dereference here.
         if total_return > 0:
+            settle_ac, settle_tag = self._purchase_settlement(
+                self._original_payment_type(original_po), rev.supplier_id, loc)
             JournalEntryLine.objects.create(
-                entry=entry,
-                account=self._party_account(
-                    'Supplier', rev.supplier_id, self._acct('TRADE_PAYABLES', loc), location_id=loc),
-                debit=total_return,
-                party_type='Supplier', party_id=rev.supplier_id,
+                entry=entry, account=settle_ac, debit=total_return, **settle_tag,
             )
         # Credit: Closing Stock (perpetual — stock goes back out) + reverse ITC.
         if taxable_amount > 0:

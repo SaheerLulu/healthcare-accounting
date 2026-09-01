@@ -243,6 +243,33 @@ class ChartOfAccountViewSet(viewsets.ModelViewSet):
         if parent_id and not ChartOfAccount.objects.filter(parent_id=parent_id).exists():
             ChartOfAccount.objects.filter(pk=parent_id).update(is_leaf=True)
 
+    @action(detail=False, methods=['get'], url_path='next-code')
+    def next_code(self, request):
+        """The code a new account would be given — so the form can show it
+        before anything is saved.
+
+        A preview only: nothing is reserved, so two people creating an account
+        at the same moment see the same suggestion. The code that lands in the
+        DB is allocated again at save time (ChartOfAccountSerializer.validate),
+        which is what makes it correct rather than merely likely.
+        """
+        from .account_codes import next_account_code
+        account_type = request.query_params.get('account_type')
+        if account_type not in dict(ChartOfAccount.ACCOUNT_TYPE_CHOICES):
+            return Response(
+                {'detail': 'A valid account_type query parameter is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        parent = None
+        parent_id = request.query_params.get('parent')
+        if parent_id:
+            parent = ChartOfAccount.objects.filter(pk=parent_id).first()
+        try:
+            return Response({'account_code': next_account_code(account_type, parent)})
+        except ValueError as exc:
+            return Response({'detail': str(exc)},
+                            status=status.HTTP_400_BAD_REQUEST)
+
     @action(detail=False, methods=['get'], url_path='tree')
     def tree(self, request):
         root_accounts = ChartOfAccount.objects.filter(parent__isnull=True).order_by('account_code')
@@ -558,12 +585,20 @@ class LocationTaxProfilesView(APIView):
 
 def _scope_party_qs(request, qs):
     """Store-scope a party dropdown queryset like LocationFilterMixin does:
-    active store → that store's parties; admin with no header → all;
-    regular user with no header → nothing."""
+    active store → that store's parties, PLUS the store-less ones; admin with
+    no header → all; regular user with no header → nothing.
+
+    `location` is nullable on both party masters, and the shared counterparties
+    every store trades with — the pharmacy's auto-created 'Unregistered
+    Supplier' and walk-in customer rows — are exactly the ones left NULL.
+    Matching on `location_id=` alone hid them from every payment/receipt
+    voucher picker, so a bill owed to one of them could be seen on the ledger
+    and never paid. Same widening as parties.services._party_master_in_store.
+    """
     from .middleware import _has_all_location_access
     location = get_active_location(request)
     if location:
-        return qs.filter(location_id=location.id)
+        return qs.filter(Q(location_id=location.id) | Q(location_id__isnull=True))
     if _has_all_location_access(request.user):
         return qs
     return qs.none()
@@ -589,6 +624,7 @@ class CustomersListView(APIView):
 class DashboardView(APIView):
     def get(self, request):
         from journals.models import JournalEntryLine
+        from .year_end import OPENING_CARRY_FORWARD
 
         fy_start, fy_end = _get_fy_dates()
         today = date.today()
@@ -657,30 +693,71 @@ class DashboardView(APIView):
 
         net_profit = total_revenue - total_expenses
 
-        # Subtype aggregates for receivables, payables, GST
+        # As-of balances (receivables, payables, GST, cash, bank, total assets).
+        # Cumulative from inception to `as_of` — the Balance Sheet's own basis,
+        # so it has to drop the year-end opening carry-forward JV for the same
+        # reason BalanceSheetView does: that JV RESTATES every Asset/Liability/
+        # Equity balance the continuous ledger already carries to this date, so
+        # counting both doubled every one of these cards from the day an FY was
+        # closed. (The P&L aggregate above needs no such filter — the opening
+        # JV never touches a revenue or expense account.)
         subtype_qs = JournalEntryLine.objects.filter(
             entry__is_posted=True,
             entry__is_optional=False,
             entry__is_memorandum=False,
             entry__date__lte=as_of,
-        )
+        ).exclude(entry__reference_type=OPENING_CARRY_FORWARD)
         if location:
             subtype_qs = subtype_qs.filter(entry__location_id=location.id)
-        subtype_agg = subtype_qs.values('account__account_subtype').annotate(
+        # Grouped by subtype AND type in the one query, then folded two ways.
+        # A subtype is not unique to a type — 'Other_Income' sits on 1190
+        # Closing Stock (ASSET) as well as the revenue leaves — so the rows are
+        # accumulated into each bucket, not indexed by key.
+        balance_agg = subtype_qs.values(
+            'account__account_subtype', 'account__account_type',
+        ).annotate(
             total_debit=Sum('debit'),
             total_credit=Sum('credit'),
         )
-        subtype_totals = {row['account__account_subtype']: row for row in subtype_agg}
+        subtype_totals = {}
+        type_balances = {}
+        for row in balance_agg:
+            dr = row['total_debit'] or Decimal('0')
+            cr = row['total_credit'] or Decimal('0')
+            for bucket, key in ((subtype_totals, row['account__account_subtype']),
+                                (type_balances, row['account__account_type'])):
+                acc = bucket.setdefault(
+                    key, {'total_debit': Decimal('0'), 'total_credit': Decimal('0')})
+                acc['total_debit'] += dr
+                acc['total_credit'] += cr
+
+        def _net(bucket, key):
+            row = bucket.get(key) or {}
+            return (row.get('total_debit') or Decimal('0')) - (row.get('total_credit') or Decimal('0'))
 
         def get_subtype_balance(subtype):
-            s = subtype_totals.get(subtype, {})
-            return (s.get('total_debit') or Decimal('0')) - (s.get('total_credit') or Decimal('0'))
+            return _net(subtype_totals, subtype)
 
         total_receivables = get_subtype_balance('Receivable')
         total_payables = -(get_subtype_balance('Payable'))
         output_gst = -(get_subtype_balance('Output_GST'))
         input_gst = get_subtype_balance('Input_GST')
         gst_payable = output_gst - input_gst
+
+        # Cash and bank are BALANCES, not period flows: like receivables and
+        # payables they read cumulatively from inception to `as_of`, off the
+        # same subtype aggregate — no extra query. Under per-store CoA cloning
+        # a store's own '1110-<STORE>' leaf and the untagged seed template both
+        # carry subtype Cash, so it is the entry-level location filter above
+        # that scopes these, exactly as the Cash Book / Bank Book do.
+        cash_balance = get_subtype_balance('Cash')
+        bank_balance = get_subtype_balance('Bank')
+
+        # Every ASSET account, debit-positive. Contra-assets (accumulated
+        # depreciation) carry credit balances and net themselves out, and the
+        # model blocks postings to non-leaf accounts — so summing lines lands
+        # on the same figure BalanceSheetView reaches by summing leaf accounts.
+        total_assets = _net(type_balances, 'ASSET')
 
         # Current month — deliberately the REAL calendar month intersected with
         # the selected window, so it reads 0 for any range that ended before
@@ -750,6 +827,9 @@ class DashboardView(APIView):
             'total_receivables': float(total_receivables),
             'total_payables': float(total_payables),
             'gst_payable': float(gst_payable),
+            'cash_balance': float(cash_balance),
+            'bank_balance': float(bank_balance),
+            'total_assets': float(total_assets),
             'current_month_revenue': float(current_month_revenue),
             'current_month_expenses': float(current_month_expenses),
             'financial_year_start': str(fy_start),

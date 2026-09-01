@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
-import { getPartiesList, type PartyListRow, type PartyType } from '../../lib/api'
+import {
+  CUSTOMER_TYPES, getPartiesList, type PartyListRow, type PartyType,
+} from '../../lib/api'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
@@ -15,13 +17,20 @@ export default function PartyListPage({ partyType }: { partyType: PartyType }) {
   const [rows, setRows] = useState<PartyListRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  // '' = every type. Only meaningful for customers — suppliers have no such
+  // field on the inventory master.
+  const [customerType, setCustomerType] = useState('')
   const { activeLocationId } = useLocation()
+  const isCustomer = partyType === 'Customer'
 
   async function load() {
     setLoading(true)
     try {
-      const params = search ? { search } : undefined
-      const data = await getPartiesList(partyType, params)
+      const params: { search?: string; customer_type?: string } = {}
+      if (search) params.search = search
+      if (isCustomer && customerType) params.customer_type = customerType
+      const data = await getPartiesList(
+        partyType, Object.keys(params).length ? params : undefined)
       setRows(data.rows)
     } catch {
       toast.error(`Failed to load ${partyType.toLowerCase()}s`)
@@ -33,7 +42,11 @@ export default function PartyListPage({ partyType }: { partyType: PartyType }) {
   useEffect(() => {
     const t = setTimeout(load, 250)
     return () => clearTimeout(t)
-  }, [search, activeLocationId, partyType])
+  }, [search, customerType, activeLocationId, partyType])
+
+  // Switching Customers <-> Suppliers reuses this component, so a type left
+  // selected on the customer list would otherwise be sent for suppliers too.
+  useEffect(() => { setCustomerType('') }, [partyType])
 
   const totals = useMemo(() => {
     let outstanding = 0
@@ -58,14 +71,42 @@ export default function PartyListPage({ partyType }: { partyType: PartyType }) {
         searchValue={search}
         searchPlaceholder={`Search ${heading.toLowerCase()}…`}
         onSearchChange={setSearch}
+        toolbar={isCustomer ? (
+          <select
+            value={customerType}
+            onChange={(e) => setCustomerType(e.target.value)}
+            aria-label="Filter by customer type"
+            className="h-9 px-2.5 rounded-md text-sm outline-none"
+            style={{
+              border: '1px solid var(--line)',
+              background: 'var(--surface-0)',
+              color: 'var(--ink)',
+            }}
+          >
+            <option value="">All types</option>
+            {CUSTOMER_TYPES.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        ) : undefined}
       >
         {loading ? (
           <SkeletonTable rows={8} cols={8} />
         ) : rows.length === 0 ? (
           <EmptyState
-            variant={search ? 'no-results' : 'no-data'}
-            title={search ? `No ${heading.toLowerCase()} match "${search}"` : `No ${heading.toLowerCase()} yet`}
-            description={search ? 'Try a different search term.' : `Sync inventory or add ${heading.toLowerCase()} to get started.`}
+            variant={search || customerType ? 'no-results' : 'no-data'}
+            title={
+              search
+                ? `No ${heading.toLowerCase()} match "${search}"`
+                : customerType
+                  ? `No ${customerType} customers`
+                  : `No ${heading.toLowerCase()} yet`
+            }
+            description={
+              search || customerType
+                ? 'Try a different search term or type filter.'
+                : `Sync inventory or add ${heading.toLowerCase()} to get started.`
+            }
           />
         ) : (
           <Card className="overflow-hidden p-0">

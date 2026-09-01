@@ -167,6 +167,23 @@ export async function getAccount(id: number) {
   return res.data as Account
 }
 
+/**
+ * The code a new account would be assigned — a PREVIEW for the form, so the
+ * field can show what leaving it blank will produce. Nothing is reserved; the
+ * code that lands in the DB is allocated again at save time.
+ */
+export async function getNextAccountCode(
+  params: { account_type: string; parent?: number | null },
+) {
+  const res = await api.get('/accounts/chart-of-accounts/next-code/', {
+    params: {
+      account_type: params.account_type,
+      ...(params.parent ? { parent: params.parent } : {}),
+    },
+  })
+  return (res.data as { account_code: string }).account_code
+}
+
 export async function createAccount(data: Partial<Account>) {
   const res = await api.post('/accounts/chart-of-accounts/', data)
   return res.data as Account
@@ -260,6 +277,12 @@ export interface DashboardData {
   total_receivables: number | string
   total_payables: number | string
   gst_payable: number | string
+  /** Cash-subtype GL balance as of `balances_as_of` (cumulative, not the range). */
+  cash_balance: number | string
+  /** Bank-subtype GL balance as of `balances_as_of`; negative = overdrawn. */
+  bank_balance: number | string
+  /** Every ASSET account as of `balances_as_of` — ties to the Balance Sheet. */
+  total_assets: number | string
   range_start?: string
   range_end?: string
   /**
@@ -566,7 +589,14 @@ export interface PartyCommunication {
 
 const partyBase = (t: PartyType) => (t === 'Supplier' ? 'suppliers' : 'customers')
 
-export async function getPartiesList(party_type: PartyType, params?: { search?: string }) {
+/** Inventory customer types (customer_master.Customer.TYPE_CHOICES). */
+export const CUSTOMER_TYPES = ['Retail', 'B2B', 'Hospital', 'Clinic'] as const
+
+export async function getPartiesList(
+  party_type: PartyType,
+  /** `customer_type` is comma-separated and ignored for suppliers. */
+  params?: { search?: string; customer_type?: string },
+) {
   const res = await api.get(`/parties/${partyBase(party_type)}/`, { params })
   return res.data as { rows: PartyListRow[]; count: number }
 }
@@ -1963,6 +1993,14 @@ export interface OpenPartyInvoice {
   invoice_no: string
   voucher_type: string
   date: string
+  /**
+   * Invoice date + the party's credit days, from the inventory master. null
+   * when the terms are unknowable: an untagged row (no party) or a party whose
+   * master record could not be read.
+   */
+  due_date: string | null
+  /** The party's credit days; 0 means due on presentation, null = unknown. */
+  credit_days: number | null
   /**
    * null for an UNTAGGED balance — a receivable/payable posted to the control
    * account without a party (walk-in counter sales). Such a row is visible but

@@ -16,27 +16,29 @@ def detect_supply_type(
     Returns 'intra_state' or 'inter_state'.
 
     Resolution order for the company side:
-      1. business_gstin[:2] if a 15-char GSTIN is provided
+      1. the state code the business GSTIN starts with, when it starts with a
+         REAL one (see gst_state_code)
       2. business_state_code (2-digit anchor from AccountingSettings)
     Resolution order for the counterparty side:
-      1. counterparty_gstin[:2] if provided
+      1. the state code the counterparty GSTIN starts with, same rule
       2. counterparty_state_code (2-digit POS code derived from the customer's
          state name, store/branch state, or shipping address)
-    If either side cannot be resolved to 2 digits, defaults to intra_state —
-    callers should pass `counterparty_state_code` so this default only fires
-    for true OTC walk-in sales where no place-of-supply is captured.
+    A value that is not a real state code carries no place-of-supply
+    information, so it falls through to the next source rather than being
+    treated as some unknown state. If neither side resolves, defaults to
+    intra_state — callers should pass `counterparty_state_code` so that default
+    only fires for true OTC walk-in sales where no place of supply is captured.
     """
-    business_state = ''
-    if business_gstin and len(business_gstin) >= 2:
-        business_state = business_gstin[:2]
-    elif business_state_code and len(business_state_code) >= 2:
-        business_state = business_state_code[:2]
-
-    counterparty_state = ''
-    if counterparty_gstin and len(counterparty_gstin) >= 2:
-        counterparty_state = counterparty_gstin[:2]
-    elif counterparty_state_code and len(counterparty_state_code) >= 2:
-        counterparty_state = counterparty_state_code[:2]
+    # gst_state_code (defined below, next to the state list it validates
+    # against) rather than a bare [:2]: `gst_no` is free text in the inventory
+    # master and is routinely a placeholder — 'UNREG', 'NA', 'URP', '-'.
+    # Slicing those gave 'UN'/'NA'/'UR', which matches no real state, so an
+    # intra-state purchase from an unregistered supplier was classified
+    # inter-state and its whole GST posted to Input IGST.
+    business_state = (gst_state_code(business_gstin)
+                      or gst_state_code(business_state_code))
+    counterparty_state = (gst_state_code(counterparty_gstin)
+                          or gst_state_code(counterparty_state_code))
 
     if not business_state or not counterparty_state:
         return 'intra_state'
@@ -91,6 +93,27 @@ STATE_NAME_TO_CODE = {
     'other territory': '97',
     'centre jurisdiction': '99',
 }
+
+
+# Every 2-digit code the official GST state list actually uses (01-38 plus 97
+# Other Territory and 99 Centre Jurisdiction).
+VALID_STATE_CODES = frozenset(STATE_NAME_TO_CODE.values())
+
+
+def gst_state_code(value: str) -> str:
+    """The 2-digit GST state code `value` starts with, or '' if it starts with
+    none.
+
+    Takes either a GSTIN (whose first two characters ARE its state code) or a
+    bare state code. The point is the validation: `gst_no` on the inventory
+    supplier/customer master is a free-text CharField that in practice holds
+    placeholders as often as GSTINs — 'UNREG', 'NA', 'N/A', 'URP', '-'. A bare
+    [:2] turned those into 'UN'/'NA'/'UR'/'-', none of which equals the filer's
+    real code, so every such party looked like it sat in another state and its
+    tax went to IGST. Nothing but a real code is place-of-supply information.
+    """
+    code = (value or '').strip()[:2]
+    return code if code in VALID_STATE_CODES else ''
 
 
 def state_name_to_code(name: str) -> str:
