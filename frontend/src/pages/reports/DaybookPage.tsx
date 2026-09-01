@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Loader2, ChevronDown, ChevronRight, Filter, Landmark, Banknote } from 'lucide-react'
 import { toast } from 'sonner'
@@ -8,10 +8,25 @@ import { Input } from '../../components/ui/input'
 import { Button } from '../../components/ui/button'
 import { Badge } from '../../components/ui/badge'
 import { Card } from '../../components/ui/card'
-import { useHintRegister, useHotkeys, type HotkeyHandler } from '../../contexts/HotkeyContext'
+import { usePageKeyboard, type PageAction } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 import { voucherList } from '../vouchers/voucherConfig'
 
 const voucherLabel = (v: string) => v.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase())
+
+/**
+ * The entry strip holds its own buttons (the voucher number, "Open voucher").
+ * Enter on one of those is the button's business — without this guard the key
+ * would also bubble to the row and toggle the drill-down behind it.
+ */
+function rowKeys(handler: (e: ReactKeyboardEvent) => void) {
+  return (e: ReactKeyboardEvent) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target !== e.currentTarget) {
+      if ((e.target as HTMLElement).closest('button, a')) return
+    }
+    handler(e)
+  }
+}
 
 const VOUCHER_BG: Record<string, string> = {
   JOURNAL: 'bg-slate-100 text-slate-700',
@@ -48,9 +63,22 @@ const DAYBOOK_GRID = {
 // it would slide, so the day block scrolls sideways instead.
 const DAYBOOK_MIN_W = '54rem'
 
-function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
+/** What useListKeyboardNav hands a row: roving tabindex, role, key handler. */
+type ListRowProps = ReturnType<ReturnType<typeof useListKeyboardNav>['rowProps']>
+
+/**
+ * Expansion is owned by the page, not the row: the roving cursor runs across
+ * every entry of every day, so the page needs to know which entry a chord is
+ * on, and a re-filtered list must not carry a stale "open" flag on a row that
+ * now shows a different voucher.
+ */
+function DaybookEntryRow({ entry, expanded, onToggle, rowProps }: {
+  entry: DaybookEntry
+  expanded: boolean
+  onToggle: () => void
+  rowProps: ListRowProps
+}) {
   const navigate = useNavigate()
-  const [expanded, setExpanded] = useState(false)
   const totalDebit = entry.lines.reduce((s, l) => s + Number(l.debit), 0)
   const totalCredit = entry.lines.reduce((s, l) => s + Number(l.credit), 0)
   // Cash/Bank involvement, surfaced at the header level so money-movement
@@ -65,9 +93,13 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
       <div
         className="px-4 py-2.5 cursor-pointer transition-colors"
         style={DAYBOOK_GRID}
-        onClick={() => setExpanded((e) => !e)}
+        onClick={onToggle}
         onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
+        aria-expanded={expanded}
+        aria-label={`${entry.entry_no}, ${voucherLabel(entry.voucher_type)}, ${entry.narration || 'no narration'}`}
+        {...rowProps}
+        onKeyDown={rowKeys(rowProps.onKeyDown)}
       >
         <span style={{ color: 'var(--ink-3)' }}>{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
         <button
@@ -169,6 +201,7 @@ function DaybookEntryRow({ entry }: { entry: DaybookEntry }) {
 }
 
 export default function DaybookPage() {
+  const navigate = useNavigate()
   const today = new Date().toISOString().split('T')[0]
   const [days, setDays] = useState<DaybookDay[]>([])
   const [summary, setSummary] = useState({ total_entries: 0, total_debit: '0.00', total_credit: '0.00' })
@@ -177,6 +210,7 @@ export default function DaybookPage() {
   const [dateFrom, setDateFrom] = useState(today)
   const [dateTo, setDateTo] = useState(today)
   const [activeTypes, setActiveTypes] = useState<Set<string>>(new Set())
+  const [expandedEntries, setExpandedEntries] = useState<Set<number>>(new Set())
   const dateFromRef = useRef<HTMLInputElement>(null)
 
   async function load() {
@@ -232,28 +266,57 @@ export default function DaybookPage() {
     })
   }
 
-  // ─── Hotkeys ─────────────────────────────────────────────────────────────
-  const handlers = useMemo<HotkeyHandler[]>(() => {
-    const list: HotkeyHandler[] = [
-      { chord: 'F2', preventDefault: true, handler: () => dateFromRef.current?.focus() },
-    ]
-    voucherList.forEach((v, i) => {
-      list.push({
-        chord: String(i + 1),
-        preventDefault: false,
-        handler: () => toggleType(v.type),
-      })
-    })
-    return list
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  useHotkeys(handlers)
+  // ─── Keyboard ────────────────────────────────────────────────────────────
+  // One flat cursor over every entry of every day: the register reads as a
+  // single chronological list, so ↑↓ crossing a day boundary is what a user
+  // expects. `flatEntries` is that list; its index is what the roving
+  // tabindex and Enter (= toggle the drill-down) address.
+  const flatEntries = useMemo(
+    () => filteredDays.flatMap((d) => d.entries),
+    [filteredDays],
+  )
 
-  useHintRegister([
-    { chord: 'F2', label: 'Date Range' },
-    { chord: '1–8', label: 'Filter Type' },
-    { chord: 'Click', label: 'Drill Down' },
-  ])
+  const toggleEntry = (id: number) => setExpandedEntries((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+
+  const list = useListKeyboardNav({
+    count: flatEntries.length,
+    onActivate: (i) => toggleEntry(flatEntries[i].id),
+  })
+
+  // Entries are rendered day by day, so each one needs its position in the
+  // flat cursor.
+  const entryIndex = useMemo(() => {
+    const m = new Map<number, number>()
+    flatEntries.forEach((e, i) => m.set(e.id, i))
+    return m
+  }, [flatEntries])
+
+  // 1–8 keep their existing meaning (toggle a voucher-type filter). Only the
+  // first carries a visible hint — eight identical rows would crowd out
+  // everything else in the bar, and the chips themselves print their keycap.
+  const typeActions: PageAction[] = voucherList.map((v, i) => ({
+    chord: String(i + 1),
+    label: i === 0 ? 'Filter type (1–8)' : v.label,
+    run: () => toggleType(v.type),
+    hidden: i > 0,
+    allowDefault: true,
+  }))
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Refresh', run: load, when: !loading },
+      { chord: 'Alt+C', label: 'Clear filters', run: () => setActiveTypes(new Set()), when: activeTypes.size > 0 },
+      ...typeActions,
+    ],
+    searchRef: dateFromRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
@@ -270,6 +333,7 @@ export default function DaybookPage() {
           <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>From</label>
           <Input
             ref={dateFromRef}
+            data-autofocus
             type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
@@ -285,7 +349,7 @@ export default function DaybookPage() {
             className="w-full sm:w-auto px-2.5 py-1.5"
           />
         </div>
-        <Button variant="secondary" className="w-full sm:w-auto" onClick={load} disabled={loading}>
+        <Button variant="secondary" chord="Alt+R" className="w-full sm:w-auto" onClick={load} disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
           Refresh
         </Button>
@@ -302,6 +366,8 @@ export default function DaybookPage() {
               key={v.type}
               type="button"
               onClick={() => toggleType(v.type)}
+              aria-pressed={active}
+              aria-keyshortcuts={String(i + 1)}
               className={cn(
                 'inline-flex items-center gap-1.5 px-2.5 h-7 rounded-full text-xs font-medium transition-colors'
               )}
@@ -327,13 +393,25 @@ export default function DaybookPage() {
         })}
         {activeTypes.size > 0 && (
           <button
+            type="button"
             onClick={() => setActiveTypes(new Set())}
+            aria-keyshortcuts="Alt+C"
             className="text-xs hover:underline ml-1"
             style={{ color: 'var(--ink-2)' }}
           >
             Clear
           </button>
         )}
+      </div>
+
+      {/* Filters and the date range rewrite the register while focus stays on
+          a chip or a date field, so the result is announced. */}
+      <div className="sr-only" role="status" aria-live="polite">
+        {loading
+          ? 'Loading day book…'
+          : fetched
+            ? `${filteredSummary.total_entries} entries across ${filteredDays.length} days`
+            : ''}
       </div>
 
       {fetched && (
@@ -356,6 +434,9 @@ export default function DaybookPage() {
         </Card>
       )}
 
+      {/* Focus moves through every entry of every day, so the whole stack is
+          one keyboard list — the container ref has to sit above the days. */}
+      <div className="space-y-5" {...list.containerProps}>
       {filteredDays.map((day) => (
         <Card key={day.date} className="overflow-hidden p-0">
           {/* The entry rows are a fixed column grid — debit/credit have to line
@@ -385,12 +466,19 @@ export default function DaybookPage() {
                 </div>
               </div>
               {day.entries.map((entry) => (
-                <DaybookEntryRow key={entry.id} entry={entry} />
+                <DaybookEntryRow
+                  key={entry.id}
+                  entry={entry}
+                  expanded={expandedEntries.has(entry.id)}
+                  onToggle={() => toggleEntry(entry.id)}
+                  rowProps={list.rowProps(entryIndex.get(entry.id) ?? 0)}
+                />
               ))}
             </div>
           </div>
         </Card>
       ))}
+      </div>
     </div>
   )
 }

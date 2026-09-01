@@ -82,6 +82,19 @@ function keyEquals(want: string, got: string): boolean {
  * when an input is focused.
  */
 export function shouldIgnoreEvent(e: KeyboardEvent, allowList: Chord[]): boolean {
+  // An open overlay owns Escape, and this check has to come BEFORE the
+  // allow-list. 'Escape' is allow-listed so a page can bind it as "go back",
+  // but that made the allow-list short-circuit past the `[role="dialog"]`
+  // guard below: one Escape then closed the dialog AND ran the page's back
+  // handler behind it. On a confirm dialog that reads as the dialog refusing
+  // to close, because the page it reopens re-renders the same dialog.
+  //
+  // Radix marks its open overlays, so the guard needs no registration and
+  // covers third-party content the app never wrote.
+  if (e.key === 'Escape' && document.querySelector('[role="dialog"][data-state="open"]')) {
+    return true
+  }
+
   // Always allow if a chord in the allow-list matches.
   if (allowList.some((c) => chordMatches(c, e))) return false
 
@@ -100,6 +113,7 @@ export function shouldIgnoreEvent(e: KeyboardEvent, allowList: Chord[]): boolean
 export const NAVIGATION_CHORDS: Chord[] = [
   'F1',
   'F2',
+  'F3',
   'F4',
   'F5',
   'F6',
@@ -117,9 +131,23 @@ export const GLOBAL_ALLOW_LIST: Chord[] = [
   ...NAVIGATION_CHORDS,
   'Ctrl+A',
   'Ctrl+H',
+  'Ctrl+G',
+  'Ctrl+S',
+  'Ctrl+Enter',
+  // Cost centre, bound by VoucherEditor. It was advertised on the button, in
+  // the hint bar and via aria-keyshortcuts while being unreachable from any
+  // field — which is every field on a voucher screen.
+  'Ctrl+L',
+  // Alt+letter is the page-action namespace. None of these inserts text, so
+  // they stay live inside a field — which is the point: Ctrl+S must save the
+  // voucher you are typing in, and Alt+A must add a line from the last cell.
+  'Alt+A',
   'Alt+C',
-  'Alt+P',
+  'Alt+D',
   'Alt+E',
+  'Alt+N',
+  'Alt+P',
   'Alt+R',
+  'Alt+X',
   'Escape',
 ]

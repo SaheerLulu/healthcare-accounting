@@ -1,16 +1,20 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Download, Loader2, ReceiptText } from 'lucide-react'
 import { toast } from 'sonner'
 import api, { getExpenseRegister, type ExpenseRegisterRow, type RegisterTotals } from '../../lib/api'
-import { formatCurrency, formatDate, getCurrentFY } from '../../lib/utils'
+import { cn, formatCurrency, formatDate, getCurrentFY } from '../../lib/utils'
 import { Input } from '../../components/ui/input'
 import { Button } from '../../components/ui/button'
 import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 export default function ExpenseRegisterPage() {
+  const navigate = useNavigate()
   const fy = getCurrentFY()
   const [rows, setRows] = useState<ExpenseRegisterRow[]>([])
   const [totals, setTotals] = useState<RegisterTotals | null>(null)
@@ -19,6 +23,8 @@ export default function ExpenseRegisterPage() {
   const [fetched, setFetched] = useState(false)
   const [dateFrom, setDateFrom] = useState(fy.start)
   const [dateTo, setDateTo] = useState(fy.end)
+  const [focusedRow, setFocusedRow] = useState<number | null>(null)
+  const fromRef = useRef<HTMLInputElement>(null)
 
   async function load() {
     setLoading(true)
@@ -52,6 +58,26 @@ export default function ExpenseRegisterPage() {
     }
   }
 
+  // ─── Keyboard ────────────────────────────────────────────────────────────
+  // A register row opens nothing, so this is the read-only variant: no
+  // onActivate, but ↑↓/Home/End/PgUp/PgDn walk the rows through a single
+  // roving tab stop, and Tab still steps clean past the whole register.
+  const list = useListKeyboardNav({ count: rows.length })
+
+  const isDefaultRange = dateFrom === fy.start && dateTo === fy.end
+  const resetRange = () => { setDateFrom(fy.start); setDateTo(fy.end) }
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Run report', run: load, when: !loading },
+      { chord: 'Alt+X', label: 'Export CSV', run: () => exportAs('csv'), when: rows.length > 0 },
+      { chord: 'Alt+C', label: 'Clear filters', run: resetRange, when: !isDefaultRange },
+    ],
+    searchRef: fromRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-wrap gap-3">
@@ -62,7 +88,7 @@ export default function ExpenseRegisterPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" onClick={() => exportAs('csv')} disabled={rows.length === 0}>
+          <Button variant="secondary" onClick={() => exportAs('csv')} disabled={rows.length === 0} chord="Alt+X">
             <Download size={15} />CSV
           </Button>
           <Button variant="secondary" onClick={() => exportAs('xlsx')} disabled={rows.length === 0}>
@@ -71,17 +97,20 @@ export default function ExpenseRegisterPage() {
         </div>
       </div>
 
-      {/* Period filters */}
-      <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+      {/* Period filters — a form, so Enter in either date runs the report */}
+      <form
+        className="flex items-center gap-2 sm:gap-3 flex-wrap"
+        onSubmit={(e) => { e.preventDefault(); load() }}
+      >
         <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-none">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
+          <Input ref={fromRef} data-autofocus type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto sm:flex-none">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
           <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button onClick={load} disabled={loading} className="w-full sm:w-auto">
+        <Button type="submit" disabled={loading} className="w-full sm:w-auto" chord="Alt+R">
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>
@@ -90,7 +119,7 @@ export default function ExpenseRegisterPage() {
             {nonGstCount} non-GST voucher{nonGstCount > 1 ? 's' : ''}
           </span>
         )}
-      </div>
+      </form>
 
       {loading ? (
         <SkeletonTable rows={8} cols={9} />
@@ -106,7 +135,7 @@ export default function ExpenseRegisterPage() {
         <EmptyState variant="no-data" title="No expenses in this range" description="Record expenses or post vendor bills first." />
       ) : (
         <Card className="overflow-hidden p-0">
-          <Table>
+          <Table label="Expense register">
             <Thead>
               <Tr>
                 <Th className="text-left">Date</Th>
@@ -122,9 +151,16 @@ export default function ExpenseRegisterPage() {
                 <Th className="text-right">Total</Th>
               </Tr>
             </Thead>
-            <Tbody>
+            <Tbody {...list.containerProps}>
               {rows.map((r, i) => (
-                <Tr key={i}>
+                <Tr
+                  key={i}
+                  {...list.rowProps(i)}
+                  // Capture phase so the hook's own onFocus (which tracks the
+                  // active row) is not shadowed by this one.
+                  onFocusCapture={() => setFocusedRow(i)}
+                  onBlur={() => setFocusedRow((f) => (f === i ? null : f))}
+                >
                   <Td style={{ color: 'var(--ink-2)' }}>{formatDate(r.date)}</Td>
                   <Td className="mono text-xs" style={{ color: 'var(--ink-3)' }}>{r.voucher_no}</Td>
                   <Td>
@@ -137,8 +173,10 @@ export default function ExpenseRegisterPage() {
                       {r.source}
                     </span>
                   </Td>
-                  <Td className="max-w-[180px] truncate" style={{ color: 'var(--ink)' }} title={r.head}>{r.head}</Td>
-                  <Td className="max-w-[160px] truncate" style={{ color: 'var(--ink-2)' }} title={r.party_name}>{r.party_name}</Td>
+                  {/* The full head and supplier lived only in a hover title,
+                      so the focused row shows them untruncated. */}
+                  <Td className={cn(focusedRow === i ? '' : 'max-w-[180px] truncate')} style={{ color: 'var(--ink)' }} title={r.head}>{r.head}</Td>
+                  <Td className={cn(focusedRow === i ? '' : 'max-w-[160px] truncate')} style={{ color: 'var(--ink-2)' }} title={r.party_name}>{r.party_name}</Td>
                   <Td className="mono text-xs" style={{ color: 'var(--ink-3)' }}>{r.gstin || '-'}</Td>
                   <Td className="text-right mono">{formatCurrency(r.taxable_value)}</Td>
                   <Td className="text-right mono" style={{ color: 'var(--ink-2)' }}>{formatCurrency(r.cgst)}</Td>

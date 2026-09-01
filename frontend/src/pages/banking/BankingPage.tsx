@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Loader2, Landmark, AlertCircle, CreditCard, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -12,6 +12,8 @@ import { Card } from '../../components/ui/card'
 import { Input } from '../../components/ui/input'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonCard } from '../../components/ui/Skeletons'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose, SheetTrigger,
 } from '../../components/ui/sheet'
@@ -23,9 +25,12 @@ const ACCOUNT_TYPES = [
 ] as const
 
 export default function BankingPage() {
+  const navigate = useNavigate()
   const [accounts, setAccounts] = useState<BankAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [glAccounts, setGlAccounts] = useState<Account[]>([])
+  // Owned by the page rather than the sheet so Alt+N can open it.
+  const [sheetOpen, setSheetOpen] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -42,6 +47,23 @@ export default function BankingPage() {
 
   useEffect(() => { load() }, [])
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Each account card is a <Link>, so without a roving tabindex a dozen stores
+  // means a dozen Tab stops before the pagination below. F3 drops into the
+  // grid, ↑↓/Home/End walk it and Enter opens the reconciliation screen.
+  const list = useListKeyboardNav({
+    count: accounts.length,
+    onActivate: (i) => navigate(`/banking/${accounts[i].id}`),
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'New account', run: () => setSheetOpen(true) },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    onFocusList: list.focusList,
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 flex-wrap">
@@ -51,7 +73,12 @@ export default function BankingPage() {
             Reconcile bank statements against your books and categorize uncoded transactions.
           </p>
         </div>
-        <NewBankAccountSheet glAccounts={glAccounts} onCreated={load} />
+        <NewBankAccountSheet
+          open={sheetOpen}
+          onOpenChange={setSheetOpen}
+          glAccounts={glAccounts}
+          onCreated={load}
+        />
       </div>
 
       {loading ? (
@@ -65,16 +92,25 @@ export default function BankingPage() {
           description="Add a bank, credit card, or cash account to import statements and start matching transactions."
         />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {accounts.map((a) => {
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" {...list.containerProps}>
+          {accounts.map((a, i) => {
             const meta = ACCOUNT_TYPES.find((t) => t.v === a.account_type) || ACCOUNT_TYPES[0]
             const Icon = meta.icon
             const bookBal = parseFloat(a.book_balance) || 0
             const stmtBal = parseFloat(a.statement_balance) || 0
             const diff = stmtBal - bookBal
             return (
-              <Link key={a.id} to={`/banking/${a.id}`} className="block group">
-                <Card className="p-5 h-full card-hover">
+              <Link
+                key={a.id}
+                to={`/banking/${a.id}`}
+                className="block group rounded-xl"
+                aria-label={`${a.name} — open reconciliation`}
+                {...list.rowProps(i)}
+              >
+                {/* The roving-focus rail index.css draws on [data-kbd-row] sits
+                    behind the Card's own background, so the focused card shows
+                    its own ring instead. */}
+                <Card className="p-5 h-full card-hover group-focus-visible:ring-2 group-focus-visible:ring-[var(--brand)]">
                   <div className="flex items-start justify-between mb-3">
                     <div
                       className="w-10 h-10 rounded-lg flex items-center justify-center"
@@ -134,8 +170,12 @@ export default function BankingPage() {
   )
 }
 
-function NewBankAccountSheet({ glAccounts, onCreated }: { glAccounts: Account[]; onCreated: () => void }) {
-  const [open, setOpen] = useState(false)
+function NewBankAccountSheet({ open, onOpenChange, glAccounts, onCreated }: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  glAccounts: Account[]
+  onCreated: () => void
+}) {
   const [saving, setSaving] = useState(false)
   const [name, setName] = useState('')
   const [accountType, setAccountType] = useState<'bank' | 'credit_card' | 'cash'>('bank')
@@ -174,7 +214,7 @@ function NewBankAccountSheet({ glAccounts, onCreated }: { glAccounts: Account[];
         is_active: true,
       })
       toast.success('Bank account added')
-      setOpen(false)
+      onOpenChange(false)
       reset()
       onCreated()
     } catch (err) {
@@ -189,7 +229,7 @@ function NewBankAccountSheet({ glAccounts, onCreated }: { glAccounts: Account[];
   }
 
   return (
-    <Sheet open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset() }}>
+    <Sheet open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) reset() }}>
       <SheetTrigger asChild>
         <Button><Plus size={16} /> Add Bank Account</Button>
       </SheetTrigger>
@@ -199,21 +239,26 @@ function NewBankAccountSheet({ glAccounts, onCreated }: { glAccounts: Account[];
           <SheetBody>
             <div className="space-y-3">
               <Field label="Display Name" required>
-                <Input value={name} onChange={(e) => setName(e.target.value)} required
+                <Input data-autofocus value={name} onChange={(e) => setName(e.target.value)} required
                   placeholder="e.g. HDFC Current Account" />
               </Field>
-              <Field label="Type" required>
-                <div className="flex flex-wrap gap-2">
+              {/* `as="div"`: a radiogroup may not live inside a <label>. The
+                  radios are sr-only rather than `hidden` so they keep their
+                  place in the tab order — ←/→ then cycle the three types. */}
+              <Field label="Type" required as="div">
+                <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Account type">
                   {ACCOUNT_TYPES.map((t) => (
                     <label key={t.v}
                       className={
                         'flex-1 min-w-[7rem] flex items-center justify-center gap-2 px-3 py-2 rounded-lg border cursor-pointer text-sm ' +
+                        'focus-within:ring-2 focus-within:ring-teal-500 focus-within:ring-offset-1 ' +
                         (accountType === t.v
                           ? 'border-teal-500 bg-teal-50 text-teal-700'
                           : 'border-slate-200 text-slate-600 hover:border-slate-300')
                       }>
-                      <input type="radio" checked={accountType === t.v}
-                        onChange={() => setAccountType(t.v)} className="hidden" />
+                      <input type="radio" name="bank-account-type" value={t.v}
+                        checked={accountType === t.v}
+                        onChange={() => setAccountType(t.v)} className="sr-only" />
                       <t.icon size={14} /> {t.label}
                     </label>
                   ))}
@@ -269,19 +314,21 @@ function NewBankAccountSheet({ glAccounts, onCreated }: { glAccounts: Account[];
   )
 }
 
-function Field({ label, required, hint, children }: {
+function Field({ label, required, hint, children, as: Tag = 'label' }: {
   label: string
   required?: boolean
   hint?: string
   children: React.ReactNode
+  /** 'div' for groups of controls (a radiogroup) that must not sit in a label. */
+  as?: 'label' | 'div'
 }) {
   return (
-    <label className="block">
+    <Tag className="block">
       <span className="block text-xs font-medium text-slate-600 mb-1.5">
         {label} {required && <span className="text-rose-500">*</span>}
       </span>
       {children}
       {hint && <span className="block text-xs text-slate-400 mt-1">{hint}</span>}
-    </label>
+    </Tag>
   )
 }

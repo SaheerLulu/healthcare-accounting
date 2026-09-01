@@ -10,6 +10,8 @@ import {
   type SyncLog, type SyncError, type FullResyncPreview,
 } from '../lib/api'
 import { useLocation } from '../contexts/LocationContext'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 import { formatDate } from '../lib/utils'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -33,6 +35,21 @@ const SYNC_TYPES = [
   { value: 'return', label: 'Sales Return' },
   { value: 'purchase_return', label: 'Purchase Return' },
 ] as const
+
+/**
+ * Enter/Space on a control inside a row has already done its job; letting the
+ * key bubble to the row's own activate handler would toggle the traceback a
+ * second time and cancel out the chevron press. Arrow keys still bubble, so
+ * ↑↓ keep moving between rows from a focused button.
+ */
+function rowKeys(handler: (e: React.KeyboardEvent) => void) {
+  return (e: React.KeyboardEvent) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target !== e.currentTarget) {
+      if ((e.target as HTMLElement).closest('button, a')) return
+    }
+    handler(e)
+  }
+}
 
 function SyncStatusBadge({ status }: { status: string }) {
   const map: Record<string, { icon: React.ReactNode; variant: 'success' | 'error' | 'info' | 'warning' | 'default' }> = {
@@ -82,6 +99,7 @@ export default function SyncPage() {
   const [expandedError, setExpandedError] = useState<number | null>(null)
 
   const [confirmSync, setConfirmSync] = useState(false)
+  const [confirmRetry, setConfirmRetry] = useState(false)
   const [fullResyncOpen, setFullResyncOpen] = useState(false)
   const [resyncPreview, setResyncPreview] = useState<FullResyncPreview | null>(null)
   const [resyncTyping, setResyncTyping] = useState('')
@@ -136,6 +154,7 @@ export default function SyncPage() {
   }
 
   async function handleRetry() {
+    setConfirmRetry(false)
     setRetrying(true)
     try {
       const result = await retrySyncErrors()
@@ -200,6 +219,43 @@ export default function SyncPage() {
 
   const openErrorCount = errors.filter((e) => !e.resolved).length
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Error rows cost two tab stops each and answered no key at all, so the 12th
+  // traceback was ~24 Tabs away. A roving tabindex makes the table one stop:
+  // F3 to enter it, ↑↓ to move, Enter to expand or collapse the traceback.
+  const errorNav = useListKeyboardNav({
+    count: errors.length,
+    onActivate: (i) => {
+      const err = errors[i]
+      if (!err) return
+      setExpandedError((cur) => (cur === err.id ? null : err.id))
+    },
+  })
+
+  // Alt+N runs the sync because a run CREATES journal entries; Alt+R stays the
+  // read-only refresh. Both of the write actions below open a confirmation
+  // first — a slipped Alt+T would otherwise re-post failed records and a
+  // slipped Alt+D would wipe every auto-generated entry.
+  //
+  // Alt+T is not in GLOBAL_ALLOW_LIST, so it stands down while the caret is in
+  // the sync-type filter; Alt+D (the app-wide delete chord) is allow-listed and
+  // fires from anywhere, which is safe because it only opens the reset dialog —
+  // that dialog still wants RESET typed into it.
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'Run sync', run: () => setConfirmSync(true), when: !syncing },
+      { chord: 'Alt+R', label: 'Refresh', run: loadAll },
+      {
+        chord: 'Alt+T',
+        label: 'Retry errors',
+        run: () => setConfirmRetry(true),
+        when: openErrorCount > 0 && !retrying,
+      },
+      { chord: 'Alt+D', label: 'Reset all data', run: openFullResync },
+    ],
+    onFocusList: errorNav.focusList,
+  })
+
   return (
     <div className="max-w-6xl mx-auto space-y-5">
       {/* Header */}
@@ -250,7 +306,11 @@ export default function SyncPage() {
         <KpiCard
           title="Open errors"
           value={openErrorCount.toLocaleString()}
-          subtitle={openErrorCount === 0 ? 'All clear' : 'Click to review'}
+          // KpiCard's root is a plain <div>, so an onClick here would be
+          // pointer-only — the copy promised an interaction no keyboard (and in
+          // fact no mouse either, none was wired) could take. The errors table
+          // sits directly below; F3 puts the keyboard in it.
+          subtitle={openErrorCount === 0 ? 'All clear' : 'listed below (F3)'}
           icon={AlertTriangle}
           color="var(--danger)"
           bgColor="rgba(192,57,43,0.10)"
@@ -275,6 +335,7 @@ export default function SyncPage() {
           className="w-full sm:w-auto px-3 h-9 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
           style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
           title="Filter both tables by sync type"
+          aria-label="Filter both tables by sync type"
         >
           {SYNC_TYPES.map((t) => (
             <option key={t.value || 'all'} value={t.value}>{t.label}</option>
@@ -285,8 +346,14 @@ export default function SyncPage() {
         <div className="hidden sm:block flex-1" />
         {openErrorCount > 0 && (
           <button
-            onClick={handleRetry}
+            type="button"
+            // Confirmed rather than fired directly: a retry re-runs the failed
+            // records and posts journal entries for the ones that now succeed,
+            // and Alt+T reaches it in one keystroke.
+            onClick={() => setConfirmRetry(true)}
             disabled={retrying}
+            aria-keyshortcuts="Alt+T"
+            title={`Retry ${openErrorCount} failed record${openErrorCount === 1 ? '' : 's'} (Alt+T)`}
             className="flex items-center gap-2 px-3 h-9 text-sm font-medium rounded-md disabled:opacity-60"
             style={{ background: 'rgba(199,122,17,0.08)', border: '1px solid rgba(199,122,17,0.30)', color: 'var(--warning)' }}
           >
@@ -295,10 +362,12 @@ export default function SyncPage() {
           </button>
         )}
         <button
+          type="button"
           onClick={openFullResync}
           className="px-3 h-9 text-sm font-medium rounded-md transition-colors hover:bg-[var(--color-hover-bg)]"
           style={{ color: 'var(--ink-3)' }}
-          title="Wipe all auto-generated entries and rebuild from scratch"
+          aria-keyshortcuts="Alt+D"
+          title="Wipe all auto-generated entries and rebuild from scratch (Alt+D)"
         >
           Reset all data…
         </button>
@@ -324,12 +393,30 @@ export default function SyncPage() {
                 {errors.length}
               </Badge>
             </div>
+            {/* Two loose buttons announced as two unrelated controls and cost
+                two tab stops. As a radiogroup it is one stop with ←/→ between
+                the options, which is what every other segmented strip does. */}
             <div className="flex items-center bg-[var(--surface-0)] rounded-md p-0.5"
-                 style={{ border: '1px solid var(--line)' }}>
+                 style={{ border: '1px solid var(--line)' }}
+                 role="radiogroup" aria-label="Show open or resolved errors">
               {(['open', 'resolved'] as const).map((v) => (
                 <button
                   key={v}
+                  type="button"
+                  role="radio"
+                  aria-checked={errorView === v}
+                  tabIndex={errorView === v ? 0 : -1}
+                  data-seg={v}
                   onClick={() => setErrorView(v)}
+                  onKeyDown={(e) => {
+                    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return
+                    e.preventDefault()
+                    const next = errorView === 'open' ? 'resolved' : 'open'
+                    setErrorView(next)
+                    e.currentTarget.parentElement
+                      ?.querySelector<HTMLElement>(`[data-seg="${next}"]`)
+                      ?.focus()
+                  }}
                   className="px-2.5 py-1 text-xs font-medium rounded capitalize"
                   style={errorView === v
                     ? { background: 'var(--surface-1)', color: 'var(--ink)' }
@@ -357,13 +444,21 @@ export default function SyncPage() {
                   <Th className="w-[110px]" />
                 </Tr>
               </Thead>
-              <Tbody>
-                {errors.flatMap((err) => {
+              <Tbody {...errorNav.containerProps}>
+                {errors.flatMap((err, i) => {
                   const expanded = expandedError === err.id
+                  const rp = errorNav.rowProps(i)
                   const rows = [
-                    <Tr key={err.id}>
+                    <Tr
+                      key={err.id}
+                      aria-label={`${err.sync_type.replace(/_/g, ' ')} error on source #${err.source_id}`}
+                      {...rp}
+                      onKeyDown={rowKeys(rp.onKeyDown)}
+                    >
                       <Td>
                         <button
+                          type="button"
+                          aria-expanded={expanded}
                           onClick={() => setExpandedError(expanded ? null : err.id)}
                           className="p-1 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 rounded hover:bg-[var(--color-hover-bg)] transition-colors"
                           title={expanded ? 'Hide traceback' : 'Show traceback'}
@@ -387,10 +482,12 @@ export default function SyncPage() {
                       <Td>
                         {!err.resolved && (
                           <button
+                            type="button"
                             onClick={() => handleResolveError(err.id)}
                             className="text-xs px-2 py-1 rounded transition-colors hover:bg-[var(--color-hover-bg)]"
                             style={{ color: 'var(--brand)' }}
                             title="Mark resolved without retrying"
+                            aria-label={`Mark ${err.sync_type.replace(/_/g, ' ')} error #${err.source_id} resolved`}
                           >
                             Resolve
                           </button>
@@ -402,7 +499,13 @@ export default function SyncPage() {
                     rows.push(
                       <Tr key={`${err.id}-tb`}>
                         <Td colSpan={6} className="p-0">
+                          {/* A scrollable region no keyboard could enter: long
+                              traceback lines were unreadable without a mouse.
+                              tabIndex makes it focusable so ←/→ scroll it. */}
                           <pre
+                            tabIndex={0}
+                            role="region"
+                            aria-label={`Traceback for ${err.sync_type.replace(/_/g, ' ')} #${err.source_id}`}
                             className="overflow-x-auto text-[11px] leading-snug p-4 mono whitespace-pre"
                             style={{ background: 'var(--surface-1)', color: 'var(--ink-2)' }}
                           >
@@ -498,6 +601,23 @@ export default function SyncPage() {
         }
       />
 
+      {/* Retry confirmation */}
+      <ConfirmDialog
+        open={confirmRetry}
+        onOpenChange={setConfirmRetry}
+        onConfirm={handleRetry}
+        title={`Retry ${openErrorCount} failed record${openErrorCount === 1 ? '' : 's'}?`}
+        confirmLabel="Retry"
+        loading={retrying}
+        description={
+          <span>
+            Re-runs every open error and posts the journal entries for the ones
+            that now succeed. Records that fail again keep their error row and
+            their retry count goes up.
+          </span>
+        }
+      />
+
       {/* Full-resync dialog */}
       <Dialog open={fullResyncOpen} onOpenChange={setFullResyncOpen}>
         <DialogContent className="max-w-lg">
@@ -507,6 +627,10 @@ export default function SyncPage() {
               Reset all auto-generated data
             </DialogTitle>
           </DialogHeader>
+          {/* The typed confirmation is the whole interaction here, so it lives
+              in a <form>: typing RESET and pressing Enter now confirms instead
+              of doing nothing. Cancel is type="button" so it cannot submit. */}
+          <form onSubmit={(e) => { e.preventDefault(); handleFullResyncConfirm() }}>
           <div className="space-y-4 py-2">
             {!resyncPreview ? (
               <div className="flex items-center justify-center py-6">
@@ -535,6 +659,7 @@ export default function SyncPage() {
                     value={resyncTyping}
                     onChange={(e) => setResyncTyping(e.target.value)}
                     className="mt-1 mono"
+                    aria-label="Type RESET to confirm"
                     autoFocus
                   />
                 </div>
@@ -544,10 +669,10 @@ export default function SyncPage() {
           <div className="flex flex-wrap items-center justify-end gap-2 mt-4 pt-4 border-t"
                style={{ borderColor: 'var(--line)' }}>
             <DialogClose asChild>
-              <Button variant="secondary" disabled={resyncRunning}>Cancel</Button>
+              <Button type="button" variant="secondary" disabled={resyncRunning}>Cancel</Button>
             </DialogClose>
             <Button
-              onClick={handleFullResyncConfirm}
+              type="submit"
               disabled={resyncRunning || resyncTyping !== 'RESET' || !resyncPreview}
               style={{ background: 'var(--danger)', color: 'white' }}
             >
@@ -555,6 +680,7 @@ export default function SyncPage() {
               {resyncRunning ? 'Resetting…' : 'Reset and rebuild'}
             </Button>
           </div>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

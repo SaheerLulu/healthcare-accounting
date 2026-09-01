@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Loader2, Banknote, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -18,6 +18,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose,
 } from '../components/ui/sheet'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 
 /**
  * Payables — the full amount owed to suppliers/vendors, from BOTH sources:
@@ -37,11 +39,19 @@ import {
  * reports/views.py) rather than reporting the same debt on both tabs.
  */
 export default function PayablesPage() {
+  const navigate = useNavigate()
   const [bills, setBills] = useState<Bill[]>([])
   const [supplierInvoices, setSupplierInvoices] = useState<OpenPartyInvoice[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [paying, setPaying] = useState<Bill | null>(null)
+  // Controlled so F3 can aim at whichever register is actually on screen.
+  const [tab, setTab] = useState('supplier-invoices')
+  const searchRef = useRef<HTMLInputElement>(null)
+  // Ctrl+S is registered by the page, not the sheet: registerHints replaces the
+  // whole page hint list, so a second usePageKeyboard inside the sheet would
+  // wipe the page's chips on close. The sheet just hands its <form> back.
+  const payFormRef = useRef<HTMLFormElement>(null)
 
   async function load() {
     setLoading(true)
@@ -107,6 +117,33 @@ export default function PayablesPage() {
   )
   const grandTotal = totals.total + supplierTotal
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Both registers get a roving tabindex. The supplier tab is informational, so
+  // it navigates without an Enter action; a vendor bill opens the Pay sheet,
+  // which is the row's primary action and previously cost three tab stops per
+  // row to reach — with getAllBills fetching every bill, hundreds of them.
+  const supplierNav = useListKeyboardNav({ count: supplierInvoices.length })
+  const billNav = useListKeyboardNav({
+    count: bills.length,
+    onActivate: (i) => setPaying(bills[i]),
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+      {
+        chord: 'Ctrl+S',
+        label: 'Save payment',
+        run: () => payFormRef.current?.requestSubmit(),
+        when: !!paying,
+      },
+    ],
+    searchRef,
+    onFocusList: () =>
+      tab === 'vendor-bills' ? billNav.focusList() : supplierNav.focusList(),
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -139,15 +176,16 @@ export default function PayablesPage() {
           </p>
         </div>
         <Input
+          ref={searchRef}
           type="text"
-          placeholder="Search invoice/bill # or vendor…"
+          placeholder="Search invoice/bill # or vendor… (F2)"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-full sm:w-64"
         />
       </div>
 
-      <Tabs defaultValue="supplier-invoices">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="supplier-invoices">
             Supplier Invoices ({supplierInvoices.length})
@@ -179,7 +217,7 @@ export default function PayablesPage() {
                     <Th className="text-right px-3">Outstanding</Th>
                   </Tr>
                 </Thead>
-                <Tbody>
+                <Tbody {...supplierNav.containerProps}>
                   {/* Index in the key: untagged rows (party_id null — a
                       vendor-less credit posted straight to the control account)
                       all share the same "…-null" suffix, and one entry can
@@ -187,7 +225,11 @@ export default function PayablesPage() {
                   {supplierInvoices.map((r, i) => {
                     const overdue = !!r.due_date && r.due_date < today
                     return (
-                    <Tr key={`${r.invoice_no}-${r.party_id ?? 'untagged'}-${i}`}>
+                    <Tr
+                      key={`${r.invoice_no}-${r.party_id ?? 'untagged'}-${i}`}
+                      aria-label={`Invoice ${r.invoice_no} from ${r.party_name}`}
+                      {...supplierNav.rowProps(i)}
+                    >
                       <Td className="font-medium mono">{r.invoice_no}</Td>
                       <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(r.date)}</Td>
                       {/* Bill date + the supplier's credit days. An em dash
@@ -249,11 +291,23 @@ export default function PayablesPage() {
                 <Th className="w-[140px]" />
               </Tr>
             </Thead>
-            <Tbody>
-              {bills.map((b) => {
+            <Tbody {...billNav.containerProps}>
+              {bills.map((b, i) => {
                 const overdue = b.due_date && b.due_date < today
+                const rowKb = billNav.rowProps(i)
                 return (
-                  <Tr key={b.id} className="group">
+                  <Tr
+                    key={b.id}
+                    className="group"
+                    aria-label={`Bill ${b.bill_no || b.id} from ${b.vendor_name} — Enter to pay`}
+                    {...rowKb}
+                    // Keyboard only: Enter on the focused row opens the Pay
+                    // sheet, while a click stays inert as it always was — the
+                    // Pay button is the pointer's target. Enter on the row's
+                    // own link or button belongs to that control, so the list
+                    // handler runs only while the ROW itself has focus.
+                    onKeyDown={(e) => { if (e.target === e.currentTarget) rowKb.onKeyDown(e) }}
+                  >
                     <Td>
                       <Link
                         to={`/bills/${b.id}`}
@@ -283,15 +337,20 @@ export default function PayablesPage() {
                       </Badge>
                     </Td>
                     <Td className="text-right pr-3">
-                      <div className="flex items-center justify-end gap-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                        <Button size="sm" onClick={() => setPaying(b)}>
+                      {/* group-focus-within, not just group-hover: an
+                          opacity-0 button is still focusable, so tabbing into
+                          this cluster used to land on a control painted
+                          invisible. */}
+                      <div className="flex items-center justify-end gap-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 transition-opacity">
+                        <Button size="sm" onClick={() => setPaying(b)} aria-label={`Pay ${b.bill_no || `bill ${b.id}`}`}>
                           <Banknote size={13} /> Pay
                         </Button>
                         <Link
                           to={`/bills/${b.id}`}
-                          className="p-1.5 rounded hover:bg-[var(--color-hover-bg)]"
+                          className="p-1.5 rounded hover:bg-[var(--color-hover-bg)] focus-visible:bg-[var(--color-hover-bg)]"
                           style={{ color: 'var(--ink-3)' }}
                           title="Open bill"
+                          aria-label={`Open bill ${b.bill_no || b.id}`}
                         >
                           <ExternalLink size={14} />
                         </Link>
@@ -321,6 +380,7 @@ export default function PayablesPage() {
       {paying && (
         <PayBillSheet
           bill={paying}
+          formRef={payFormRef}
           onClose={() => setPaying(null)}
           onSuccess={() => { setPaying(null); load() }}
         />
@@ -329,10 +389,12 @@ export default function PayablesPage() {
   )
 }
 
-function PayBillSheet({ bill, onClose, onSuccess }: {
+function PayBillSheet({ bill, onClose, onSuccess, formRef }: {
   bill: Bill
   onClose: () => void
   onSuccess: () => void
+  /** Handed up so the page can bind Ctrl+S to this form. */
+  formRef: React.Ref<HTMLFormElement>
 }) {
   const [date, setDate] = useState(todayISO())
   const [amount, setAmount] = useState(bill.balance_due)
@@ -359,7 +421,7 @@ function PayBillSheet({ bill, onClose, onSuccess }: {
   return (
     <Sheet open onOpenChange={(o) => { if (!o) onClose() }}>
       <SheetContent width="md">
-        <form onSubmit={submit} className="flex flex-col h-full">
+        <form ref={formRef} onSubmit={submit} className="flex flex-col h-full">
           <SheetHeader>
             <SheetTitle>Pay {bill.bill_no || `Bill #${bill.id}`}</SheetTitle>
             <p className="text-xs mt-0.5" style={{ color: 'var(--ink-3)' }}>
@@ -374,18 +436,36 @@ function PayBillSheet({ bill, onClose, onSuccess }: {
                   <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
                 </Field>
                 <Field label="Amount" required>
+                  {/* SheetContent focuses [data-autofocus] on open, so Enter
+                      accepts the prefilled full balance instead of landing on
+                      the header's close X and dismissing the sheet. Input
+                      selects numeric contents on focus, so typing replaces. */}
                   <Input type="number" step="0.01" min="0.01" max={bill.balance_due} required value={amount}
+                    data-autofocus
                     onChange={(e) => setAmount(e.target.value)} className="text-right font-mono" />
                 </Field>
               </div>
               <Field label="Paid from">
                 <div className="flex gap-2">
+                  {/* sr-only, not `hidden`: display:none takes the radio out
+                      of the tab order and the accessibility tree entirely, so
+                      every keyboard-recorded payment posted against bank. A
+                      shared `name` makes the pair one radio group, which is
+                      what gives it ←/→ selection. */}
                   {(['bank', 'cash'] as const).map((m) => (
                     <label key={m} className={cn(
                       'flex-1 flex items-center justify-center px-3 py-2 rounded-lg border cursor-pointer text-sm capitalize',
+                      'focus-within:ring-2 focus-within:ring-teal-500 focus-within:ring-offset-1',
                       mode === m ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-slate-200 text-slate-600'
                     )}>
-                      <input type="radio" checked={mode === m} onChange={() => setMode(m)} className="hidden" />
+                      <input
+                        type="radio"
+                        name={`pay-mode-${bill.id}`}
+                        value={m}
+                        checked={mode === m}
+                        onChange={() => setMode(m)}
+                        className="sr-only"
+                      />
                       {m}
                     </label>
                   ))}

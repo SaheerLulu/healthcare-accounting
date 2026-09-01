@@ -19,6 +19,9 @@ import {
 } from '../lib/api'
 import { formatDate, formatCurrency } from '../lib/utils'
 import { useLocation as useActiveLocation } from '../contexts/LocationContext'
+import { useHotkeyContext } from '../contexts/HotkeyContext'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 import { Card } from '../components/ui/card'
 import { voucherList } from './vouchers/voucherConfig'
 
@@ -94,12 +97,41 @@ export default function GatewayPage() {
   }
   useEffect(() => { loadStock() }, [activeLocationId])
 
+  async function loadRecent() {
+    try {
+      const res = await getJournalEntries({ is_posted: 'true' })
+      setRecent((res.results || []).slice(0, 8))
+    } catch { /* ignore */ }
+  }
+
+  // ─── Keyboard ─────────────────────────────────────────────────────────────
+  // Every grid on this page was a flat run of <Link>s: reaching the Reports
+  // block meant ~30 Tab presses past the vouchers, the stock card and eight
+  // recent entries. A roving tabindex per grid collapses each one to a single
+  // tab stop with ↑↓/Home/End inside it. No onActivate is passed — these are
+  // real links, and Enter already follows a focused link natively.
+  const voucherNav = useListKeyboardNav({ count: voucherList.length })
+  const recentNav = useListKeyboardNav({ count: recent.length })
+  const mastersNav = useListKeyboardNav({ count: masters.length })
+  const reportsNav = useListKeyboardNav({ count: reports.length })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Refresh', run: () => { loadRecent(); loadStock() } },
+      { chord: 'Alt+M', label: 'Masters', run: mastersNav.focusList },
+      { chord: 'Alt+T', label: 'Reports', run: reportsNav.focusList },
+    ],
+    onFocusList: voucherNav.focusList,
+  })
+
   return (
     <div className="max-w-7xl mx-auto pb-8 md:pb-20">
-      {/* Header — keyboard-only guidance, so it tracks the HotkeyBar breakpoint. */}
+      {/* Header — keyboard-only guidance, so it tracks the HotkeyBar breakpoint.
+          Generated from the SAME hints the bottom bar shows, so it can never
+          advertise a key this screen does not answer to. */}
       <div className="hidden md:block mb-6">
         <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
-          Press an F-key to start a voucher · Tab to navigate · Ctrl+A to save · Esc to back out
+          <PageHintLine />
         </p>
       </div>
 
@@ -107,12 +139,24 @@ export default function GatewayPage() {
         {/* Vouchers — most prominent column */}
         <div className="lg:col-span-7">
           <SectionTitle icon={Receipt}>Vouchers</SectionTitle>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {voucherList.map((v) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" {...voucherNav.containerProps}>
+            {voucherList.map((v, i) => (
               <Link
                 key={v.type}
                 to={v.routePath}
                 className="block group"
+                // The keyboard focus ring for a non-<tr> row (index.css) paints
+                // just outside this anchor and takes its radius from the parent,
+                // which is a square grid cell — so the ring cut across the
+                // corners of the rounded card inside. An inline radius wins over
+                // that rule's `border-radius: inherit` and makes the ring hug the
+                // card. Invisible otherwise: the anchor paints nothing itself.
+                style={{ borderRadius: '0.75rem' }}
+                // The gateway is where Ctrl+G and every F-key land, so it is
+                // the screen that most needs somewhere useful to put focus:
+                // PageTransition looks for [data-autofocus] on navigation.
+                {...(i === 0 ? { 'data-autofocus': '' } : {})}
+                {...voucherNav.rowProps(i)}
               >
                 <Card
                   className="p-4 cursor-pointer hover:-translate-y-0.5 transition-transform"
@@ -218,12 +262,13 @@ export default function GatewayPage() {
                   No vouchers yet — press F5 to record your first payment
                 </div>
               ) : (
-                <ul>
-                  {recent.map((e) => (
+                <ul {...recentNav.containerProps}>
+                  {recent.map((e, i) => (
                     <li key={e.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
                       <Link
                         to={`/journals/${e.id}`}
                         className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:gap-x-3 sm:gap-y-3 px-3 sm:px-4 py-2.5 hover:bg-[var(--color-hover-bg)] text-sm"
+                        {...recentNav.rowProps(i)}
                       >
                         <span className="text-xs mono w-20 flex-shrink-0" style={{ color: 'var(--ink-3)' }}>
                           {formatDate(e.date)}
@@ -258,13 +303,14 @@ export default function GatewayPage() {
           <div>
             <SectionTitle icon={BookOpen}>Masters</SectionTitle>
             <Card className="p-3">
-              <div className="grid grid-cols-2 gap-1">
-                {masters.map((m) => (
+              <div className="grid grid-cols-2 gap-1" {...mastersNav.containerProps}>
+                {masters.map((m, i) => (
                   <Link
                     key={m.label}
                     to={m.to}
                     className="flex items-center gap-2 px-2 py-2 rounded text-sm hover:bg-[var(--color-hover-bg)]"
                     style={{ color: 'var(--ink)' }}
+                    {...mastersNav.rowProps(i)}
                   >
                     <m.icon size={14} style={{ color: 'var(--ink-3)' }} />
                     <span>{m.label}</span>
@@ -278,13 +324,14 @@ export default function GatewayPage() {
           <div>
             <SectionTitle icon={FileBarChart}>Reports</SectionTitle>
             <Card className="p-3">
-              <div className="grid grid-cols-2 gap-1">
-                {reports.map((r) => (
+              <div className="grid grid-cols-2 gap-1" {...reportsNav.containerProps}>
+                {reports.map((r, i) => (
                   <Link
                     key={r.to}
                     to={r.to}
                     className="px-2 py-2.5 sm:py-1.5 rounded text-sm hover:bg-[var(--color-hover-bg)]"
                     style={{ color: 'var(--ink)' }}
+                    {...reportsNav.rowProps(i)}
                   >
                     {r.label}
                   </Link>
@@ -296,6 +343,21 @@ export default function GatewayPage() {
       </div>
     </div>
   )
+}
+
+/**
+ * The one-line keyboard prompt at the top of the gateway.
+ *
+ * It used to be a hand-written sentence, and it had drifted: it advertised
+ * "Ctrl+A to save" on a screen with nothing to save and "Esc to back out"
+ * with no Escape handler bound. Reading `pageHints` — the same list the
+ * bottom HotkeyBar and the F1 sheet render — means the line can only ever
+ * name keys this screen actually registered.
+ */
+function PageHintLine() {
+  const { pageHints } = useHotkeyContext()
+  const tail = pageHints.map((h) => `${h.chord} ${h.label.toLowerCase()}`).join(' · ')
+  return <>Press an F-key to start a voucher{tail && ` · ${tail}`}</>
 }
 
 function Stat({ label, value, tone }: {

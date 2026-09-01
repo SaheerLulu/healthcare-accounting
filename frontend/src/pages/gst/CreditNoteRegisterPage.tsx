@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Download, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import api, { getCreditNoteRegister, type CreditNoteRegisterRow, type RegisterTotals } from '../../lib/api'
@@ -7,15 +8,28 @@ import { Button } from '../../components/ui/button'
 import { PeriodPicker } from '../../components/ui/period-picker'
 import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 import { useLocation } from '../../contexts/LocationContext'
 
 export default function CreditNoteRegisterPage() {
+  const navigate = useNavigate()
   const [rows, setRows] = useState<CreditNoteRegisterRow[]>([])
   const [totals, setTotals] = useState<RegisterTotals | null>(null)
   const [noteCount, setNoteCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [period, setPeriod] = useState(getCurrentPeriod())
   const { activeLocationId } = useLocation()
+
+  // PeriodPicker forwards its ref to the MONTH select — the entry point of the
+  // pair. That element is both the F2 target and what PageTransition focuses on
+  // arrival, since the period is the only thing there is to change here.
+  // usePageKeyboard only calls focus()/select?.(), both safe on a <select>.
+  const periodRef = useRef<HTMLInputElement | null>(null)
+  const bindPeriod = useCallback((el: HTMLSelectElement | null) => {
+    el?.setAttribute('data-autofocus', '')
+    periodRef.current = el as unknown as HTMLInputElement | null
+  }, [])
 
   async function load() {
     setLoading(true)
@@ -51,6 +65,22 @@ export default function CreditNoteRegisterPage() {
 
   const timeBarred = rows.filter((r) => r.is_time_barred).length
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // A register row opens nothing, so this is the read-only variant: no
+  // onActivate, but ↑↓/Home/End/PgUp/PgDn walk the rows through a single
+  // roving tab stop, and Tab still steps clean past the whole register.
+  const list = useListKeyboardNav({ count: rows.length })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+X', label: 'Export CSV', run: exportCsv, when: rows.length > 0 },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    searchRef: periodRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
@@ -70,15 +100,21 @@ export default function CreditNoteRegisterPage() {
       <div className="flex items-center gap-2 sm:gap-3 mb-5 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500 font-medium">Period</label>
-          <PeriodPicker value={period} onChange={setPeriod} />
+          <PeriodPicker ref={bindPeriod} value={period} onChange={setPeriod} label="Credit note register period" />
         </div>
         {timeBarred > 0 && (
-          <span
-            className="px-2 py-1 rounded text-[11px] font-medium"
-            style={{ backgroundColor: '#fde8e8', color: '#c0392b' }}
-            title="Declared after 30 November of the FY following the original supply — GST adjustment not allowed under §34(2)"
-          >
-            {timeBarred} time-barred under §34(2)
+          <span className="flex items-center gap-2 flex-wrap">
+            <span
+              className="px-2 py-1 rounded text-[11px] font-medium"
+              style={{ backgroundColor: '#fde8e8', color: '#c0392b' }}
+            >
+              {timeBarred} time-barred under §34(2)
+            </span>
+            {/* The §34(2) rule is the point of the flag, so it is read as text
+                rather than hidden in a hover title no keyboard reaches. */}
+            <span className="text-[11px] text-slate-500">
+              Declared after 30 November of the FY following the original supply — GST adjustment not allowed.
+            </span>
           </span>
         )}
       </div>
@@ -101,17 +137,23 @@ export default function CreditNoteRegisterPage() {
               <Th className="text-right">Total</Th>
             </Tr>
           </Thead>
-          <Tbody>
+          <Tbody {...list.containerProps}>
             {loading ? (
               <tr><td colSpan={12} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
             ) : rows.length === 0 ? (
               <tr><td colSpan={12} className="text-center py-12 text-slate-400 text-sm">No credit notes in this period</td></tr>
             ) : (
               rows.map((r, i) => (
-                <Tr key={i}>
+                <Tr key={i} {...list.rowProps(i)}>
                   <Td className="font-mono text-xs text-teal-600">{r.note_no}</Td>
                   <Td className="text-slate-500">{formatDate(r.note_date)}</Td>
-                  <Td className="text-slate-700 max-w-[160px] truncate" title={r.party_name}>{r.party_name}</Td>
+                  {/* Truncation hid the name behind a hover title. It wraps
+                      inside the same column width instead: every row reads in
+                      full, and no column shifts under the cursor as ↑↓ move
+                      the focus. */}
+                  <Td className="text-slate-700 max-w-[160px] whitespace-normal break-words">
+                    {r.party_name}
+                  </Td>
                   <Td className="font-mono text-xs text-slate-500">{r.gstin || '-'}</Td>
                   <Td className="font-mono text-xs text-slate-500">{r.original_invoice_no || '-'}</Td>
                   <Td>
@@ -131,6 +173,9 @@ export default function CreditNoteRegisterPage() {
                           title="Time-barred under §34(2)"
                         >
                           barred
+                          <span className="sr-only">
+                            {' '}— time-barred under section 34(2); GST adjustment not allowed
+                          </span>
                         </span>
                       )}
                     </span>

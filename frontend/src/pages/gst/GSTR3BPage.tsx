@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { FileSpreadsheet, Loader2, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import api, { generateGSTR3B, getGSTR3BSummaries, type GSTR3BSummary } from '../../lib/api'
@@ -6,7 +7,32 @@ import { formatCurrency, formatDate, getCurrentPeriod } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import { PeriodPicker } from '../../components/ui/period-picker'
 import { Card, CardHeader, CardContent } from '../../components/ui/card'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
 import { useLocation } from '../../contexts/LocationContext'
+
+/**
+ * A label carrying the GST clause the figure maps to.
+ *
+ * That mapping is the whole compliance value of this card, and it used to live
+ * in a `title` on a plain <span> — hover-only, so a keyboard user could read
+ * "Taxable Value" and never learn it is 3.1(a). It is plain visible text now,
+ * tied to the label by aria-describedby. Deliberately NOT focusable: it reveals
+ * nothing and activates nothing, and a card carries eight or nine of these, so
+ * making each one a tab stop would bury every operable control on the screen
+ * behind ~18 presses that do nothing.
+ */
+function ClauseLabel({ text, note, className }: { text: string; note?: string; className?: string }) {
+  const id = useId()
+  if (!note) return <span className={className}>{text}</span>
+  return (
+    <span className="min-w-0">
+      <span aria-describedby={id} className={className}>{text}</span>
+      <span id={id} className="block text-[11px] leading-snug text-slate-400 mt-0.5 max-w-[20rem]">
+        {note}
+      </span>
+    </span>
+  )
+}
 
 function Row({ label, value, title, indent, strong }: {
   label: string
@@ -16,8 +42,8 @@ function Row({ label, value, title, indent, strong }: {
   strong?: boolean
 }) {
   return (
-    <div className="flex justify-between text-sm">
-      <span className={indent ? 'text-slate-400 pl-3' : 'text-slate-500'} title={title}>{label}</span>
+    <div className="flex justify-between gap-3 text-sm">
+      <ClauseLabel text={label} note={title} className={indent ? 'text-slate-400 pl-3' : 'text-slate-500'} />
       <span className={strong ? 'font-mono font-semibold text-slate-900' : 'font-mono font-medium text-slate-900'}>
         {formatCurrency(value)}
       </span>
@@ -85,8 +111,12 @@ function SummaryCard({ summary }: { summary: GSTR3BSummary }) {
               <Row label="of which RCM ITC" value={rcmITC} indent
                 title="4(A)(3) — ITC on inward supplies liable to reverse charge, included in the head-wise figures above" />
             )}
-            <div className="flex justify-between text-sm border-t border-slate-200 pt-2 mt-1">
-              <span className="text-slate-500 font-medium" title="Table 4(A) — ITC available (all other ITC + RCM ITC)">Total ITC</span>
+            <div className="flex justify-between gap-3 text-sm border-t border-slate-200 pt-2 mt-1">
+              <ClauseLabel
+                text="Total ITC"
+                note="Table 4(A) — ITC available (all other ITC + RCM ITC)"
+                className="text-slate-500 font-medium"
+              />
               <span className="font-mono font-semibold text-emerald-700">{formatCurrency(totalITC)}</span>
             </div>
           </div>
@@ -119,7 +149,11 @@ function SummaryCard({ summary }: { summary: GSTR3BSummary }) {
   )
 }
 
+const WORKING_PAPERS_CONTENTS =
+  'One Excel workbook with GSTR-3B, B2B/B2C registers, HSN, documents issued, credit notes, purchase and expense registers'
+
 export default function GSTR3BPage() {
+  const navigate = useNavigate()
   const [summaries, setSummaries] = useState<GSTR3BSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -179,6 +213,31 @@ export default function GSTR3BPage() {
     }
   }
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // The period drives both actions on this screen, so it takes F2 and the
+  // arrival focus. PeriodPicker forwards its ref to the MONTH select — the
+  // entry point of the pair — so that element is the F2 target and, via
+  // `data-autofocus`, what PageTransition's post-navigation focus pass lands
+  // on. usePageKeyboard only calls focus()/select?.(), both safe on a <select>.
+  // The return is rendered as cards, not rows, so there is no F3 list.
+  const periodRef = useRef<HTMLInputElement | null>(null)
+  const bindPeriod = useCallback((el: HTMLSelectElement | null) => {
+    el?.setAttribute('data-autofocus', '')
+    periodRef.current = el as unknown as HTMLInputElement | null
+  }, [])
+
+  // Generate is Alt+N — it creates the period's summary — and Alt+R is left
+  // meaning refresh, as it does on GSTR-1 and every other GST screen.
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'Generate', run: handleGenerate, when: !generating },
+      { chord: 'Alt+R', label: 'Refresh', run: load, when: !loading },
+      { chord: 'Alt+X', label: 'Working papers', run: downloadWorkingPapers, when: !exporting },
+    ],
+    searchRef: periodRef,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
@@ -190,7 +249,8 @@ export default function GSTR3BPage() {
           variant="secondary"
           onClick={downloadWorkingPapers}
           disabled={exporting}
-          title="One Excel workbook with GSTR-3B, B2B/B2C registers, HSN, documents issued, credit notes, purchase and expense registers"
+          title={WORKING_PAPERS_CONTENTS}
+          aria-label={`Working Papers — ${WORKING_PAPERS_CONTENTS}`}
         >
           {exporting ? <Loader2 size={15} className="animate-spin" /> : <FileSpreadsheet size={15} />}
           Working Papers
@@ -201,7 +261,7 @@ export default function GSTR3BPage() {
       <div className="flex items-center gap-2 sm:gap-3 mb-6 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500 font-medium">Period</label>
-          <PeriodPicker value={period} onChange={setPeriod} />
+          <PeriodPicker ref={bindPeriod} value={period} onChange={setPeriod} label="GSTR-3B period" />
         </div>
         <Button
           variant="primary"

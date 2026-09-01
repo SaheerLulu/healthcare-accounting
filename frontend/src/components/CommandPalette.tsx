@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import * as Dialog from '@radix-ui/react-dialog'
 import { Search, ArrowRight, Receipt, BookOpen, FileBarChart, History } from 'lucide-react'
 import { getJournalEntries, type JournalEntry } from '../lib/api'
 import { voucherList } from '../pages/vouchers/voucherConfig'
+import { navDestinations } from '../lib/navigation'
 import { useHotkeys, type HotkeyHandler } from '../contexts/HotkeyContext'
 
 interface Item {
@@ -15,6 +16,21 @@ interface Item {
   to: string
 }
 
+/**
+ * Every destination the palette can reach.
+ *
+ * Vouchers come from voucherConfig (they carry their own F-key badge); every
+ * other screen is DERIVED from the navigation tree rather than listed again
+ * here. The palette is how a keyboard-only user gets anywhere, so a screen
+ * missing from it is a screen they cannot reach — and a hand-kept list is
+ * exactly the thing that silently falls behind. Adding a page to the menus now
+ * adds it to Ctrl+K by construction.
+ */
+const NAV_GROUP_KIND: Record<string, Item['group']> = {
+  Reports: 'report',
+  Tax: 'report',
+}
+
 const STATIC: Item[] = [
   ...voucherList.map((v): Item => ({
     id: `voucher-${v.type}`,
@@ -24,25 +40,19 @@ const STATIC: Item[] = [
     group: 'voucher',
     to: v.routePath,
   })),
-  { id: 'rep-daybook', label: 'Day Book', group: 'report', to: '/reports/daybook' },
-  { id: 'rep-trial', label: 'Trial Balance', group: 'report', to: '/reports/trial-balance' },
-  { id: 'rep-pl', label: 'Profit & Loss', group: 'report', to: '/reports/profit-loss' },
-  { id: 'rep-bs', label: 'Balance Sheet', group: 'report', to: '/reports/balance-sheet' },
-  { id: 'rep-recv', label: 'Outstanding Receivables', group: 'report', to: '/receivables' },
-  { id: 'rep-pay', label: 'Outstanding Payables', group: 'report', to: '/payables' },
-  { id: 'rep-cash', label: 'Cash Book', group: 'report', to: '/reports/cash-book' },
-  { id: 'rep-bank', label: 'Bank Book', group: 'report', to: '/reports/bank-book' },
-  { id: 'rep-gst', label: 'GST Computation', group: 'report', to: '/reports/gst-computation' },
-  { id: 'rep-hsn', label: 'HSN Summary', group: 'report', to: '/reports/hsn-summary' },
-  { id: 'rep-stock', label: 'Stock Summary', group: 'report', to: '/reports/stock-summary' },
-  { id: 'mst-coa', label: 'Chart of Accounts', group: 'master', to: '/accounts' },
-  { id: 'mst-sup', label: 'Suppliers', group: 'master', to: '/parties/suppliers' },
-  { id: 'mst-cust', label: 'Customers', group: 'master', to: '/parties/customers' },
-  { id: 'mst-bank', label: 'Bank Accounts', group: 'master', to: '/banking' },
-  { id: 'mst-asset', label: 'Fixed Assets', group: 'master', to: '/fixed-assets' },
-  { id: 'mst-loan', label: 'Loans & EMI', group: 'master', to: '/loans' },
-  { id: 'mst-cheq', label: 'Cheques', group: 'master', to: '/banking/cheques' },
-  { id: 'mst-petty', label: 'Petty Cash', group: 'master', to: '/banking/petty-cash' },
+  ...navDestinations()
+    // Voucher routes are already listed above, with their F-key badge.
+    .filter((d) => !d.to.startsWith('/vouchers/'))
+    .map((d): Item => ({
+      id: `nav-${d.id}`,
+      label: d.label,
+      // The menu path is what tells two similarly-named screens apart
+      // ("Purchase Register" under Reports vs. Purchase under Transactions).
+      hint: d.section ? `${d.group} › ${d.section}` : d.group,
+      badge: d.keycap,
+      group: NAV_GROUP_KIND[d.group] ?? 'master',
+      to: d.to,
+    })),
 ]
 
 const GROUP_LABEL: Record<Item['group'], string> = {
@@ -68,10 +78,11 @@ export function CommandPalette() {
   const [highlight, setHighlight] = useState(0)
   const [recents, setRecents] = useState<Item[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
 
   // Open palette on Ctrl+K
   const handlers = useMemo<HotkeyHandler[]>(() => [
-    { chord: 'Ctrl+K', preventDefault: true, handler: () => setOpen(true) },
+    { chord: 'Ctrl+K', preventDefault: true, handler: () => setOpen((v) => !v) },
   ], [])
   useHotkeys(handlers)
 
@@ -122,18 +133,30 @@ export function CommandPalette() {
   // Reset highlight as filter changes.
   useEffect(() => { setHighlight(0) }, [query, open])
 
+  // A global F-key pressed while the palette is open navigates behind it and
+  // leaves the overlay holding focus over the new page. Any navigation closes
+  // it, whether it came from the palette or from a chord.
+  const { pathname } = useLocation()
+  useEffect(() => { setOpen(false) }, [pathname])
+
   const commit = useCallback((it: Item) => {
     navigate(it.to)
     setOpen(false)
   }, [navigate])
 
-  function onKey(e: React.KeyboardEvent<HTMLInputElement>) {
+  function onKey(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       setHighlight((h) => Math.min(h + 1, filtered.length - 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setHighlight((h) => Math.max(h - 1, 0))
+    } else if (e.key === 'Home') {
+      e.preventDefault()
+      setHighlight(0)
+    } else if (e.key === 'End') {
+      e.preventDefault()
+      setHighlight(Math.max(0, filtered.length - 1))
     } else if (e.key === 'Enter') {
       e.preventDefault()
       const it = filtered[highlight]
@@ -142,6 +165,15 @@ export function CommandPalette() {
       setOpen(false)
     }
   }
+
+  // The result list scrolls, so arrowing past the visible rows was moving an
+  // offscreen highlight — the user could not see what Enter would open.
+  useEffect(() => {
+    if (!open) return
+    listRef.current
+      ?.querySelector(`[data-idx="${highlight}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [highlight, open])
 
   // Group rows for display, preserving filtered order within groups.
   const groups: { label: string; items: Item[]; offset: number }[] = []
@@ -180,6 +212,14 @@ export function CommandPalette() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onKey}
+              // Combobox semantics: focus stays in the box while the selection
+              // moves, so the moving highlight has to be announced by
+              // reference rather than by focus.
+              role="combobox"
+              aria-expanded
+              aria-controls="cmdk-results"
+              aria-activedescendant={filtered.length ? `cmdk-opt-${highlight}` : undefined}
+              aria-autocomplete="list"
               placeholder="Type to search vouchers, reports, masters…"
               className="w-full pl-11 pr-16 sm:pr-4 py-3.5 bg-transparent text-sm focus:outline-none"
               style={{ color: 'var(--ink)' }}
@@ -191,7 +231,13 @@ export function CommandPalette() {
               Esc
             </kbd>
           </div>
-          <div className="max-h-[60dvh] sm:max-h-[55vh] overflow-y-auto">
+          <div
+            ref={listRef}
+            id="cmdk-results"
+            role="listbox"
+            aria-label="Results"
+            className="max-h-[60dvh] sm:max-h-[55vh] overflow-y-auto"
+          >
             {filtered.length === 0 ? (
               <div className="p-8 text-center text-sm" style={{ color: 'var(--ink-3)' }}>
                 No matches
@@ -212,8 +258,18 @@ export function CommandPalette() {
                       <button
                         key={it.id}
                         type="button"
+                        id={`cmdk-opt-${idx}`}
+                        data-idx={idx}
+                        role="option"
+                        aria-selected={idx === highlight}
+                        tabIndex={-1}
                         onMouseEnter={() => setHighlight(idx)}
-                        onMouseDown={(e) => { e.preventDefault(); commit(it) }}
+                        // preventDefault on mousedown only to stop the input
+                        // blurring; the commit itself hangs off onClick so a
+                        // keyboard activation works too — with it on mousedown
+                        // the row was pointer-only.
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => commit(it)}
                         className="w-full px-4 py-2.5 sm:py-2 flex items-center gap-3 text-sm text-left"
                         style={{
                           background: idx === highlight ? 'rgba(15,157,154,0.08)' : 'transparent',

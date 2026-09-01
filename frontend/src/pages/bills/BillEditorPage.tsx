@@ -14,7 +14,8 @@ import { Card } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { AccountPicker } from '../journals/AccountPicker'
-import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useGridKeyboardNav } from '../../hooks/useGridKeyboardNav'
 import { useLocation as useActiveLocation } from '../../contexts/LocationContext'
 import { voucherConfigs } from '../vouchers/voucherConfig'
 
@@ -29,6 +30,10 @@ const newLine = (): Line => ({
   uid: Math.random().toString(36).slice(2),
   account: null, description: '', amount: '',
 })
+
+/** Cell ids for the line grid — see hooks/useGridKeyboardNav. */
+const COLUMN_IDS = ['account', 'description', 'amount']
+const cellId = (row: number, col: string) => `bill-line-${row}-${col}`
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 const plusDays = (days: number) => {
@@ -60,6 +65,9 @@ export default function BillEditorPage() {
   const [original, setOriginal] = useState<Bill | null>(null)
   const [saving, setSaving] = useState(false)
   const [escConfirmOpen, setEscConfirmOpen] = useState(false)
+  // Which line the keyboard is on, so Alt+D deletes the line being edited
+  // rather than guessing from the DOM.
+  const [focusedRow, setFocusedRow] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -204,18 +212,54 @@ export default function BillEditorPage() {
     else navigate('/bills')
   }, [vendorName, vendorId, billNo, lines, notes, editingId, navigate])
 
-  // Tally-style hotkeys: Ctrl+A save+approve, Esc cancel.
-  const handlers = useMemo<HotkeyHandler[]>(() => [
-    { chord: 'Ctrl+A', preventDefault: true, handler: () => handleSave(true) },
-    { chord: 'Escape', preventDefault: false, handler: handleEsc },
-  ], [handleSave, handleEsc])
-  useHotkeys(handlers)
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Enter and ↑/↓ walk down a column; Tab off the very last cell appends a
+  // line, so a clerk keys line after line without reaching for "Add another
+  // line".
+  const grid = useGridKeyboardNav({
+    rowCount: lines.length,
+    columnIds: COLUMN_IDS,
+    buildCellId: cellId,
+    onAppendRow: addLine,
+    onEnterAppendRow: addLine,
+  })
 
-  const hints = useMemo<HotkeyHint[]>(() => [
-    { chord: 'Ctrl+A', label: 'Save & Approve' },
-    { chord: 'Esc', label: 'Cancel' },
-  ], [])
-  useHintRegister(hints)
+  /**
+   * Tab keeps the row's natural DOM order — ledger picker → description →
+   * amount → remove — and only the very last cell overrides it, where the grid
+   * appends a line and moves into its picker.
+   *
+   * Overriding Tab on every cell (which is what this screen used to do) walked
+   * description → amount → next row's description, so the AccountPicker of every
+   * line after the first, and every row's Remove button, dropped out of the tab
+   * order entirely. A line with no account is silently discarded by payload()
+   * while its amount still counts towards the total, so that was a bill saved
+   * with a header total its lines do not add up to.
+   */
+  function lineKeyDown(e: React.KeyboardEvent, rowIdx: number, colId: string) {
+    const lastCell = colId === 'amount' && rowIdx === lines.length - 1
+    if (e.key === 'Tab' && (e.shiftKey || !lastCell)) return
+    grid.handleKeyDown(e, rowIdx, colId)
+  }
+
+  function deleteFocusedLine() {
+    const line = lines[Math.min(focusedRow, lines.length - 1)]
+    if (line) removeLine(line.uid)
+  }
+
+  // Ctrl+A stays "Save & Approve" — it is the app-wide voucher chord (see
+  // VoucherEditor) and Tally muscle memory. Ctrl+S is the draft save.
+  // Escape goes through useEscapeBack, so it leaves the focused field first
+  // and stands down entirely while the discard dialog owns the key.
+  usePageKeyboard({
+    actions: [
+      { chord: 'Ctrl+A', label: 'Save & Approve', run: () => handleSave(true), when: !saving && !allStores },
+      { chord: 'Ctrl+S', label: 'Save draft', run: () => handleSave(false), when: !saving && !allStores },
+      { chord: 'Alt+A', label: 'Add line', run: addLine },
+      { chord: 'Alt+D', label: 'Delete line', run: deleteFocusedLine, when: lines.length > 1 },
+    ],
+    onBack: handleEsc,
+  })
 
   if (loading) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
@@ -270,6 +314,7 @@ export default function BillEditorPage() {
           <Field label="Vendor" required hint="Pick a known supplier or enter a new vendor name">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select
+                data-autofocus
                 value={vendorId ?? ''}
                 onChange={(e) => {
                   const v = e.target.value
@@ -318,23 +363,28 @@ export default function BillEditorPage() {
               </tr>
             </thead>
             <tbody>
-              {lines.map((line) => (
-                <tr key={line.uid} className="border-b border-slate-100 last:border-0">
+              {lines.map((line, i) => (
+                <tr key={line.uid} className="border-b border-slate-100 last:border-0"
+                  onFocus={() => setFocusedRow(i)}>
                   <td className="px-4 py-2 align-top">
                     <AccountPicker
                       accounts={expenseAccounts}
                       value={line.account}
+                      triggerId={cellId(i, 'account')}
+                      ariaLabel={`Line ${i + 1} expense account`}
                       onChange={(id) => updateLine(line.uid, { account: id })}
                     />
                   </td>
                   <td className="px-4 py-2">
-                    <Input value={line.description}
+                    <Input id={cellId(i, 'description')} value={line.description}
                       onChange={(e) => updateLine(line.uid, { description: e.target.value })}
+                      onKeyDown={(e) => lineKeyDown(e, i, 'description')}
                       placeholder="e.g. April electricity bill" />
                   </td>
                   <td className="px-4 py-2">
-                    <Input type="number" step="0.01" min="0" value={line.amount}
+                    <Input id={cellId(i, 'amount')} type="number" step="0.01" min="0" value={line.amount}
                       onChange={(e) => updateLine(line.uid, { amount: e.target.value })}
+                      onKeyDown={(e) => lineKeyDown(e, i, 'amount')}
                       placeholder="0.00"
                       className="text-right font-mono" />
                   </td>
@@ -342,7 +392,8 @@ export default function BillEditorPage() {
                     <button type="button" onClick={() => removeLine(line.uid)}
                       disabled={lines.length <= 1}
                       className="text-slate-400 hover:text-rose-600 disabled:opacity-30 disabled:cursor-not-allowed p-1.5 rounded hover:bg-slate-100"
-                      title="Remove line">
+                      aria-label={`Remove line ${i + 1}`}
+                      title="Remove line (Alt+D)">
                       <Trash2 size={14} />
                     </button>
                   </td>
@@ -355,6 +406,7 @@ export default function BillEditorPage() {
                   <button type="button" onClick={addLine}
                     className="inline-flex items-center gap-1.5 text-sm text-teal-700 hover:text-teal-800">
                     <Plus size={14} /> Add another line
+                    <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Alt+A</kbd>
                   </button>
                 </td>
                 <td className="px-4 py-2 text-right">
@@ -424,6 +476,7 @@ export default function BillEditorPage() {
         <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving || allStores}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
           Save Draft
+          <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Ctrl+S</kbd>
         </Button>
         <Button onClick={() => handleSave(true)} disabled={saving || allStores}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}

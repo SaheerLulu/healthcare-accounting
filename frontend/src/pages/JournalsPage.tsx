@@ -24,6 +24,8 @@ import { SkeletonTable } from '../components/ui/Skeletons'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose, SheetTrigger,
 } from '../components/ui/sheet'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 
 const VOUCHER_TYPES = [
   'JOURNAL', 'PURCHASE', 'SALE', 'PAYMENT', 'RECEIPT',
@@ -62,6 +64,7 @@ export default function JournalsPage() {
   // Ledger / Day Book link here with ?search=<voucher no> — seed the box from the URL.
   const [searchParams] = useSearchParams()
   const [search, setSearch] = useState(searchParams.get('search') ?? '')
+  const searchRef = useRef<HTMLInputElement>(null)
   const [statusFilter, setStatusFilter] = useState<'all' | 'draft' | 'posted'>('all')
   const [voucherType, setVoucherType] = useState<string>('all')
   const [dateFrom, setDateFrom] = useState('')
@@ -120,6 +123,22 @@ export default function JournalsPage() {
   }
   const hasActiveFilters = !!(search || statusFilter !== 'all' || voucherType !== 'all' || dateFrom || dateTo)
 
+  // The register is the busiest list in the app and its rows open on click —
+  // pointer-only until now. ↑↓ walks it, Enter opens the highlighted entry.
+  const list = useListKeyboardNav({
+    count: entries.length,
+    onActivate: (i) => navigate(`/journals/${entries[i].id}`),
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'New entry', run: () => navigate('/journals/new') },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    searchRef,
+    onFocusList: list.focusList,
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       {/* Header */}
@@ -153,8 +172,8 @@ export default function JournalsPage() {
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 min-w-0 sm:min-w-[220px] max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search voucher no. or narration…" className="pl-9" />
+          <Input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search voucher no. or narration… (F2)" className="pl-9" />
         </div>
         <select value={voucherType} onChange={(e) => setVoucherType(e.target.value)}
           className="h-9 px-3 text-sm rounded-md outline-none w-full sm:w-auto"
@@ -205,11 +224,16 @@ export default function JournalsPage() {
                 <Th className="text-left">Status</Th>
               </Tr>
             </Thead>
-            <Tbody>
-              {entries.map((entry) => {
+            <Tbody {...list.containerProps}>
+              {entries.map((entry, i) => {
                 const amount = entryAmount(entry)
                 return (
-                  <Tr key={entry.id} className="cursor-pointer" onClick={() => navigate(`/journals/${entry.id}`)}>
+                  <Tr
+                    key={entry.id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/journals/${entry.id}`)}
+                    {...list.rowProps(i)}
+                  >
                     <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(entry.date)}</Td>
                     <Td>
                       <Link to={`/journals/${entry.id}`} onClick={(e) => e.stopPropagation()}

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Search, Check, History, Plus, type LucideIcon } from 'lucide-react'
 import type { Account } from '../../lib/api'
@@ -33,7 +33,7 @@ function writeRecent(ids: number[]) {
 }
 
 export function AccountPicker({
-  accounts, value, onChange, disabled, onAltC,
+  accounts, value, onChange, disabled, onAltC, triggerId, ariaLabel,
 }: {
   accounts: Account[]
   value: number | null
@@ -42,6 +42,12 @@ export function AccountPicker({
   /** Optional: bubbles Alt+C from inside the dropdown so parent can open
    *  a "create ledger" modal without losing voucher state. */
   onAltC?: () => void
+  /** Optional DOM id for the trigger, so a grid can address this cell by id
+   *  (see hooks/useGridKeyboardNav) and move focus into the picker. */
+  triggerId?: string
+  /** Accessible name for the trigger — a picker in a grid row has no visible
+   *  label of its own, so without this it is announced as an unnamed button. */
+  ariaLabel?: string
 }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -49,8 +55,13 @@ export function AccountPicker({
   const [recentIds, setRecentIds] = useState<number[]>(readRecent)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null)
+  // Stable ids so the listbox rows can be referenced by aria-activedescendant.
+  const baseId = useId()
+  const listboxId = `${baseId}-listbox`
+  const optionId = (idx: number) => `${baseId}-opt-${idx}`
 
   const selected = useMemo(
     () => accounts.find((a) => a.id === value) || null,
@@ -103,6 +114,15 @@ export function AccountPicker({
   // Reset highlight when navList changes.
   useEffect(() => { setHighlight(0) }, [query, open])
 
+  // Keep the highlighted row inside the scroll pane. The pane is capped at
+  // max-h-72, so from roughly the eighth account down the highlight would
+  // otherwise move out of sight and the user navigates blind.
+  useEffect(() => {
+    if (!open) return
+    const row = listRef.current?.querySelector<HTMLElement>(`[data-idx="${highlight}"]`)
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [open, highlight, navList.length])
+
   // Compute viewport-anchored position whenever the dropdown is open.
   useLayoutEffect(() => {
     if (!open) { setPos(null); return }
@@ -148,23 +168,44 @@ export function AccountPicker({
     }
   }, [open, onAltC])
 
+  /**
+   * Close and put focus back on the trigger.
+   *
+   * Closing unmounts the portal that holds the focused search box, so without
+   * this focus lands on <body> and the next Tab restarts at the top of the
+   * document — in a voucher grid that meant tabbing back in for every line.
+   * Returning to the trigger keeps the user in the row they were keying: Tab
+   * from there is the next cell.
+   */
+  function closePicker() {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
   function commitSelection(a: Account) {
     onChange(a.id)
-    setOpen(false)
     setQuery('')
     setRecentIds((prev) => {
       const next = [a.id, ...prev.filter((id) => id !== a.id)].slice(0, RECENT_MAX)
       writeRecent(next)
       return next
     })
+    closePicker()
+  }
+
+  /** Escape anywhere inside the panel closes only the panel. */
+  function onPanelKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== 'Escape') return
+    e.preventDefault()
+    // The panel is portalled to document.body, so without this the same
+    // keypress also reaches the page-level Escape handler behind it — which
+    // inside a voucher pops "Discard this voucher?" and on a detail screen
+    // navigates away.
+    e.stopPropagation()
+    closePicker()
   }
 
   function onInputKey(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      setOpen(false)
-      return
-    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       setHighlight((h) => Math.min(h + 1, navList.length - 1))
@@ -175,6 +216,16 @@ export function AccountPicker({
       setHighlight((h) => Math.max(h - 1, 0))
       return
     }
+    if (e.key === 'Home') {
+      e.preventDefault()
+      setHighlight(0)
+      return
+    }
+    if (e.key === 'End') {
+      e.preventDefault()
+      setHighlight(Math.max(0, navList.length - 1))
+      return
+    }
     if (e.key === 'Enter') {
       e.preventDefault()
       const a = navList[highlight]
@@ -183,13 +234,50 @@ export function AccountPicker({
     }
   }
 
+  /** ArrowDown / ArrowUp open the list; a printable key opens and filters. */
+  function onTriggerKey(e: React.KeyboardEvent<HTMLButtonElement>) {
+    if (disabled) return
+    if (open) {
+      // Focus can still be on the trigger for the tick before the search box
+      // takes it; Escape there closes the panel, not the screen behind it.
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        closePicker()
+      }
+      return
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      setQuery('')
+      setOpen(true)
+      return
+    }
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== ' ') {
+      // Type-to-search, the way the counter staff use the pharmacy app: the
+      // first letter both opens the list and starts narrowing it.
+      e.preventDefault()
+      setQuery(e.key)
+      setOpen(true)
+    }
+  }
+
   return (
     <>
       <button
         ref={triggerRef}
+        id={triggerId}
         type="button"
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
+        onKeyDown={onTriggerKey}
+        // The trigger is a button that opens a filtered listbox; the combobox
+        // itself is the search box inside the panel, which is what tracks the
+        // active option. Two comboboxes would be announced as two widgets.
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-controls={open ? listboxId : undefined}
+        aria-label={ariaLabel}
         className={cn(
           'w-full flex items-center justify-between gap-2 px-3 py-2 text-sm border rounded-lg text-left transition-colors',
           disabled && 'opacity-50 cursor-not-allowed'
@@ -216,6 +304,7 @@ export function AccountPicker({
       {open && pos && createPortal(
         <div
           ref={dropdownRef}
+          onKeyDown={onPanelKey}
           className="fixed z-[60] rounded-lg border shadow-lg overflow-hidden dropdown-animate"
           style={{
             top: pos.top, left: pos.left, width: pos.width,
@@ -235,17 +324,25 @@ export function AccountPicker({
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onInputKey}
               placeholder="Type letters to narrow… (↑↓ Enter)"
+              aria-label="Search ledgers"
+              role="combobox"
+              aria-expanded
+              aria-autocomplete="list"
+              aria-controls={listboxId}
+              aria-activedescendant={navList[highlight] ? optionId(highlight) : undefined}
               className="w-full pl-9 pr-3 py-2 text-sm bg-transparent focus:outline-none"
               style={{ color: 'var(--ink)' }}
             />
           </div>
-          <div className="max-h-72 overflow-y-auto">
+          <div ref={listRef} id={listboxId} role="listbox" aria-label="Ledgers" className="max-h-72 overflow-y-auto">
             {recentAccounts.length > 0 && (
               <>
                 <BandLabel icon={History}>Recent</BandLabel>
                 {recentAccounts.map((a, i) => (
                   <Row
                     key={`r-${a.id}`}
+                    id={optionId(i)}
+                    idx={i}
                     account={a}
                     selected={value === a.id}
                     highlighted={i === highlight}
@@ -262,6 +359,8 @@ export function AccountPicker({
               return (
                 <Row
                   key={a.id}
+                  id={optionId(idx)}
+                  idx={idx}
                   account={a}
                   selected={value === a.id}
                   highlighted={idx === highlight}
@@ -289,7 +388,12 @@ export function AccountPicker({
               </span>
               <button
                 type="button"
-                onMouseDown={(e) => { e.preventDefault(); setOpen(false); onAltC() }}
+                // onClick, not onMouseDown: it answers Enter and Space too, so
+                // the button works for the keyboard as well as the pointer.
+                // The mousedown default is still suppressed, purely to stop the
+                // search box blurring out from under the click.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { setOpen(false); onAltC() }}
                 className="inline-flex items-center gap-1 text-[11px] font-medium hover:underline flex-shrink-0"
                 style={{ color: 'var(--brand)' }}
               >
@@ -319,7 +423,9 @@ function BandLabel({ icon: Icon, children }: {
   )
 }
 
-function Row({ account, selected, highlighted, onSelect }: {
+function Row({ id, idx, account, selected, highlighted, onSelect }: {
+  id: string
+  idx: number
   account: Account
   selected: boolean
   highlighted: boolean
@@ -327,8 +433,17 @@ function Row({ account, selected, highlighted, onSelect }: {
 }) {
   return (
     <button
+      id={id}
+      data-idx={idx}
       type="button"
-      onMouseDown={(e) => { e.preventDefault(); onSelect() }}
+      role="option"
+      aria-selected={selected}
+      // The search box stays the only tab stop in the panel — ↑↓ + Enter are
+      // the whole contract, and Tab out of the panel should leave it rather
+      // than walk two hundred ledgers.
+      tabIndex={-1}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onSelect}
       className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors"
       style={{
         backgroundColor: highlighted ? 'rgba(15,157,154,0.10)' : 'transparent',

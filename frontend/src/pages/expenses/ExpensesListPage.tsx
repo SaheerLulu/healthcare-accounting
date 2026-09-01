@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Search, Calendar, X } from 'lucide-react'
 import { toast } from 'sonner'
@@ -15,6 +15,8 @@ import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 const STATUS_BADGE: Record<ExpenseStatus, 'default' | 'success'> = {
   draft: 'default',
@@ -30,6 +32,7 @@ export default function ExpensesListPage() {
   const [counts, setCounts] = useState<ExpenseCounts | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
   const [filter, setFilter] = useState<Filter>('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -66,6 +69,22 @@ export default function ExpensesListPage() {
 
   const hasFilters = !!(search || filter !== 'all' || dateFrom || dateTo)
 
+  // Rows open a record on click, which a keyboard cannot do to a <tr>. Roving
+  // focus makes ↑↓ walk the list and Enter open the highlighted row.
+  const list = useListKeyboardNav({
+    count: expenses.length,
+    onActivate: (i) => navigate(`/expenses/${expenses[i].id}`),
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'New expense', run: () => navigate('/expenses/new') },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    searchRef,
+    onFocusList: list.focusList,
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:gap-4">
@@ -88,8 +107,8 @@ export default function ExpensesListPage() {
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative w-full sm:w-auto sm:flex-1 sm:min-w-[220px] sm:max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search vendor, reference, notes…" className="pl-9" />
+          <Input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search vendor, reference, notes… (F2)" className="pl-9" />
         </div>
         <div
           className="flex items-center gap-1 px-2 h-9 rounded-md w-full sm:w-auto"
@@ -133,9 +152,14 @@ export default function ExpensesListPage() {
                 <Th className="text-left">Status</Th>
               </Tr>
             </Thead>
-            <Tbody>
-              {expenses.map((e) => (
-                <Tr key={e.id} className="cursor-pointer" onClick={() => navigate(`/expenses/${e.id}`)}>
+            <Tbody {...list.containerProps}>
+              {expenses.map((e, i) => (
+                <Tr
+                  key={e.id}
+                  className="cursor-pointer"
+                  onClick={() => navigate(`/expenses/${e.id}`)}
+                  {...list.rowProps(i)}
+                >
                   <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(e.expense_date)}</Td>
                   <Td>
                     <Link to={`/expenses/${e.id}`} onClick={(ev) => ev.stopPropagation()}

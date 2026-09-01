@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Loader2, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
@@ -9,6 +9,8 @@ import { Input } from '../../components/ui/input'
 import { Button } from '../../components/ui/button'
 import { Pagination } from '../../components/ui/Pagination'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 const DEFAULT_PAGE_SIZE = 200 // backend LedgerPagination.max_page_size
 
@@ -38,6 +40,7 @@ export default function LedgerPage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
   const [loading, setLoading] = useState(true)
+  const dateFromRef = useRef<HTMLInputElement>(null)
 
   async function load(targetPage = page, size = pageSize) {
     if (!code) return
@@ -66,17 +69,10 @@ export default function LedgerPage() {
 
   useEffect(() => { load(1) /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [code])
 
-  function applyDates() {
+  function applyDates(e?: FormEvent) {
+    e?.preventDefault()
     setSearchParams({ from: dateFrom, to: dateTo })
     load(1)
-  }
-
-  if (!code) {
-    return (
-      <div className="p-12 text-center text-sm" style={{ color: 'var(--ink-3)' }}>
-        No account code specified.
-      </div>
-    )
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -91,10 +87,42 @@ export default function LedgerPage() {
       (parseFloat(String(txns[0].credit)) || 0)
     : null
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // A ledger page holds up to 200 rows, each carrying a link to its source
+  // voucher. Left as 200 tab stops the pager below the table is unreachable in
+  // practice, so the rows become ONE roving stop — ↑↓/Home/End/PgUp/PgDn walk
+  // them, Enter follows the row's voucher, and a single Tab steps out of the
+  // register onto the pagination controls. The per-row <Link> stays clickable
+  // but leaves the tab order (tabIndex={-1}); Enter on the row — and a click
+  // anywhere in it — does its job.
+  const list = useListKeyboardNav({
+    count: txns.length,
+    onActivate: (i) => navigate(`/journals?search=${encodeURIComponent(txns[i].entry_no)}`),
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Refresh', run: () => load(page), when: !loading },
+    ],
+    searchRef: dateFromRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate('/accounts'),
+  })
+
+  if (!code) {
+    return (
+      <div className="p-12 text-center text-sm" style={{ color: 'var(--ink-3)' }}>
+        No account code specified.
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-4">
       <button
+        type="button"
         onClick={() => navigate('/accounts')}
+        aria-keyshortcuts="Escape"
         className="inline-flex items-center gap-1 text-sm hover:opacity-80"
         style={{ color: 'var(--ink-2)' }}
       >
@@ -111,19 +139,31 @@ export default function LedgerPage() {
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      {/* A form, so Enter from either date field applies the range — it was
+          previously a bare div, leaving the Apply button as the only route. */}
+      <form className="flex flex-wrap items-center gap-3" onSubmit={applyDates}>
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
+          <label htmlFor="ledger-from" className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
+          <Input id="ledger-from" ref={dateFromRef} data-autofocus type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
+          <label htmlFor="ledger-to" className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
+          <Input id="ledger-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button className="w-full sm:w-auto" onClick={applyDates} disabled={loading}>
+        <Button type="submit" className="w-full sm:w-auto" disabled={loading}>
           {loading && <Loader2 size={14} className="animate-spin" />}
           Apply
         </Button>
+      </form>
+
+      {/* Applying a range or paging swaps the whole register under a user whose
+          focus never moves. */}
+      <div className="sr-only" role="status" aria-live="polite">
+        {loading
+          ? 'Loading ledger…'
+          : report
+            ? `${total} transactions, page ${page} of ${totalPages}, closing ${formatCurrency(report.closing_balance)}`
+            : ''}
       </div>
 
       {loading ? (
@@ -147,7 +187,7 @@ export default function LedgerPage() {
           </div>
 
           <Card className="overflow-hidden p-0">
-            <Table>
+            <Table label={`Ledger ${report.account.code}`}>
               <Thead>
                 <Tr>
                   <Th className="text-left">Date</Th>
@@ -160,7 +200,7 @@ export default function LedgerPage() {
                   <Th className="text-right px-3">Balance</Th>
                 </Tr>
               </Thead>
-              <Tbody>
+              <Tbody {...list.containerProps}>
                 <Tr>
                   <Td colSpan={7} className="text-sm" style={{ color: 'var(--ink-3)' }}>
                     {page === 1 ? 'Opening balance' : 'Balance brought forward'}
@@ -175,11 +215,25 @@ export default function LedgerPage() {
                   const dr = parseFloat(String(t.debit)) || 0
                   const cr = parseFloat(String(t.credit)) || 0
                   return (
-                    <Tr key={i}>
+                    <Tr
+                      key={i}
+                      className="cursor-pointer"
+                      // rowProps marks the row role="button" and the shared CSS
+                      // gives it a pointer, so a click has to reach the same place
+                      // Enter does — otherwise the affordance is a dead one.
+                      onClick={() => navigate(`/journals?search=${encodeURIComponent(t.entry_no)}`)}
+                      aria-label={`${formatDate(t.date)} ${t.entry_no}, debit ${dr}, credit ${cr}`}
+                      {...list.rowProps(i)}
+                    >
                       <Td className="text-sm" style={{ color: 'var(--ink-2)' }}>{formatDate(t.date)}</Td>
                       <Td>
                         <Link
                           to={`/journals?search=${encodeURIComponent(t.entry_no)}`}
+                          // The row itself answers Enter and click; the link stays
+                          // out of the tab order so 200 rows are not 200 stops, and
+                          // swallows its own click so one press is one navigation.
+                          onClick={(e) => e.stopPropagation()}
+                          tabIndex={-1}
                           className="mono text-xs hover:underline inline-flex items-center gap-1"
                           style={{ color: 'var(--brand)' }}
                         >

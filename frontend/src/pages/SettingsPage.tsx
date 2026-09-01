@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Loader2, Save, RotateCcw, Search, ChevronDown, Undo2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -13,7 +13,9 @@ import {
   type LocationTaxProfile, type LocationTaxProfilesResponse,
 } from '../lib/api'
 import { useLocation } from '../contexts/LocationContext'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs'
+import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -38,7 +40,17 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ]
 
-function CompanyInfoTab() {
+/**
+ * Every panel that holds edits the server has not seen yet reports them
+ * upward: the tab strip is the only place that can refuse to throw them away,
+ * because it is the switch that unmounts the panel.
+ */
+interface TabDirtyProps {
+  /** Pass the current unsaved state; pass false on unmount. */
+  onDirtyChange: (dirty: boolean) => void
+}
+
+function CompanyInfoTab({ onDirtyChange }: TabDirtyProps) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const { register, handleSubmit, reset, formState: { isDirty } } = useForm<AccountingSettings>()
@@ -46,6 +58,34 @@ function CompanyInfoTab() {
   useEffect(() => {
     getSettings().then((data) => reset(data)).catch(() => toast.error('Failed to load settings')).finally(() => setLoading(false))
   }, [reset])
+
+  // PageTransition sweeps for [data-autofocus] a single frame after the route
+  // mounts, when this tab is still the spinner below — so it finds nothing and
+  // parks focus on the page container. Take the landing over here, once the
+  // fields exist, but only while focus is still parked: an ancestor wrapper
+  // (tabIndex -1, so not a Tab stop of its own) or <body> means nobody has
+  // claimed it, whereas a tab trigger or a control the user Tabbed to keeps it.
+  const firstFieldRef = useRef<HTMLInputElement | null>(null)
+  useEffect(() => {
+    if (loading) return
+    const el = firstFieldRef.current
+    if (!el) return
+    const active = document.activeElement as HTMLElement | null
+    const parked = !active || active === document.body
+      || (active.tabIndex === -1 && active.contains(el))
+    if (parked) el.focus()
+  }, [loading])
+
+  // The first field needs react-hook-form's ref AND ours; RHF hands back a
+  // callback ref, so the two compose instead of overwriting each other.
+  function firstFieldProps(key: keyof AccountingSettings) {
+    const { ref, ...rest } = register(key)
+    return {
+      ...rest,
+      ref: (el: HTMLInputElement | null) => { ref(el); firstFieldRef.current = el },
+      'data-autofocus': '',
+    }
+  }
 
   async function onSubmit(data: AccountingSettings) {
     setSaving(true)
@@ -55,6 +95,31 @@ function CompanyInfoTab() {
       toast.success('Settings saved successfully')
     } catch { toast.error('Failed to save settings') } finally { setSaving(false) }
   }
+
+  // Radix unmounts the panel behind a tab switch, taking react-hook-form's
+  // state with it — so the strip has to be told there is something to lose
+  // before it switches. The unmount report is what clears the flag once this
+  // panel is genuinely gone.
+  useEffect(() => { onDirtyChange(isDirty) }, [isDirty, onDirtyChange])
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange])
+
+  // The tab is an editor, so it declares the editor contract: Ctrl+S saves.
+  // Only one usePageKeyboard may be live at a time (registerHints replaces the
+  // whole page list), and Radix unmounts the inactive tabs — so each tab owns
+  // its own contract and the hint bar always describes what is on screen.
+  usePageKeyboard({
+    actions: [
+      {
+        chord: 'Ctrl+S',
+        label: 'Save settings',
+        // Registered unconditionally: a hint that disappears the moment the
+        // form is clean tells the user nothing about what the screen does, and
+        // an unregistered page hands the bottom bar back to the global voucher
+        // chips — which advertise F4-F9 while you are editing settings.
+        run: () => { if (!isDirty || saving) return; void handleSubmit(onSubmit)() },
+      },
+    ],
+  })
 
   if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} /></div>
 
@@ -83,7 +148,14 @@ function CompanyInfoTab() {
                     ))}
                   </select>
                 ) : (
-                  <Input {...register(key)} type={type || 'text'} placeholder={placeholder} />
+                  <Input
+                    // First entry field of the form — focused on arrival (see
+                    // firstFieldProps above) so the screen is typeable without
+                    // a Tab.
+                    {...(key === FIELD_CONFIG[0].key ? firstFieldProps(key) : register(key))}
+                    type={type || 'text'}
+                    placeholder={placeholder}
+                  />
                 )}
               </div>
             )
@@ -206,6 +278,20 @@ function AccountMappingsTab() {
   // 'shared' = always edit the shared (NULL-location) row, regardless of active loc.
   const [scope, setScope] = useState<'auto' | 'shared'>('auto')
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  /**
+   * Pending picker value per key, committed on blur or Enter.
+   *
+   * A closed native <select> fires `change` on every ArrowUp/ArrowDown, which
+   * is the only way to change one from the keyboard — so committing in
+   * onChange meant walking to the 12th account POSTed twelve mappings and
+   * reloaded the tab twelve times. A mouse user opens the popup and commits
+   * once; the keyboard now does the same.
+   */
+  const [draftAccount, setDraftAccount] = useState<Record<string, string>>({})
+  const [resetTarget, setResetTarget] = useState<{ title: string; keys: string[] } | null>(null)
+  const [resetting, setResetting] = useState(false)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const groupsRef = useRef<HTMLDivElement>(null)
 
   const editingLocationId = scope === 'shared' ? null : activeLocationId
 
@@ -221,6 +307,8 @@ function AccountMappingsTab() {
       ])
       setRows(r)
       setAccounts(a)
+      // Server state is authoritative again — drop anything still pending.
+      setDraftAccount({})
     } catch {
       toast.error('Failed to load mappings')
     } finally {
@@ -267,13 +355,32 @@ function AccountMappingsTab() {
     }
   }
 
-  async function resetGroup(groupKeys: string[]) {
+  /** Push the pending picker value for one key, if it actually changed. */
+  function commitAccount(row: AccountMappingKeyRow) {
+    const pending = draftAccount[row.key]
+    if (pending === undefined) return
+    setDraftAccount((prev) => {
+      const next = { ...prev }
+      delete next[row.key]
+      return next
+    })
+    if (!pending) return
+    if (Number(pending) === row.account) return
+    void applyAccount(row, Number(pending))
+  }
+
+  async function runReset() {
+    if (!resetTarget) return
+    setResetting(true)
     try {
-      const result = await resetAccountMappings(groupKeys)
+      const result = await resetAccountMappings(resetTarget.keys)
       toast.success(`Reset ${(result.created ?? 0) + (result.updated ?? 0)} mapping(s) to default`)
+      setResetTarget(null)
       await load()
     } catch {
       toast.error('Failed to reset group')
+    } finally {
+      setResetting(false)
     }
   }
 
@@ -316,6 +423,32 @@ function AccountMappingsTab() {
     overridden: rows.filter((r) => r.has_override).length,
   }), [rows])
 
+  const hasFilters = !!search || filter !== 'all'
+  const allKeys = KEY_GROUPS.flatMap((g) => g.keys)
+
+  usePageKeyboard({
+    actions: [
+      // Alt+R is "refresh" everywhere else in the app, so it stays refresh
+      // here — binding a chord that means reload to an action that wipes 61
+      // mappings is exactly the muscle-memory trap to avoid. Reset keeps its
+      // button, now behind a confirm.
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+      {
+        chord: 'Alt+C',
+        label: 'Clear filters',
+        run: () => { setSearch(''); setFilter('all') },
+        when: hasFilters,
+      },
+    ],
+    searchRef,
+    // F3 drops the keyboard on the first account picker that can be edited.
+    onFocusList: () => {
+      groupsRef.current
+        ?.querySelector<HTMLSelectElement>('select:not([disabled])')
+        ?.focus()
+    },
+  })
+
   if (loading) return (
     <div className="flex items-center justify-center h-40">
       <Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} />
@@ -348,7 +481,13 @@ function AccountMappingsTab() {
             )}
           </p>
         </div>
-        <Button onClick={() => resetGroup(Object.values(KEY_GROUPS).flatMap((g) => g.keys))} variant="secondary" size="sm">
+        {/* Wipes all 61 mappings. A keyboard user activates whatever has focus
+            with the same key they move with, so it confirms first. */}
+        <Button
+          onClick={() => setResetTarget({ title: 'all mappings', keys: allKeys })}
+          variant="secondary"
+          size="sm"
+        >
           <RotateCcw size={12} /> Reset all to defaults
         </Button>
       </div>
@@ -359,15 +498,18 @@ function AccountMappingsTab() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2"
                  style={{ color: 'var(--ink-3)' }} />
           <Input
+            ref={searchRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search keys, labels, account codes…"
+            placeholder="Search keys, labels, account codes… (F2)"
+            aria-label="Search mapping keys, labels and account codes"
             className="pl-9 py-1.5"
           />
         </div>
         <select
           value={filter}
           onChange={(e) => setFilter(e.target.value as typeof filter)}
+          aria-label="Filter mappings"
           className="w-full sm:w-auto px-3 py-1.5 text-sm border rounded-lg"
           style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
         >
@@ -382,6 +524,7 @@ function AccountMappingsTab() {
           <select
             value={scope}
             onChange={(e) => setScope(e.target.value as typeof scope)}
+            aria-label="Edit per-store overrides or shared defaults"
             className="w-full sm:w-auto px-3 py-1.5 text-sm border rounded-lg"
             style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
             title="Edit per-store overrides, or the shared defaults that apply when no override exists"
@@ -393,7 +536,7 @@ function AccountMappingsTab() {
       </div>
 
       {/* Grouped cards */}
-      <div className="space-y-3">
+      <div className="space-y-3" ref={groupsRef}>
         {KEY_GROUPS.map((group) => {
           const groupRows = group.keys
             .map((k) => rowByKey.get(k))
@@ -404,15 +547,24 @@ function AccountMappingsTab() {
           const collapsed = collapsedGroups.has(group.title)
           return (
             <Card key={group.title} className="overflow-hidden">
-              <button
-                onClick={() => toggleGroup(group.title)}
-                className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[var(--color-hover-bg)] transition-colors"
+              {/* The reset Button used to be rendered INSIDE the collapse
+                  button — a button inside a button, so Tab landed inside a
+                  control that itself claims Enter/Space. They are siblings now,
+                  and the collapse announces its state. */}
+              <div
+                className="w-full flex items-center justify-between gap-3 px-4 py-3"
                 style={{ background: 'var(--surface-1)' }}
               >
-                <div className="flex items-center gap-2 min-w-0">
+                <button
+                  type="button"
+                  aria-expanded={!collapsed}
+                  onClick={() => toggleGroup(group.title)}
+                  className="flex items-center gap-2 min-w-0 flex-1 text-left rounded hover:bg-[var(--color-hover-bg)] transition-colors"
+                >
                   <ChevronDown
                     size={14}
                     className="transition-transform"
+                    aria-hidden="true"
                     style={{
                       color: 'var(--ink-3)',
                       transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
@@ -426,20 +578,22 @@ function AccountMappingsTab() {
                       {group.description}
                     </p>
                   </div>
-                </div>
+                </button>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <Badge variant="default">{groupRows.length}</Badge>
                   {unmappedInGroup > 0 && (
                     <Badge variant="warning">{unmappedInGroup} unmapped</Badge>
                   )}
                   <Button
-                    onClick={(e) => { e.stopPropagation(); resetGroup(group.keys) }}
+                    type="button"
+                    onClick={() => setResetTarget({ title: group.title, keys: group.keys })}
                     variant="ghost" size="sm" title="Reset this group's shared defaults"
+                    aria-label={`Reset ${group.title} mappings to defaults`}
                   >
                     <RotateCcw size={12} />
                   </Button>
                 </div>
-              </button>
+              </div>
               {!collapsed && (
                 // Four fixed-width columns plus a full-width account picker:
                 // hold the natural width below lg and let the rail scroll.
@@ -485,11 +639,18 @@ function AccountMappingsTab() {
                           </Td>
                           <Td>
                             <select
-                              value={row.account ?? ''}
+                              value={draftAccount[row.key] ?? (row.account ?? '')}
                               disabled={editingThisIsBlocked}
+                              aria-label={`Account for ${row.label}`}
                               onChange={(e) => {
                                 const v = e.target.value
-                                if (v) applyAccount(row, Number(v))
+                                setDraftAccount((prev) => ({ ...prev, [row.key]: v }))
+                              }}
+                              onBlur={() => commitAccount(row)}
+                              onKeyDown={(e) => {
+                                if (e.key !== 'Enter') return
+                                e.preventDefault()
+                                commitAccount(row)
                               }}
                               className={cn(
                                 'w-full h-9 px-3 text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]',
@@ -527,6 +688,7 @@ function AccountMappingsTab() {
                               )}
                               {row.has_override && editingLocationId != null && (
                                 <button
+                                  type="button"
                                   onClick={() => clearOverride(row)}
                                   className="p-1.5 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 rounded transition-colors hover:bg-[var(--color-hover-bg)]"
                                   style={{ color: 'var(--ink-3)' }}
@@ -548,13 +710,39 @@ function AccountMappingsTab() {
           )
         })}
       </div>
+
+      <ConfirmDialog
+        open={!!resetTarget}
+        onOpenChange={(o) => { if (!o) setResetTarget(null) }}
+        onConfirm={runReset}
+        loading={resetting}
+        tone="danger"
+        title={`Reset ${resetTarget?.title ?? ''} to defaults?`}
+        confirmLabel="Reset to defaults"
+        description={
+          <span>
+            Overwrites the current account for{' '}
+            <strong>{resetTarget?.keys.length ?? 0}</strong> mapping key
+            {(resetTarget?.keys.length ?? 0) === 1 ? '' : 's'} with the
+            standard default account. Existing journal entries are untouched.
+          </span>
+        }
+      />
     </div>
   )
 }
 
-function TDSRatesTab() {
+function TDSRatesTab({ onDirtyChange }: TabDirtyProps) {
   const [configs, setConfigs] = useState<TDSRateConfig[]>([])
   const [loading, setLoading] = useState(true)
+  /**
+   * Pending edits, committed on blur / Enter / Ctrl+S.
+   *
+   * These fields used to PATCH on every keystroke: typing `12.5` issued four
+   * writes, and ↑/↓ on a number input — the keyboard way to nudge a rate —
+   * wrote once per step, with no undo. Held as a draft, one edit is one write.
+   */
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
 
   useEffect(() => {
     getTDSRateConfigs().then(setConfigs).catch(() => toast.error('Failed to load TDS rates')).finally(() => setLoading(false))
@@ -563,9 +751,46 @@ function TDSRatesTab() {
   async function handleUpdate(id: number, field: string, value: string) {
     try {
       const updated = await updateTDSRateConfig(id, { [field]: value })
-      setConfigs(configs.map(c => c.id === id ? updated : c))
+      setConfigs((prev) => prev.map(c => c.id === id ? updated : c))
     } catch { toast.error('Failed to update rate') }
   }
+
+  const draftKey = (id: number, field: 'rate' | 'threshold') => `${id}:${field}`
+
+  function commit(c: TDSRateConfig, field: 'rate' | 'threshold') {
+    const k = draftKey(c.id, field)
+    const pending = drafts[k]
+    if (pending === undefined) return
+    setDrafts((prev) => {
+      const next = { ...prev }
+      delete next[k]
+      return next
+    })
+    if (pending === '' || pending === String(c[field])) return
+    void handleUpdate(c.id, field, pending)
+  }
+
+  const pendingCount = Object.keys(drafts).length
+
+  // Uncommitted rate edits die with the panel; tell the strip so it can ask.
+  useEffect(() => { onDirtyChange(pendingCount > 0) }, [pendingCount, onDirtyChange])
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange])
+
+  usePageKeyboard({
+    actions: [
+      {
+        chord: 'Ctrl+S',
+        label: 'Save edits',
+        run: () => {
+          if (pendingCount === 0) return
+          for (const c of configs) {
+            commit(c, 'rate')
+            commit(c, 'threshold')
+          }
+        },
+      },
+    ],
+  })
 
   if (loading) return <div className="flex items-center justify-center h-40"><Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} /></div>
 
@@ -590,11 +815,23 @@ function TDSRatesTab() {
               <Td className="font-mono text-xs text-slate-500">{c.section}</Td>
               <Td className="text-slate-500">{c.deductee_type}</Td>
               <Td className="text-right">
-                <input type="number" step="0.01" value={c.rate} onChange={(e) => handleUpdate(c.id, 'rate', e.target.value)}
+                <input
+                  type="number" step="0.01"
+                  aria-label={`TDS rate % for section ${c.section} (${c.deductee_type})`}
+                  value={drafts[draftKey(c.id, 'rate')] ?? c.rate}
+                  onChange={(e) => setDrafts((prev) => ({ ...prev, [draftKey(c.id, 'rate')]: e.target.value }))}
+                  onBlur={() => commit(c, 'rate')}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(c, 'rate') } }}
                   className="w-20 text-right text-xs border border-slate-200 rounded px-2 py-1 font-mono bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-teal-500" />
               </Td>
               <Td className="text-right">
-                <input type="number" value={c.threshold} onChange={(e) => handleUpdate(c.id, 'threshold', e.target.value)}
+                <input
+                  type="number"
+                  aria-label={`TDS threshold for section ${c.section} (${c.deductee_type})`}
+                  value={drafts[draftKey(c.id, 'threshold')] ?? c.threshold}
+                  onChange={(e) => setDrafts((prev) => ({ ...prev, [draftKey(c.id, 'threshold')]: e.target.value }))}
+                  onBlur={() => commit(c, 'threshold')}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(c, 'threshold') } }}
                   className="w-28 text-right text-xs border border-slate-200 rounded px-2 py-1 font-mono bg-white text-slate-900 focus:outline-none focus:ring-1 focus:ring-teal-500" />
               </Td>
               <Td className="text-xs text-slate-500">{c.fy_start} to {c.fy_end}</Td>
@@ -613,11 +850,26 @@ function TDSRatesTab() {
 
 type ProfileDraft = { gstin: string; state_code: string; legal_name: string }
 
-function GstRegistrationsTab() {
+/**
+ * Enter commits the row. The three fields sit in separate <td>s, so they can't
+ * share a <form> and get implicit submit for free — without this the only way
+ * to save a store was to Tab across to its Save button.
+ */
+function rowSubmitKey(submit: () => void) {
+  return (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    submit()
+  }
+}
+
+function GstRegistrationsTab({ onDirtyChange }: TabDirtyProps) {
   const [data, setData] = useState<LocationTaxProfilesResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [drafts, setDrafts] = useState<Record<number, ProfileDraft>>({})
   const [savingId, setSavingId] = useState<number | null>(null)
+  // Which store's row the keyboard is currently in — Ctrl+S saves that one.
+  const [focusedLoc, setFocusedLoc] = useState<number | null>(null)
 
   async function load() {
     setLoading(true)
@@ -670,13 +922,35 @@ function GstRegistrationsTab() {
     }
   }
 
+  const profiles = data?.profiles ?? []
+  const focusedProfile = profiles.find((p) => p.location_id === focusedLoc) ?? null
+
+  // Every row here is an unsaved draft until its Save button runs.
+  const anyDirty = profiles.some(isDirty)
+  useEffect(() => { onDirtyChange(anyDirty) }, [anyDirty, onDirtyChange])
+  useEffect(() => () => onDirtyChange(false), [onDirtyChange])
+
+  // The row's fields cannot live in a <form> (they are separate <td>s), so
+  // Enter is wired per field below and Ctrl+S saves whichever row has focus —
+  // committing a store used to mean Tab-Tab-Tab to its Save button.
+  usePageKeyboard({
+    actions: [
+      {
+        chord: 'Ctrl+S',
+        label: 'Save this store',
+        run: () => {
+          if (!focusedProfile || !isDirty(focusedProfile) || savingId != null) return
+          void save(focusedProfile)
+        },
+      },
+    ],
+  })
+
   if (loading) return (
     <div className="flex items-center justify-center h-40">
       <Loader2 size={24} className="animate-spin" style={{ color: 'var(--brand)' }} />
     </div>
   )
-
-  const profiles = data?.profiles ?? []
 
   return (
     <div className="space-y-4">
@@ -739,6 +1013,9 @@ function GstRegistrationsTab() {
                     <Input
                       value={d.gstin}
                       onChange={(e) => setField(p.location_id, 'gstin', e.target.value.toUpperCase())}
+                      onFocus={() => setFocusedLoc(p.location_id)}
+                      onKeyDown={rowSubmitKey(() => save(p))}
+                      aria-label={`GSTIN override for ${p.location_name}`}
                       placeholder={p.pharma_gstin ? 'override pharmacy GSTIN' : '15-char GSTIN'}
                       maxLength={15}
                       className="font-mono"
@@ -748,6 +1025,9 @@ function GstRegistrationsTab() {
                     <Input
                       value={d.state_code}
                       onChange={(e) => setField(p.location_id, 'state_code', e.target.value)}
+                      onFocus={() => setFocusedLoc(p.location_id)}
+                      onKeyDown={rowSubmitKey(() => save(p))}
+                      aria-label={`State code for ${p.location_name}`}
                       placeholder={d.gstin ? d.gstin.slice(0, 2) : '—'}
                       maxLength={2}
                       className="font-mono"
@@ -757,13 +1037,18 @@ function GstRegistrationsTab() {
                     <Input
                       value={d.legal_name}
                       onChange={(e) => setField(p.location_id, 'legal_name', e.target.value)}
+                      onFocus={() => setFocusedLoc(p.location_id)}
+                      onKeyDown={rowSubmitKey(() => save(p))}
+                      aria-label={`Legal or trade name for ${p.location_name}`}
                       placeholder="defaults to company name"
                     />
                   </Td>
                   <Td className="align-top pt-2">
                     <Button
+                      type="button"
                       onClick={() => save(p)}
                       disabled={savingId === p.location_id || !isDirty(p)}
+                      aria-label={`Save GST registration for ${p.location_name}`}
                       variant="primary"
                       size="sm"
                     >
@@ -781,7 +1066,44 @@ function GstRegistrationsTab() {
   )
 }
 
+const SETTINGS_TABS: { value: string; label: string; chord: string }[] = [
+  { value: 'company', label: 'Company Info', chord: 'Alt+1' },
+  { value: 'gst-registrations', label: 'GST Registrations', chord: 'Alt+2' },
+  { value: 'mappings', label: 'Account Mappings', chord: 'Alt+3' },
+  { value: 'tds-rates', label: 'TDS Rates', chord: 'Alt+4' },
+]
+
 export default function SettingsPage() {
+  const [tab, setTab] = useState('company')
+  // Reported by the panels themselves. setState identities are stable, so a
+  // child can depend on its reporter without re-firing every render.
+  const [companyDirty, setCompanyDirty] = useState(false)
+  const [gstDirty, setGstDirty] = useState(false)
+  const [tdsDirty, setTdsDirty] = useState(false)
+  const [pendingTab, setPendingTab] = useState<string | null>(null)
+
+  const dirty: Record<string, boolean> = {
+    company: companyDirty,
+    'gst-registrations': gstDirty,
+    'tds-rates': tdsDirty,
+    // Account Mappings commits each select on blur/Enter, so it holds nothing.
+  }
+
+  // Radix unmounts the panel it leaves, so a switch away from a panel with
+  // unsaved edits is a silent discard — by mouse, by Arrow+Enter on the strip,
+  // or by the trigger's own chord. All three arrive here, and all three ask
+  // first. Nothing switches until the user says so.
+  function requestTab(next: string) {
+    if (next === tab) return
+    if (dirty[tab]) {
+      setPendingTab(next)
+      return
+    }
+    setTab(next)
+  }
+
+  const leavingLabel = SETTINGS_TABS.find((t) => t.value === tab)?.label ?? 'This tab'
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="mb-6">
@@ -789,24 +1111,40 @@ export default function SettingsPage() {
         <p className="text-sm mt-0.5" style={{ color: "var(--ink-2)" }}>Company, account mappings, and tax configuration</p>
       </div>
 
-      <Tabs defaultValue="company">
-        <TabsList>
-          {[
-            { value: 'company', label: 'Company Info' },
-            { value: 'gst-registrations', label: 'GST Registrations' },
-            { value: 'mappings', label: 'Account Mappings' },
-            { value: 'tds-rates', label: 'TDS Rates' },
-          ].map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value}>
-              {tab.label}
+      {/* Each trigger carries a chord: from inside the Account Mappings panel
+          (61 rows, each holding a <select>) getting back to the strip is
+          otherwise a very long Shift+Tab walk. */}
+      <Tabs value={tab} onValueChange={requestTab}>
+        <TabsList label="Settings sections">
+          {SETTINGS_TABS.map((t) => (
+            <TabsTrigger key={t.value} value={t.value} chord={t.chord}>
+              {t.label}
             </TabsTrigger>
           ))}
         </TabsList>
-        <TabsContent value="company"><CompanyInfoTab /></TabsContent>
-        <TabsContent value="gst-registrations"><GstRegistrationsTab /></TabsContent>
+        <TabsContent value="company"><CompanyInfoTab onDirtyChange={setCompanyDirty} /></TabsContent>
+        <TabsContent value="gst-registrations"><GstRegistrationsTab onDirtyChange={setGstDirty} /></TabsContent>
         <TabsContent value="mappings"><AccountMappingsTab /></TabsContent>
-        <TabsContent value="tds-rates"><TDSRatesTab /></TabsContent>
+        <TabsContent value="tds-rates"><TDSRatesTab onDirtyChange={setTdsDirty} /></TabsContent>
       </Tabs>
+
+      <ConfirmDialog
+        open={pendingTab !== null}
+        onOpenChange={(o) => { if (!o) setPendingTab(null) }}
+        title="Discard unsaved changes?"
+        description={`${leavingLabel} has edits that have not been saved. Leaving this tab reloads the saved values and the edits are lost.`}
+        confirmLabel="Discard and switch"
+        cancelLabel="Keep editing"
+        // Danger tone so the dialog opens on Cancel: the keystroke that got
+        // here was a chord, and the Enter after it must not be the one that
+        // bins the edits.
+        tone="danger"
+        onConfirm={() => {
+          const next = pendingTab
+          setPendingTab(null)
+          if (next) setTab(next)
+        }}
+      />
     </div>
   )
 }

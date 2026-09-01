@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Loader2, Wallet, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
@@ -17,6 +17,27 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose,
 } from '../components/ui/sheet'
 import { useLocation as useActiveLocation } from '../contexts/LocationContext'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
+
+/** Why Receive is unavailable on a walk-in row — shown, announced, and toasted. */
+const UNTAGGED_REASON =
+  'Untagged balance — assign this sale to a customer before recording a receipt'
+
+/**
+ * Enter/Space on a control inside a row has already done its job; letting the
+ * key bubble on to the row's own activate handler would fire twice from one
+ * press (follow the customer link AND open the receipt sheet). Arrow keys are
+ * left alone so the row nav still works from a nested control.
+ */
+function rowKeys(handler: (e: React.KeyboardEvent) => void) {
+  return (e: React.KeyboardEvent) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target !== e.currentTarget) {
+      if ((e.target as HTMLElement).closest('button, a')) return
+    }
+    handler(e)
+  }
+}
 
 /**
  * Receivables — one row per open customer SALE invoice. Click Receive on
@@ -33,6 +54,11 @@ export default function ReceivablesPage() {
   const [asOf, setAsOf] = useState(todayISO())
   const [search, setSearch] = useState('')
   const [receiving, setReceiving] = useState<OpenCustomerInvoice | null>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  // The receipt sheet lives in a child component; the page holds a handle on
+  // its <form> so one Ctrl+S registration can post it without a second
+  // usePageKeyboard call fighting this one for the hint bar.
+  const receiveFormRef = useRef<HTMLFormElement>(null)
 
   async function load() {
     setLoading(true)
@@ -79,6 +105,46 @@ export default function ReceivablesPage() {
     }
   }, [rows])
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Rows carry the only route to a receipt, so give them a roving tabindex:
+  // one tab stop for the register, ↑↓ to move, Enter to open the sheet on the
+  // highlighted invoice. An untagged (walk-in) row can't take a receipt, so
+  // Enter there says why instead of silently doing nothing.
+  const list = useListKeyboardNav({
+    count: rows.length,
+    onActivate: (i) => {
+      const r = rows[i]
+      if (!r) return
+      if (r.party_id == null) {
+        toast.error(UNTAGGED_REASON)
+        return
+      }
+      setReceiving(r)
+    },
+  })
+
+  const hasFilters = !!search || asOf !== todayISO()
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Refresh', run: load, when: !receiving },
+      {
+        chord: 'Alt+C',
+        label: 'Clear filters',
+        run: () => { setSearch(''); setAsOf(todayISO()) },
+        when: hasFilters && !receiving,
+      },
+      {
+        chord: 'Ctrl+S',
+        label: 'Post receipt',
+        run: () => receiveFormRef.current?.requestSubmit(),
+        when: !!receiving,
+      },
+    ],
+    searchRef,
+    onFocusList: list.focusList,
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -104,15 +170,18 @@ export default function ReceivablesPage() {
         </div>
         <div className="flex items-center gap-3 flex-wrap w-full sm:w-auto">
           <Input
+            ref={searchRef}
             type="text"
-            placeholder="Search invoice # or customer…"
+            placeholder="Search invoice # or customer… (F2)"
+            aria-label="Search open invoices by number or customer"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full sm:w-56"
           />
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>As of</label>
-            <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="w-full sm:w-auto" />
+            <Input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)}
+              aria-label="Show invoices open as of this date" className="w-full sm:w-auto" />
           </div>
         </div>
       </div>
@@ -140,9 +209,10 @@ export default function ReceivablesPage() {
                 <Th className="w-[140px]" />
               </Tr>
             </Thead>
-            <Tbody>
+            <Tbody {...list.containerProps}>
               {rows.map((r, i) => {
                 const untagged = r.party_id == null
+                const rp = list.rowProps(i)
                 // Overdue against the AS-OF date the toolbar is showing, not
                 // the wall clock — an as-of in the past must not brand an
                 // invoice overdue on the strength of days it hadn't yet lived.
@@ -151,7 +221,14 @@ export default function ReceivablesPage() {
                   // The index keeps the key unique: untagged rows all collapse
                   // to the same "null-…" prefix, and two of them can share an
                   // invoice number (JV-… for a day's counter sales).
-                  <Tr key={`${r.party_id ?? 'untagged'}-${r.invoice_no}-${i}`} className="group">
+                  <Tr
+                    key={`${r.party_id ?? 'untagged'}-${r.invoice_no}-${i}`}
+                    className="group"
+                    aria-label={`Invoice ${r.invoice_no} · ${r.party_name || 'Untagged'}`}
+                    aria-describedby={untagged ? `untagged-${i}` : undefined}
+                    {...rp}
+                    onKeyDown={rowKeys(rp.onKeyDown)}
+                  >
                     <Td>
                       <span className="font-medium mono" style={{ color: 'var(--brand)' }}>
                         {r.invoice_no}
@@ -181,7 +258,7 @@ export default function ReceivablesPage() {
                           style={{ color: 'var(--ink)' }}
                         >
                           {r.party_name}
-                          <ExternalLink size={11} className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100" style={{ color: 'var(--brand)' }} />
+                          <ExternalLink size={11} className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100" style={{ color: 'var(--brand)' }} />
                         </Link>
                       )}
                     </Td>
@@ -196,11 +273,16 @@ export default function ReceivablesPage() {
                       {/* Title sits on the wrapper because a disabled Button
                           carries pointer-events-none and never gets a hover. */}
                       <div
-                        className="flex items-center justify-end gap-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
-                        title={untagged
-                          ? 'Untagged balance — assign this sale to a customer before recording a receipt'
-                          : undefined}
+                        className="flex items-center justify-end gap-1.5 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 transition-opacity"
+                        title={untagged ? UNTAGGED_REASON : undefined}
                       >
+                        {/* A `title` is pointer-only and the disabled button
+                            can't be focused, so a keyboard user got no signal
+                            at all. The reason is now announced with the row
+                            (aria-describedby) and toasted on Enter. */}
+                        {untagged && (
+                          <span id={`untagged-${i}`} className="sr-only">{UNTAGGED_REASON}</span>
+                        )}
                         {/* Disabled without a party, and not merely for tidiness:
                             the receipt endpoint takes party_id as optional and
                             gates its over-receipt check on `if party_id`, so a
@@ -210,7 +292,12 @@ export default function ReceivablesPage() {
                             id-less posting on the control shares one pile — but
                             an unguarded receipt is still the wrong way in. Tag
                             the sale to a customer first. */}
-                        <Button size="sm" disabled={untagged} onClick={() => setReceiving(r)}>
+                        <Button
+                          size="sm"
+                          disabled={untagged}
+                          onClick={() => setReceiving(r)}
+                          aria-label={`Receive against ${r.invoice_no}`}
+                        >
                           <Wallet size={13} /> Receive
                         </Button>
                       </div>
@@ -238,6 +325,7 @@ export default function ReceivablesPage() {
       {receiving && (
         <ReceivePaymentSheet
           row={receiving}
+          formRef={receiveFormRef}
           onClose={() => setReceiving(null)}
           onSuccess={() => { setReceiving(null); load() }}
         />
@@ -246,8 +334,9 @@ export default function ReceivablesPage() {
   )
 }
 
-function ReceivePaymentSheet({ row, onClose, onSuccess }: {
+function ReceivePaymentSheet({ row, formRef, onClose, onSuccess }: {
   row: OpenCustomerInvoice
+  formRef: React.RefObject<HTMLFormElement>
   onClose: () => void
   onSuccess: () => void
 }) {
@@ -291,7 +380,7 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
   return (
     <Sheet open onOpenChange={(o) => { if (!o) onClose() }}>
       <SheetContent width="md">
-        <form onSubmit={submit} className="flex flex-col h-full">
+        <form ref={formRef} onSubmit={submit} className="flex flex-col h-full">
           <SheetHeader>
             <SheetTitle>Receive against {row.invoice_no}</SheetTitle>
             <p className="text-xs mt-0.5" style={{ color: 'var(--ink-3)' }}>
@@ -307,18 +396,36 @@ function ReceivePaymentSheet({ row, onClose, onSuccess }: {
                   <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
                 </Field>
                 <Field label="Amount" required>
-                  <Input type="number" step="0.01" min="0.01" required value={amount}
+                  {/* The sheet's entry field: SheetContent focuses (and, being
+                      numeric, Input selects) this on open, so the prefilled
+                      amount can be typed over and Enter posts it — the first
+                      Enter used to hit the header's close X. */}
+                  <Input data-autofocus type="number" step="0.01" min="0.01" required value={amount}
                     onChange={(e) => setAmount(e.target.value)} className="text-right font-mono" />
                 </Field>
               </div>
               <Field label="Received in">
-                <div className="flex gap-2">
+                {/* `hidden` is display:none, which took the radios out of the
+                    tab order and the a11y tree entirely — every keyboard-posted
+                    receipt was therefore a BANK receipt. `sr-only` keeps them
+                    focusable, so the pair behaves as the native radio group it
+                    is (Tab in, ←/→ to switch), and focus-within paints the
+                    label the focus ring would otherwise be invisible on. */}
+                <div className="flex gap-2" role="radiogroup" aria-label="Received in">
                   {(['bank', 'cash'] as const).map((m) => (
                     <label key={m} className={cn(
                       'flex-1 flex items-center justify-center px-3 py-2 rounded-lg border cursor-pointer text-sm capitalize',
+                      'focus-within:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]',
                       mode === m ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-slate-200 text-slate-600'
                     )}>
-                      <input type="radio" checked={mode === m} onChange={() => setMode(m)} className="hidden" />
+                      <input
+                        type="radio"
+                        name="receipt-mode"
+                        value={m}
+                        checked={mode === m}
+                        onChange={() => setMode(m)}
+                        className="sr-only"
+                      />
                       {m}
                     </label>
                   ))}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Plus, Loader2, Pencil, Trash2, Search,
@@ -12,6 +12,8 @@ import {
   type Account, type AccountCounts,
 } from '../lib/api'
 import { useLocation } from '../contexts/LocationContext'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 import { cn } from '../lib/utils'
 import { Button } from '../components/ui/button'
 import { Badge } from '../components/ui/badge'
@@ -24,6 +26,24 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '../components/ui/dialog'
+
+/** What useListKeyboardNav hands back — passed down to the two row renderers. */
+type ListNav = ReturnType<typeof useListKeyboardNav>
+
+/**
+ * Enter/Space on a button or link inside a row has already done its job;
+ * letting the key bubble on to the row's own activate handler would fire two
+ * actions from one press (delete the account AND open the editor). Arrow keys
+ * are left alone, so ↑↓ still move the row focus from a nested control.
+ */
+function rowKeys(handler: (e: React.KeyboardEvent) => void) {
+  return (e: React.KeyboardEvent) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target !== e.currentTarget) {
+      if ((e.target as HTMLElement).closest('button, a')) return
+    }
+    handler(e)
+  }
+}
 
 const ACCOUNT_TYPES = ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'] as const
 type AccountType = typeof ACCOUNT_TYPES[number]
@@ -43,6 +63,12 @@ const TYPE_PILL: Record<string, { label: string; ring: string; dot: string; bg: 
   REVENUE:   { label: 'Income',    ring: 'border-emerald-200',dot: 'bg-emerald-500',bg: 'bg-emerald-50 text-emerald-700' },
   EXPENSE:   { label: 'Expense',   ring: 'border-amber-200',  dot: 'bg-amber-500',  bg: 'bg-amber-50 text-amber-700' },
 }
+
+/** The two register views, in strip order — see the radiogroup in the header. */
+const VIEW_OPTIONS = [
+  { value: 'list' as const, label: 'List', Icon: ListIcon },
+  { value: 'tree' as const, label: 'Hierarchy', Icon: GitBranch },
+]
 
 interface AccountForm {
   account_code: string
@@ -84,6 +110,14 @@ export default function AccountsPage() {
   const [form, setForm] = useState<AccountForm>(blankForm)
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Account | null>(null)
+  // Which category groups the hierarchy view has folded away. Held here rather
+  // than inside each group node so the keyboard nav below can count exactly the
+  // rows that are on screen — a collapsed group must not leave a hole in the
+  // arrow-key sequence.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+
+  const searchRef = useRef<HTMLInputElement>(null)
+  const formRef = useRef<HTMLFormElement>(null)
 
   async function load() {
     setLoading(true)
@@ -242,6 +276,62 @@ export default function AccountsPage() {
     return out
   }, [filteredList])
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Both views open the same editor from a row, so both get a roving tabindex:
+  // one tab stop for the whole register, ↑↓ to move, Enter to edit. The tree's
+  // sequence counts only the rows an expanded group is actually showing.
+  const visibleTreeRows = useMemo(() => {
+    const out: Account[] = []
+    for (const g of categoryTree) {
+      if (collapsedGroups.has(g.type)) continue
+      for (const sg of g.subgroups) out.push(...sg.rows)
+    }
+    return out
+  }, [categoryTree, collapsedGroups])
+
+  const treeRowIndex = useMemo(() => {
+    const m = new Map<number, number>()
+    visibleTreeRows.forEach((a, i) => m.set(a.id, i))
+    return m
+  }, [visibleTreeRows])
+
+  const listNav = useListKeyboardNav({
+    count: filteredList.length,
+    onActivate: (i) => { const a = filteredList[i]; if (a) openEdit(a) },
+  })
+  const treeNav = useListKeyboardNav({
+    count: visibleTreeRows.length,
+    onActivate: (i) => { const a = visibleTreeRows[i]; if (a) openEdit(a) },
+  })
+
+  function toggleGroup(type: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(type)) next.delete(type)
+      else next.add(type)
+      return next
+    })
+  }
+
+  const hasFilters = !!(search || activeType !== 'all' || statusFilter !== 'all')
+  function clearFilters() {
+    setSearch('')
+    setActiveType('all')
+    setStatusFilter('all')
+  }
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'New account', run: openCreate, when: !sheetOpen },
+      { chord: 'Alt+R', label: 'Refresh', run: load, when: !sheetOpen },
+      { chord: 'Alt+C', label: 'Clear filters', run: clearFilters, when: hasFilters && !sheetOpen },
+      // Live only while the drawer is open — the form is the screen then.
+      { chord: 'Ctrl+S', label: 'Save account', run: () => formRef.current?.requestSubmit(), when: sheetOpen },
+    ],
+    searchRef,
+    onFocusList: () => (view === 'list' ? listNav.focusList() : treeNav.focusList()),
+  })
+
   const subtypes = ACCOUNT_SUBTYPES[form.account_type] || []
   const totalCount = counts?.total ?? 0
 
@@ -256,25 +346,41 @@ export default function AccountsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
-            <button
-              onClick={() => setView('list')}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
-                view === 'list' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              )}
-            >
-              <ListIcon size={14} /> List
-            </button>
-            <button
-              onClick={() => setView('tree')}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
-                view === 'tree' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              )}
-            >
-              <GitBranch size={14} /> Hierarchy
-            </button>
+          {/* Two loose buttons announced as two unrelated controls and cost two
+              tab stops with no "you are here". As a radiogroup it is one stop
+              with ←/→ between the options — the same segmented-control
+              treatment the rest of the app uses. */}
+          <div
+            className="flex items-center bg-slate-100 rounded-lg p-0.5"
+            role="radiogroup"
+            aria-label="Account register view"
+          >
+            {VIEW_OPTIONS.map(({ value, label, Icon }) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={view === value}
+                tabIndex={view === value ? 0 : -1}
+                data-seg={value}
+                onClick={() => setView(value)}
+                onKeyDown={(e) => {
+                  if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return
+                  e.preventDefault()
+                  const next = view === 'list' ? 'tree' : 'list'
+                  setView(next)
+                  e.currentTarget.parentElement
+                    ?.querySelector<HTMLElement>(`[data-seg="${next}"]`)
+                    ?.focus()
+                }}
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+                  view === value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                )}
+              >
+                <Icon size={14} /> {label}
+              </button>
+            ))}
           </div>
           <Button onClick={openCreate}>
             <Plus size={16} /> New Account
@@ -307,15 +413,18 @@ export default function AccountsPage() {
         <div className="relative w-full sm:flex-1 sm:max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <Input
+            ref={searchRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name or code…"
+            placeholder="Search by name or code… (F2)"
+            aria-label="Search accounts by name or code"
             className="pl-9 py-1.5"
           />
         </div>
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+          aria-label="Filter accounts by status"
           className="flex-1 min-w-0 sm:flex-initial px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
         >
           <option value="all">All status</option>
@@ -325,6 +434,7 @@ export default function AccountsPage() {
         <select
           value={locationScope}
           onChange={(e) => setLocationScope(e.target.value as typeof locationScope)}
+          aria-label="Which accounts to show"
           className="flex-1 min-w-0 sm:flex-initial px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
           title="Which accounts to show"
         >
@@ -339,6 +449,7 @@ export default function AccountsPage() {
           <ListView
             rows={filteredList}
             loading={loading}
+            nav={listNav}
             onEdit={openEdit}
             onDelete={(a) => setDeleteTarget(a)}
             onToggle={handleToggleActive}
@@ -347,6 +458,10 @@ export default function AccountsPage() {
           <CategoryTreeView
             groups={categoryTree}
             loading={loading}
+            nav={treeNav}
+            rowIndexOf={(a) => treeRowIndex.get(a.id) ?? -1}
+            collapsedGroups={collapsedGroups}
+            onToggleGroup={toggleGroup}
             onEdit={openEdit}
             onDelete={(a) => setDeleteTarget(a)}
             onToggle={handleToggleActive}
@@ -357,7 +472,7 @@ export default function AccountsPage() {
       {/* Side drawer for create/edit */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
         <SheetContent width="md">
-          <form onSubmit={handleSave} className="flex flex-col h-full">
+          <form ref={formRef} onSubmit={handleSave} className="flex flex-col h-full">
             <SheetHeader>
               <SheetTitle>{editing ? 'Edit Account' : 'New Account'}</SheetTitle>
               {editing && (
@@ -379,6 +494,9 @@ export default function AccountsPage() {
                         : 'Leave blank to number it automatically'}
                   >
                     <Input
+                      // The drawer's entry field: SheetContent focuses this on
+                      // open instead of the header's close X.
+                      data-autofocus
                       required={!!editing}
                       value={form.account_code}
                       onChange={(e) => setForm({ ...form, account_code: e.target.value })}
@@ -496,7 +614,9 @@ export default function AccountsPage() {
             )}
           </p>
           <div className="flex gap-2 justify-end pt-4">
-            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            {/* Cancel is the safe default, so it — not the header's close X and
+                not Delete — is what a reflexive Enter lands on. */}
+            <Button data-autofocus variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
             <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
           </div>
         </DialogContent>
@@ -555,10 +675,11 @@ function Field({ label, required, hint, children }: {
 // ─── List view ──────────────────────────────────────────────────────────────
 
 function ListView({
-  rows, loading, onEdit, onDelete, onToggle,
+  rows, loading, nav, onEdit, onDelete, onToggle,
 }: {
   rows: Account[]
   loading: boolean
+  nav: ListNav
   onEdit: (a: Account) => void
   onDelete: (a: Account) => void
   onToggle: (a: Account) => void
@@ -577,13 +698,21 @@ function ListView({
           <Th className="w-[70px]" />
         </Tr>
       </Thead>
-      <Tbody>
+      <Tbody {...nav.containerProps}>
         {loading ? (
           <tr><td colSpan={8} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
         ) : rows.length === 0 ? (
           <tr><td colSpan={8} className="text-center py-12 text-slate-400 text-sm">No accounts match your filters</td></tr>
-        ) : rows.map((a) => (
-          <Tr key={a.id} className={cn('group', !a.is_active && 'opacity-60')}>
+        ) : rows.map((a, i) => {
+          const rp = nav.rowProps(i)
+          return (
+          <Tr
+            key={a.id}
+            className={cn('group', !a.is_active && 'opacity-60')}
+            aria-label={`Account ${a.account_code} ${a.account_name}`}
+            {...rp}
+            onKeyDown={rowKeys(rp.onKeyDown)}
+          >
             <Td className="font-medium">
               <button
                 onClick={() => onEdit(a)}
@@ -627,39 +756,49 @@ function ListView({
               </Badge>
             </Td>
             <Td>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              {/* Hover reveals these for the mouse; focus-within has to reveal
+                  them for the keyboard, or Tab lands on invisible controls. */}
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                 <Link
                   to={`/reports/ledger/${a.account_code}`}
-                  className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100"
+                  className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 focus-visible:opacity-100"
                   title="View ledger"
+                  aria-label={`View ledger for ${a.account_name}`}
                 >
                   <BookOpen size={14} />
                 </Link>
                 <button
+                  type="button"
                   onClick={() => onToggle(a)}
-                  className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100"
+                  className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 focus-visible:opacity-100"
                   title={a.is_active ? 'Mark inactive' : 'Mark active'}
+                  aria-label={`${a.is_active ? 'Mark inactive' : 'Mark active'}: ${a.account_name}`}
                 >
                   {a.is_active ? <PowerOff size={14} /> : <Power size={14} />}
                 </button>
                 <button
+                  type="button"
                   onClick={() => onEdit(a)}
-                  className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100"
+                  className="p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 focus-visible:opacity-100"
                   title="Edit"
+                  aria-label={`Edit ${a.account_name}`}
                 >
                   <Pencil size={14} />
                 </button>
                 <button
+                  type="button"
                   onClick={() => onDelete(a)}
-                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100"
+                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 focus-visible:opacity-100"
                   title="Delete"
+                  aria-label={`Delete ${a.account_name}`}
                 >
                   <Trash2 size={14} />
                 </button>
               </div>
             </Td>
           </Tr>
-        ))}
+          )
+        })}
       </Tbody>
     </Table>
   )
@@ -675,10 +814,15 @@ interface CategoryGroup {
 }
 
 function CategoryTreeView({
-  groups, loading, onEdit, onDelete, onToggle,
+  groups, loading, nav, rowIndexOf, collapsedGroups, onToggleGroup,
+  onEdit, onDelete, onToggle,
 }: {
   groups: CategoryGroup[]
   loading: boolean
+  nav: ListNav
+  rowIndexOf: (a: Account) => number
+  collapsedGroups: Set<string>
+  onToggleGroup: (type: string) => void
   onEdit: (a: Account) => void
   onDelete: (a: Account) => void
   onToggle: (a: Account) => void
@@ -689,9 +833,19 @@ function CategoryTreeView({
     // The indent is what makes the hierarchy readable, so on narrow screens
     // the tree scrolls sideways instead of flattening its levels.
     <div className="table-scroll">
-      <div className="py-1 min-w-[600px]">
+      <div className="py-1 min-w-[600px]" {...nav.containerProps}>
         {groups.map((g) => (
-          <CategoryGroupNode key={g.type} group={g} onEdit={onEdit} onDelete={onDelete} onToggle={onToggle} />
+          <CategoryGroupNode
+            key={g.type}
+            group={g}
+            expanded={!collapsedGroups.has(g.type)}
+            onToggleGroup={onToggleGroup}
+            nav={nav}
+            rowIndexOf={rowIndexOf}
+            onEdit={onEdit}
+            onDelete={onDelete}
+            onToggle={onToggle}
+          />
         ))}
       </div>
     </div>
@@ -699,27 +853,35 @@ function CategoryTreeView({
 }
 
 function CategoryGroupNode({
-  group, onEdit, onDelete, onToggle,
+  group, expanded, onToggleGroup, nav, rowIndexOf, onEdit, onDelete, onToggle,
 }: {
   group: CategoryGroup
+  expanded: boolean
+  onToggleGroup: (type: string) => void
+  nav: ListNav
+  rowIndexOf: (a: Account) => number
   onEdit: (a: Account) => void
   onDelete: (a: Account) => void
   onToggle: (a: Account) => void
 }) {
-  const [expanded, setExpanded] = useState(true)
   return (
     <>
-      <div
-        className="flex items-center gap-2 py-2 px-3 bg-slate-50/60 hover:bg-slate-50 cursor-pointer border-b border-slate-100"
-        onClick={() => setExpanded((x) => !x)}
+      {/* The header IS the toggle — it used to be a click-handling <div> that
+          wrapped a handler-less <button>, so the collapse only worked from the
+          keyboard by accident and announced no expanded/collapsed state. */}
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => onToggleGroup(group.type)}
+        className="w-full flex items-center gap-2 py-2 px-3 text-left bg-slate-50/60 hover:bg-slate-50 cursor-pointer border-b border-slate-100"
       >
-        <button className="w-5 h-5 flex items-center justify-center text-slate-400 hover:text-slate-700">
+        <span className="w-5 h-5 flex items-center justify-center text-slate-400" aria-hidden="true">
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        </button>
+        </span>
         <span className={cn('w-1.5 h-1.5 rounded-full', TYPE_PILL[group.type]?.dot)} />
         <span className="text-sm font-semibold text-slate-700">{group.label}</span>
         <span className="text-[10px] tabular-nums text-slate-400">{group.count}</span>
-      </div>
+      </button>
       {expanded && group.subgroups.map((sg) => (
         <div key={sg.label}>
           <div
@@ -729,7 +891,15 @@ function CategoryGroupNode({
             {sg.label}
           </div>
           {sg.rows.map((a) => (
-            <AccountTreeRow key={a.id} acc={a} onEdit={onEdit} onDelete={onDelete} onToggle={onToggle} />
+            <AccountTreeRow
+              key={a.id}
+              acc={a}
+              index={rowIndexOf(a)}
+              nav={nav}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onToggle={onToggle}
+            />
           ))}
         </div>
       ))}
@@ -738,18 +908,24 @@ function CategoryGroupNode({
 }
 
 function AccountTreeRow({
-  acc, onEdit, onDelete, onToggle,
+  acc, index, nav, onEdit, onDelete, onToggle,
 }: {
   acc: Account
+  index: number
+  nav: ListNav
   onEdit: (a: Account) => void
   onDelete: (a: Account) => void
   onToggle: (a: Account) => void
 }) {
+  const rp = nav.rowProps(index)
   return (
     <div
       className="flex items-center gap-2 py-1.5 px-3 hover:bg-slate-50 group cursor-pointer border-b border-slate-100 last:border-0"
       style={{ paddingLeft: 60 }}
       onClick={() => onEdit(acc)}
+      aria-label={`Account ${acc.account_code} ${acc.account_name}`}
+      {...rp}
+      onKeyDown={rowKeys(rp.onKeyDown)}
     >
       <FileText size={14} className={cn('flex-shrink-0', TYPE_PILL[acc.account_type]?.dot.replace('bg-', 'text-'))} />
       <span className="font-mono text-xs text-slate-500 w-20 flex-shrink-0">{acc.account_code}</span>
@@ -767,28 +943,37 @@ function AccountTreeRow({
           onClick={(e) => e.stopPropagation()}
           className="text-xs text-blue-600 underline underline-offset-2 hover:text-blue-800 tabular-nums"
           title="Open ledger"
+          aria-label={`Open ledger for ${acc.account_name}`}
         >
           {acc.documents_count} docs
         </Link>
       ) : null}
+      {/* group-focus-within keeps these painted while the keyboard is on them —
+          they used to sit at opacity 0 under focus and were invisibly Tabbed. */}
       <button
+        type="button"
         onClick={(e) => { e.stopPropagation(); onToggle(acc) }}
-        className="p-1 text-slate-300 hover:text-teal-600 opacity-0 group-hover:opacity-100"
+        className="p-1 text-slate-300 hover:text-teal-600 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
         title={acc.is_active ? 'Mark inactive' : 'Mark active'}
+        aria-label={`${acc.is_active ? 'Mark inactive' : 'Mark active'}: ${acc.account_name}`}
       >
         {acc.is_active ? <PowerOff size={13} /> : <Power size={13} />}
       </button>
       <button
+        type="button"
         onClick={(e) => { e.stopPropagation(); onEdit(acc) }}
-        className="p-1 text-slate-300 hover:text-teal-600 opacity-0 group-hover:opacity-100"
+        className="p-1 text-slate-300 hover:text-teal-600 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
         title="Edit"
+        aria-label={`Edit ${acc.account_name}`}
       >
         <Pencil size={13} />
       </button>
       <button
+        type="button"
         onClick={(e) => { e.stopPropagation(); onDelete(acc) }}
-        className="p-1 text-slate-300 hover:text-rose-600 opacity-0 group-hover:opacity-100"
+        className="p-1 text-slate-300 hover:text-rose-600 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
         title="Delete"
+        aria-label={`Delete ${acc.account_name}`}
       >
         <Trash2 size={13} />
       </button>

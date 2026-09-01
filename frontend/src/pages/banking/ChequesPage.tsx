@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Plus, CheckCircle2, AlertTriangle, Ban, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -17,7 +17,10 @@ import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog'
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 const STATUS_BADGE: Record<Cheque['status'], 'default' | 'success' | 'error' | 'warning'> = {
   pending: 'default',
@@ -54,6 +57,9 @@ export default function ChequesPage() {
   const [showDialog, setShowDialog] = useState(false)
   const [bounceFor, setBounceFor] = useState<Cheque | null>(null)
   const [cancelFor, setCancelFor] = useState<Cheque | null>(null)
+  const [clearFor, setClearFor] = useState<Cheque | null>(null)
+  const [clearing, setClearing] = useState(false)
+  const newChequeRef = useRef<HTMLButtonElement>(null)
 
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([])
   const [suppliers, setSuppliers] = useState<Party[]>([])
@@ -78,6 +84,55 @@ export default function ChequesPage() {
       .catch((e) => toast.error(apiErrorMessage(e, 'Could not load bank accounts and parties.')))
   }, [])
 
+  async function runClear(c: Cheque) {
+    setClearing(true)
+    try {
+      await clearCheque(c.id)
+      toast.success('Cleared')
+      setClearFor(null)
+      // The row's action buttons vanish once it is no longer pending, and a
+      // closing confirm hands focus back to nothing — so claim it for the row,
+      // after the dialog has finished unmounting.
+      setTimeout(focusRows, 0)
+      load()
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Failed to clear the cheque.'))
+    } finally { setClearing(false) }
+  }
+
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Every pending row carries three action buttons, so Tab alone made the 30th
+  // cheque 90 stops away. Roving focus walks the rows with ↑↓ and the three
+  // verbs are chords that act on the row the keyboard is on; Tab from a focused
+  // row still steps into that row's own buttons.
+  const list = useListKeyboardNav({ count: cheques.length })
+  const activeCheque: Cheque | undefined = cheques[list.active]
+  const focusRows = () => list.focusList()
+
+  // A row verb may only fire while the keyboard is actually ON a row. Before
+  // the user has entered the list `list.active` is 0, and the active row is
+  // painted only on :focus-visible — so pressing one of these straight off the
+  // hint bar would have acted on the first cheque in the table with nothing on
+  // screen tying the verb to that row. Gating on focus also keeps the three
+  // verbs out of the hint bar until they have a target: F3 puts you there.
+  const [listFocused, setListFocused] = useState(false)
+  const canAct = listFocused && !!activeCheque && activeCheque.status === 'pending'
+
+  // Alt+K / Alt+B are this screen's own verbs — the canonical map has no chord
+  // for clearing or bouncing a cheque. Alt+L, which this screen used to bind
+  // for "clear", already means "GL ledger" on the party screens, and one letter
+  // cannot carry two app-wide meanings. Alt+V is the mapped void.
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'New cheque', run: () => setShowDialog(true) },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+      { chord: 'Alt+K', label: 'Mark cleared', when: canAct, run: () => setClearFor(activeCheque!) },
+      { chord: 'Alt+B', label: 'Bounce', when: canAct, run: () => setBounceFor(activeCheque!) },
+      { chord: 'Alt+V', label: 'Cancel cheque', when: canAct, run: () => setCancelFor(activeCheque!) },
+    ],
+    onFocusList: list.focusList,
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 flex-wrap">
@@ -87,7 +142,7 @@ export default function ChequesPage() {
             <span className="mono">{cheques.length}</span> cheques in view
           </p>
         </div>
-        <Button onClick={() => setShowDialog(true)}><Plus size={16} /> New Cheque</Button>
+        <Button ref={newChequeRef} onClick={() => setShowDialog(true)}><Plus size={16} /> New Cheque</Button>
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
@@ -108,9 +163,20 @@ export default function ChequesPage() {
                     <Th>Bank</Th><Th>Party</Th><Th className="text-right px-3">Amount</Th>
                     <Th>Status</Th><Th></Th></Tr>
                 </Thead>
-                <Tbody>
-                  {cheques.map((c) => (
-                    <Tr key={c.id}>
+                <Tbody
+                  {...list.containerProps}
+                  onFocus={() => setListFocused(true)}
+                  onBlur={(e) => {
+                    // focusout fires for moves WITHIN the list too (row → its
+                    // own buttons), so only a landing spot outside the rows
+                    // means the keyboard has really left them.
+                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                      setListFocused(false)
+                    }
+                  }}
+                >
+                  {cheques.map((c, i) => (
+                    <Tr key={c.id} {...list.rowProps(i)}>
                       <Td className="mono">
                         {c.cheque_no}
                         {c.is_pdc && c.status === 'pending' && (
@@ -132,13 +198,9 @@ export default function ChequesPage() {
                       <Td>
                         {c.status === 'pending' && (
                           <div className="flex gap-1">
-                            <Button size="sm" variant="ghost" onClick={async () => {
-                              try { await clearCheque(c.id); toast.success('Cleared'); load() }
-                              catch (err) {
-                                const e = err as { response?: { data?: { detail?: string } } }
-                                toast.error(apiErrorMessage(e, 'Failed to clear the cheque.'))
-                              }
-                            }}><CheckCircle2 size={14} /> Clear</Button>
+                            <Button size="sm" variant="ghost" onClick={() => runClear(c)}>
+                              <CheckCircle2 size={14} /> Clear
+                            </Button>
                             <Button size="sm" variant="ghost" onClick={() => setBounceFor(c)}>
                               <AlertTriangle size={14} /> Bounce
                             </Button>
@@ -164,20 +226,42 @@ export default function ChequesPage() {
         customers={customers}
         onClose={() => setShowDialog(false)}
         onSaved={load}
+        // Opened from a button, so focus goes back to that button; opened by
+        // Alt+N it is the same button, which is where the user expects to land.
+        restoreFocus={() => newChequeRef.current?.focus()}
       />
-      <BounceDialog cheque={bounceFor} onClose={() => setBounceFor(null)} onDone={load} />
-      <CancelDialog cheque={cancelFor} onClose={() => setCancelFor(null)} onDone={load} />
+      <BounceDialog cheque={bounceFor} onClose={() => setBounceFor(null)} onDone={load}
+        restoreFocus={focusRows} />
+      <CancelDialog cheque={cancelFor} onClose={() => setCancelFor(null)} onDone={load}
+        restoreFocus={focusRows} />
+
+      {/* Alt+K acts on the row the keyboard is on, so it confirms which cheque
+          before posting the clearing. The row button keeps its direct action. */}
+      <ConfirmDialog
+        open={!!clearFor}
+        onOpenChange={(o) => { if (!o) { setClearFor(null); focusRows() } }}
+        title={clearFor ? `Mark cheque ${clearFor.cheque_no} as cleared?` : 'Mark cheque as cleared?'}
+        description={clearFor
+          ? `${formatCurrency(clearFor.amount)} · ${clearFor.bank_account_name}${clearFor.party_name ? ` · ${clearFor.party_name}` : ''}`
+          : undefined}
+        confirmLabel="Mark Cleared"
+        cancelLabel="Keep Pending"
+        loading={clearing}
+        onConfirm={() => { if (clearFor && !clearing) runClear(clearFor) }}
+      />
     </div>
   )
 }
 
-function NewChequeDialog({ open, bankAccounts, suppliers, customers, onClose, onSaved }: {
+function NewChequeDialog({ open, bankAccounts, suppliers, customers, onClose, onSaved, restoreFocus }: {
   open: boolean
   bankAccounts: BankAccount[]
   suppliers: Party[]
   customers: Party[]
   onClose: () => void
   onSaved: () => void
+  /** Where focus goes when the dialog closes — Radix has no trigger to return to. */
+  restoreFocus: () => void
 }) {
   const blank = {
     cheque_no: '', kind: 'issued' as 'issued' | 'received', bank_account: '',
@@ -220,12 +304,12 @@ function NewChequeDialog({ open, bankAccounts, suppliers, customers, onClose, on
 
   return (
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={(e) => { e.preventDefault(); restoreFocus() }}>
         <DialogHeader><DialogTitle>New Cheque</DialogTitle></DialogHeader>
         <form onSubmit={submit}>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Cheque No." required>
-              <Input value={data.cheque_no} required
+              <Input data-autofocus value={data.cheque_no} required
                 onChange={(e) => setData({ ...data, cheque_no: e.target.value })} />
             </Field>
             <Field label="Kind" required>
@@ -301,79 +385,96 @@ function NewChequeDialog({ open, bankAccounts, suppliers, customers, onClose, on
   )
 }
 
-function BounceDialog({ cheque, onClose, onDone }: {
+function BounceDialog({ cheque, onClose, onDone, restoreFocus }: {
   cheque: Cheque | null
   onClose: () => void
   onDone: () => void
+  restoreFocus: () => void
 }) {
   const [reason, setReason] = useState('')
   const [bankCharge, setBankCharge] = useState('')
   const [saving, setSaving] = useState(false)
   useEffect(() => { if (cheque) { setReason(''); setBankCharge('') } }, [cheque])
   if (!cheque) return null
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (saving || !cheque) return
+    setSaving(true)
+    try { await bounceCheque(cheque.id, reason, bankCharge || undefined); toast.success('Marked as bounced'); onDone(); onClose() }
+    catch (err) {
+      toast.error(apiErrorMessage(err, 'Action failed.'))
+    } finally { setSaving(false) }
+  }
+
   return (
     <Dialog open={!!cheque} onOpenChange={(o: boolean) => !o && onClose()}>
-      <DialogContent>
+      {/* Opened from a row button (or Alt+B), so there is no Radix trigger to
+          restore to — hand focus back to the cheque row instead of <body>. */}
+      <DialogContent onCloseAutoFocus={(e) => { e.preventDefault(); restoreFocus() }}>
         <DialogHeader><DialogTitle>Bounce cheque {cheque.cheque_no}</DialogTitle></DialogHeader>
-        <div className="space-y-3">
+        {/* A real form so Enter from the reason field commits. */}
+        <form onSubmit={submit} className="space-y-3">
           <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
             Marks the cheque bounced. If a journal entry is linked it is reversed and any
             linked bill payment rolled back; a bank charge posts its own payment entry.
           </p>
-          <Input placeholder="Reason (e.g. insufficient funds)" value={reason}
+          <Input data-autofocus placeholder="Reason (e.g. insufficient funds)" value={reason}
                  onChange={(e) => setReason(e.target.value)} />
           <Input type="number" step="0.01" min="0" placeholder="Bank charge ₹ (optional)"
                  value={bankCharge} className="text-right font-mono"
                  onChange={(e) => setBankCharge(e.target.value)} />
-        </div>
-        <DialogFooter>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button disabled={saving} onClick={async () => {
-            setSaving(true)
-            try { await bounceCheque(cheque.id, reason, bankCharge || undefined); toast.success('Marked as bounced'); onDone(); onClose() }
-            catch (err) {
-              const e = err as { response?: { data?: { detail?: string } } }
-              toast.error(apiErrorMessage(e, 'Action failed.'))
-            } finally { setSaving(false) }
-          }}>{saving && <Loader2 size={14} className="animate-spin" />} Mark Bounced</Button>
-        </DialogFooter>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+            <Button type="submit" disabled={saving}>
+              {saving && <Loader2 size={14} className="animate-spin" />} Mark Bounced
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )
 }
 
-function CancelDialog({ cheque, onClose, onDone }: {
+function CancelDialog({ cheque, onClose, onDone, restoreFocus }: {
   cheque: Cheque | null
   onClose: () => void
   onDone: () => void
+  restoreFocus: () => void
 }) {
   const [reason, setReason] = useState('')
   const [saving, setSaving] = useState(false)
   useEffect(() => { if (cheque) setReason('') }, [cheque])
   if (!cheque) return null
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    if (saving || !cheque) return
+    setSaving(true)
+    try { await cancelCheque(cheque.id, reason); toast.success('Cheque cancelled'); onDone(); onClose() }
+    catch (err) {
+      toast.error(apiErrorMessage(err, 'Action failed.'))
+    } finally { setSaving(false) }
+  }
+
   return (
     <Dialog open={!!cheque} onOpenChange={(o: boolean) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={(e) => { e.preventDefault(); restoreFocus() }}>
         <DialogHeader><DialogTitle>Cancel cheque {cheque.cheque_no}</DialogTitle></DialogHeader>
-        <div className="space-y-3">
+        <form onSubmit={submit} className="space-y-3">
           <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
             For a cheque that was voided, stopped, or never presented. If a journal
             entry is linked it is reversed so the books back out the payment.
           </p>
-          <Input placeholder="Reason (e.g. stop payment, torn cheque)" value={reason}
+          <Input data-autofocus placeholder="Reason (e.g. stop payment, torn cheque)" value={reason}
                  onChange={(e) => setReason(e.target.value)} />
-        </div>
-        <DialogFooter>
-          <Button variant="secondary" onClick={onClose}>Keep Pending</Button>
-          <Button disabled={saving} onClick={async () => {
-            setSaving(true)
-            try { await cancelCheque(cheque.id, reason); toast.success('Cheque cancelled'); onDone(); onClose() }
-            catch (err) {
-              const e = err as { response?: { data?: { detail?: string } } }
-              toast.error(apiErrorMessage(e, 'Action failed.'))
-            } finally { setSaving(false) }
-          }}>{saving && <Loader2 size={14} className="animate-spin" />} Cancel Cheque</Button>
-        </DialogFooter>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={onClose}>Keep Pending</Button>
+            <Button type="submit" disabled={saving}>
+              {saving && <Loader2 size={14} className="animate-spin" />} Cancel Cheque
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )

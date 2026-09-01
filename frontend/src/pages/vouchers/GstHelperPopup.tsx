@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Calculator } from 'lucide-react'
 import { toast } from 'sonner'
@@ -49,6 +49,8 @@ export function GstHelperPopup({
   const [inter, setInter] = useState(false) // false = intra (CGST+SGST)
   const [side, setSide] = useState<GstSide>(defaultSide)
   const [balanceAcct, setBalanceAcct] = useState<number | ''>('')
+  const panelRef = useRef<HTMLDivElement>(null)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
 
   // Re-seed from the voucher each time the popup opens.
   useEffect(() => {
@@ -57,6 +59,43 @@ export function GstHelperPopup({
       setSide(defaultSide)
     }
   }, [open, basePrefill, defaultSide])
+
+  /**
+   * Remember what opened the popup, land the caret on the entry field, and hand
+   * focus back on the way out. This is not a Radix dialog, so nothing else does
+   * any of it and closing would otherwise strand the user on <body> in the
+   * middle of a voucher.
+   *
+   * All three live in one effect because the ORDER is the whole point. The
+   * taxable field used to carry `autoFocus`, which React applies from
+   * commitMount in the commit's LAYOUT phase — before any passive effect, and
+   * before this component's own layout effect too, since children commit
+   * first. So an effect that read `document.activeElement` never saw the
+   * opener; it saw this popup's own input, and the restore on close was a
+   * no-op. Reading the opener first and focusing the field second, from here,
+   * is the only ordering that holds. `data-autofocus` stays the marker for
+   * which field that is, exactly as DialogContent/SheetContent use it.
+   */
+  useEffect(() => {
+    if (!open) return
+    const opener = document.activeElement as HTMLElement | null
+    returnFocusRef.current = opener && opener !== document.body ? opener : null
+    const root = panelRef.current
+    const target =
+      root?.querySelector<HTMLElement>('[data-autofocus]') ??
+      root?.querySelector<HTMLElement>(
+        'input:not([type="hidden"]):not([disabled]), select:not([disabled])',
+      )
+    target?.focus()
+    return () => {
+      const el = returnFocusRef.current
+      const active = document.activeElement as HTMLElement | null
+      // Only when closing left the caret nowhere — the voucher may have moved
+      // it onto the lines this popup just inserted, and that wins.
+      if (active && active !== document.body && active.isConnected) return
+      if (el && el.isConnected) el.focus()
+    }
+  }, [open])
 
   const base = parseFloat(taxable) || 0
   const tax = round2((base * rate) / 100)
@@ -124,6 +163,68 @@ export function GstHelperPopup({
     onOpenChange(false)
   }
 
+  /**
+   * This overlay is hand-rolled rather than a Radix dialog, so the three things
+   * Radix would have done have to be done here:
+   *
+   *  1. Escape closes it. A field with something in it clears first — `Input`
+   *     stops that keystroke itself, so the popup only sees the second press,
+   *     which is the app-wide Escape contract.
+   *  2. Chords stop at the popup. Ctrl+A behind this is "save & post", and it
+   *     is allow-listed, so without this it posted the voucher from inside the
+   *     helper. Ctrl+S / Ctrl+Enter insert instead, and a bare Enter in a field
+   *     does too — the two numbers this popup is made of are both inputs.
+   *  3. Tab stays inside. Nothing else traps focus, so Tab off the last control
+   *     walked into the voucher underneath.
+   */
+  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.defaultPrevented) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      onOpenChange(false)
+      return
+    }
+    if (e.key === 'Tab') {
+      trapTab(e)
+      return
+    }
+    const target = e.target as HTMLElement | null
+    const isCommit =
+      ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S' || e.key === 'Enter')) ||
+      (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey && target?.tagName === 'INPUT')
+    if (isCommit) {
+      e.preventDefault()
+      e.stopPropagation()
+      apply()
+      return
+    }
+    // Swallowed, not defaulted: Ctrl+A still selects the field's text, it just
+    // no longer posts the voucher underneath.
+    if (e.ctrlKey || e.metaKey || e.altKey) e.stopPropagation()
+  }
+
+  function trapTab(e: React.KeyboardEvent) {
+    const root = panelRef.current
+    if (!root) return
+    const items = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => el.offsetParent !== null || el === document.activeElement)
+    if (items.length === 0) return
+    const first = items[0]
+    const last = items[items.length - 1]
+    const active = document.activeElement as HTMLElement | null
+    if (e.shiftKey && (active === first || !root.contains(active))) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && (active === last || !root.contains(active))) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+
   if (!open) return null
 
   return createPortal(
@@ -131,16 +232,34 @@ export function GstHelperPopup({
       className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto overscroll-contain px-3 pt-6 pb-6 sm:px-4 sm:pt-24"
       style={{ background: 'rgba(0,0,0,0.35)' }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onOpenChange(false) }}
+      onKeyDown={handleKeyDown}
     >
       <div
+        ref={panelRef}
+        /* `role="dialog"` + `data-state="open"` are what the app's shared
+           Escape guards look for (lib/shortcuts.ts, useEscapeBack). Without
+           them this popup was invisible to them and one Escape closed the
+           helper AND ran the voucher's discard/back handler behind it. */
+        role="dialog"
+        aria-modal="true"
+        data-state="open"
+        aria-labelledby="gst-helper-title"
         className="w-full max-w-lg rounded-xl border shadow-xl overflow-hidden"
         style={{ background: 'var(--surface-0)', borderColor: 'var(--line)' }}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b sm:px-5" style={{ borderColor: 'var(--line)' }}>
-          <h3 className="text-sm font-semibold inline-flex items-center gap-2" style={{ color: 'var(--ink)' }}>
+          <h3 id="gst-helper-title" className="text-sm font-semibold inline-flex items-center gap-2" style={{ color: 'var(--ink)' }}>
             <Calculator size={15} style={{ color: 'var(--brand)' }} /> Add GST
           </h3>
-          <button onClick={() => onOpenChange(false)} className="p-1 rounded hover:bg-[var(--color-hover-bg)]" style={{ color: 'var(--ink-3)' }}>
+          <button
+            type="button"
+            onClick={() => onOpenChange(false)}
+            className="p-1 rounded hover:bg-[var(--color-hover-bg)]"
+            style={{ color: 'var(--ink-3)' }}
+            aria-label="Close GST helper"
+            aria-keyshortcuts="Escape"
+            title="Close (Esc)"
+          >
             <X size={16} />
           </button>
         </div>
@@ -151,17 +270,22 @@ export function GstHelperPopup({
             <span className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>Taxable amount</span>
             <Input
               type="number" inputMode="decimal" value={taxable}
-              onChange={(e) => setTaxable(e.target.value)} placeholder="0.00" autoFocus
+              onChange={(e) => setTaxable(e.target.value)} placeholder="0.00"
+              /* Focused by the effect above, not by `autoFocus`: the attribute
+                 fires in the commit's layout phase, i.e. before the effect that
+                 has to record which control opened the popup. */
+              data-autofocus
             />
           </label>
 
           {/* Rate chips + custom */}
           <div>
             <span className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>GST rate</span>
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap" role="group" aria-label="GST rate">
               {RATES.map((r) => (
                 <button
                   key={r} type="button" onClick={() => setRate(r)}
+                  aria-pressed={rate === r}
                   className={cn('px-3 py-1.5 text-sm rounded-lg border transition-colors')}
                   style={{
                     background: rate === r ? 'var(--brand)' : 'var(--surface-0)',
@@ -173,6 +297,7 @@ export function GstHelperPopup({
               <div className="flex items-center gap-1">
                 <input
                   type="number" inputMode="decimal" value={rate}
+                  aria-label="Custom GST rate, percent"
                   onChange={(e) => setRate(parseFloat(e.target.value) || 0)}
                   className="w-20 h-9 px-2 text-sm border rounded-lg outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
                   style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
@@ -236,11 +361,23 @@ export function GstHelperPopup({
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 px-4 py-3 border-t sm:px-5" style={{ borderColor: 'var(--line)' }}>
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={apply} disabled={!(base > 0) || !(rate > 0) || missing.length > 0}>
-            <Calculator size={14} /> Insert lines
-          </Button>
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t sm:px-5" style={{ borderColor: 'var(--line)' }}>
+          {/* The popup's keys, said out loud. It cannot reach the page hint bar
+              without wiping the voucher's own hints, so it advertises here. */}
+          <span className="text-[11px]" style={{ color: 'var(--ink-3)' }}>
+            <kbd className="mono">Enter</kbd> or <kbd className="mono">Ctrl+S</kbd> insert ·{' '}
+            <kbd className="mono">Esc</kbd> cancel
+          </span>
+          <div className="flex items-center gap-2 ml-auto">
+            <Button variant="secondary" onClick={() => onOpenChange(false)} aria-keyshortcuts="Escape">Cancel</Button>
+            <Button
+              onClick={apply}
+              disabled={!(base > 0) || !(rate > 0) || missing.length > 0}
+              aria-keyshortcuts="Control+S"
+            >
+              <Calculator size={14} /> Insert lines
+            </Button>
+          </div>
         </div>
       </div>
     </div>,
@@ -257,10 +394,11 @@ function Toggle<T>({ label, options, value, onChange }: {
   return (
     <div>
       <span className="block text-xs font-medium mb-1.5" style={{ color: 'var(--ink-2)' }}>{label}</span>
-      <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: 'var(--line)' }}>
+      <div className="flex rounded-lg border overflow-hidden" style={{ borderColor: 'var(--line)' }} role="group" aria-label={label}>
         {options.map((o) => (
           <button
             key={String(o.v)} type="button" onClick={() => onChange(o.v)}
+            aria-pressed={value === o.v}
             className="flex-1 px-2 py-1.5 text-xs transition-colors"
             style={{
               background: value === o.v ? 'rgba(15,157,154,0.12)' : 'var(--surface-0)',

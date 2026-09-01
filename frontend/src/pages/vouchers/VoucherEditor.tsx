@@ -15,8 +15,11 @@ import { Card } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { useLocation as useActiveLocation } from '../../contexts/LocationContext'
-import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
-import { VoucherLineRow, type VoucherLine } from './VoucherLineRow'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useGridKeyboardNav } from '../../hooks/useGridKeyboardNav'
+import {
+  VoucherLineRow, VOUCHER_LINE_COLUMNS, voucherLineCellId, type VoucherLine,
+} from './VoucherLineRow'
 import { CreateLedgerModal } from './CreateLedgerModal'
 import { BillAllocationSheet } from './BillAllocationSheet'
 import { CostCenterPopup } from './CostCenterPopup'
@@ -102,6 +105,23 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
     bill_id: number; ref_no: string; ref_date: string | null; amount: string
   }[]>([])
   const altCLineUidRef = useRef<string | null>(null)
+  const dateRef = useRef<HTMLInputElement>(null)
+  // F2's target: the party picker on a party voucher, the Reference # box
+  // otherwise. Neither takes a ref, so the page holds one on the wrapper and
+  // resolves the focusable control out of it (see the effect below).
+  const headerBoxRef = useRef<HTMLDivElement>(null)
+  const headerFieldRef = useRef<HTMLInputElement | null>(null)
+  // Which line the caret is in — Alt+D deletes THIS one. Kept in state and fed
+  // by each row's onRowFocus rather than parsed back out of an element id:
+  // rows are re-keyed on every insert and delete, ids are not.
+  const [focusedLine, setFocusedLine] = useState(0)
+  // ...and whether the caret is in the grid AT ALL. focusedLine is a remembered
+  // position: on its own it would have Alt+D delete line 1 (its initial value)
+  // while the caret sits in Date, the party picker, Narration or the save bar.
+  // Tracked through React focus events on <tbody> rather than a DOM contains()
+  // check, because the ledger dropdown is portalled to <body> yet is still a
+  // child of its row in the React tree — so it counts as "in the grid" too.
+  const caretInGrid = useRef(false)
 
   // ─── Initial load ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -222,6 +242,62 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
   function removeLine(uid: string) {
     setLines((ls) => ls.length <= 1 ? ls : ls.filter((l) => l.uid !== uid))
   }
+
+  // ─── Focus plumbing for the line grid ──────────────────────────────────────
+  /**
+   * Hand focus on after a state change. A row that has just been added, or a
+   * ledger that has just been chosen, only exists in the DOM on the next tick;
+   * focusing before that silently lands on <body>.
+   */
+  const handOff = useCallback((focus: () => void) => { window.setTimeout(focus, 0) }, [])
+
+  /** Focus (and select) one cell of a rendered line. */
+  const focusLineCell = useCallback((rowIdx: number, col: string) => {
+    handOff(() => {
+      const el = document.getElementById(voucherLineCellId(rowIdx, col)) as HTMLInputElement | null
+      el?.focus()
+      el?.select?.()
+    })
+  }, [handOff])
+
+  /** Focus the ledger trigger of a rendered line — the head of the row. */
+  const focusLineAccount = useCallback((rowIdx: number) => {
+    focusLineCell(rowIdx, 'account')
+  }, [focusLineCell])
+
+  /** Alt+A / Tab off the last cell — add a line and start keying it. */
+  const appendLine = useCallback(() => {
+    const nextIdx = lines.length
+    addLine()
+    setFocusedLine(nextIdx)
+    focusLineAccount(nextIdx)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines.length, focusLineAccount])
+
+  /**
+   * Alt+D — drop the line the caret is in, then land on its neighbour.
+   *
+   * Refuses to act when the caret is not in the grid: the chord destroys a
+   * line with no undo, and off the grid it would be acting on a stale
+   * remembered row rather than on anything the user can see they are in.
+   * Removing a line the user is looking at is announced, since a keyboard user
+   * has no click target to tie the disappearance to.
+   */
+  const deleteFocusedLine = useCallback(() => {
+    if (!caretInGrid.current) {
+      toast.info('Alt+D removes the line the caret is in — press F3 to move into the lines first')
+      return
+    }
+    if (lines.length <= 1) return
+    const idx = Math.min(focusedLine, lines.length - 1)
+    const target = lines[idx]?.uid
+    if (!target) return
+    setLines((ls) => ls.filter((l) => l.uid !== target))
+    toast.success(`Line ${idx + 1} removed`)
+    const next = Math.max(0, Math.min(idx, lines.length - 2))
+    setFocusedLine(next)
+    focusLineAccount(next)
+  }, [lines, focusedLine, focusLineAccount])
 
   // ─── GST helper ─────────────────────────────────────────────────────────────
   // Prefill the taxable base from the largest existing line (usually the asset/
@@ -471,25 +547,121 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
     setPendingAllocations(items)
   }
 
+  // ─── Line grid keyboard model ──────────────────────────────────────────────
+  const grid = useGridKeyboardNav({
+    rowCount: lines.length,
+    columnIds: VOUCHER_LINE_COLUMNS,
+    buildCellId: voucherLineCellId,
+    // Tab off the last cell, and Enter on the last row, both grow the voucher —
+    // a clerk keys line after line without pausing to click "Add line".
+    onAppendRow: addLine,
+    onEnterAppendRow: addLine,
+  })
+
+  /**
+   * Cell movement for one line, forwarded by VoucherLineRow from its narration
+   * and amount fields (the ledger cell is a picker that owns its own keys).
+   *
+   * Tab keeps its natural left-to-right order — that is what keeps each row's
+   * delete button in reach — and only the last cell of the last line overrides
+   * it, to grow the voucher. That override is gated on the last line having
+   * something in it: ungated, Tab off the freshly appended blank row appends
+   * another one, so forward Tab could never leave the grid and the Narration
+   * box and the save bar below it were unreachable without Shift+Tab. With the
+   * gate, the trailing blank line always tabs through to the row's delete
+   * button and on out of the table.
+   */
+  const lineKeyDown = useCallback((e: React.KeyboardEvent, rowIdx: number, colId: string) => {
+    const last = lines[lines.length - 1]
+    const lastKeyed = !!last
+      && (last.account != null || !!last.narration.trim() || parseFloat(last.amount) > 0)
+    const growCell = colId === 'amount' && rowIdx === lines.length - 1 && lastKeyed
+    if (e.key === 'Tab' && (e.shiftKey || !growCell)) return
+    grid.handleKeyDown(e, rowIdx, colId)
+  }, [grid, lines])
+
+  /**
+   * Alt+G is not in lib/shortcuts' GLOBAL_ALLOW_LIST (that list is shared), so
+   * the document-level dispatcher drops it while focus is in a field — which,
+   * on a voucher, is nearly always. Catching it on the page root gets the GST
+   * helper from anywhere on the screen; the registration below is what puts it
+   * in the hint bar and the F1 catalogue.
+   *
+   * Because it is a bespoke root handler it never reaches HotkeyContext, so the
+   * overlay-depth gate that holds page chords back behind a dialog does not
+   * cover it — and every overlay this screen owns (the Esc confirm, the ledger
+   * modal, the cost-centre popup, the bill-allocation sheet) is a React child
+   * of this div, so keystrokes inside them bubble to here even though they are
+   * portalled away in the DOM. Alt+G in any of them stacked the GST helper on
+   * top of the dialog the user was in.
+   *
+   * So apply the same gate by hand. This handler sits on the page root, i.e.
+   * overlay depth 0, and HotkeyContext skips a handler shallower than the
+   * number of open overlays — for depth 0 that means "one open overlay is
+   * enough". The marker queried here is the one openOverlayCount() reads, and
+   * every overlay on this screen sets it, the GST popup included (bespoke
+   * portal though it is), so re-opening it over itself is covered too.
+   */
+  const onPageKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.defaultPrevented || !e.altKey || e.ctrlKey || e.metaKey) return
+    if (e.key.toLowerCase() !== 'g') return
+    if (document.querySelector('[role="dialog"][data-state="open"]')) return
+    e.preventDefault()
+    setGstOpen(true)
+  }, [])
+
   // ─── Hotkey wiring ─────────────────────────────────────────────────────────
-  const handlers = useMemo<HotkeyHandler[]>(() => [
-    { chord: 'Ctrl+A', preventDefault: true, handler: () => handleSave(true) },
-    { chord: 'Ctrl+H', preventDefault: true, handler: handleRepeatLast },
-    { chord: 'Alt+C', preventDefault: true, handler: handleAltCGlobal },
-    { chord: 'Ctrl+L', preventDefault: true, handler: () => setCostCenterOpen(true) },
-    { chord: 'Escape', preventDefault: false, handler: handleEsc },
-  ], [handleSave, handleRepeatLast, handleAltCGlobal, handleEsc])
+  /**
+   * Escape runs through usePageKeyboard → useEscapeBack, which leaves a focused
+   * field first and stands down while a dialog owns the key. The old raw
+   * 'Escape' chord fired through both, so dismissing a ledger dropdown also
+   * abandoned the voucher behind it. `backActive` covers the GST popup too —
+   * it is a bespoke portal, not a Radix dialog, so useEscapeBack cannot see it.
+   */
+  const canSave = !saving && !posting && !allStores
+  usePageKeyboard({
+    actions: [
+      { chord: 'Ctrl+S', label: 'Save Draft', run: () => handleSave(false), when: canSave },
+      { chord: 'Ctrl+A', label: 'Save & Post', run: () => handleSave(true), when: canSave },
+      // The F1 sheet documents Ctrl+Enter for save-and-post; bind it as an
+      // alias rather than a second bar entry saying the same thing.
+      { chord: 'Ctrl+Enter', label: 'Save & Post', run: () => handleSave(true), when: canSave, hidden: true },
+      { chord: 'Alt+A', label: 'Add Line', run: appendLine },
+      { chord: 'Alt+D', label: 'Delete Line', run: deleteFocusedLine, when: lines.length > 1 },
+      { chord: 'Alt+C', label: 'New Ledger', run: handleAltCGlobal },
+      { chord: 'Alt+G', label: 'GST', run: () => setGstOpen(true) },
+      { chord: 'Ctrl+H', label: 'Repeat Last', run: handleRepeatLast, when: !editingId },
+      { chord: 'Ctrl+L', label: 'Cost Centre', run: () => setCostCenterOpen(true) },
+    ],
+    searchRef: headerFieldRef,
+    onFocusList: () => focusLineAccount(Math.min(focusedLine, Math.max(0, lines.length - 1))),
+    onBack: handleEsc,
+    backActive: !gstOpen,
+  })
 
-  useHotkeys(handlers)
+  /**
+   * Resolve F2's target out of the header slot — the party picker's trigger on
+   * a party voucher, the Reference # box otherwise. Re-run on every render:
+   * which control sits there depends on state, and neither takes a ref.
+   */
+  useEffect(() => {
+    if (loading) return
+    headerFieldRef.current =
+      (headerBoxRef.current?.querySelector('input, button') as HTMLInputElement | null) ?? null
+  })
 
-  const hints = useMemo<HotkeyHint[]>(() => [
-    { chord: 'Ctrl+A', label: 'Save & Post' },
-    { chord: 'Ctrl+H', label: 'Repeat Last' },
-    { chord: 'Alt+C', label: 'New Ledger' },
-    { chord: 'Ctrl+L', label: 'Cost Centre' },
-    { chord: 'Esc', label: 'Cancel' },
-  ], [])
-  useHintRegister(hints)
+  /**
+   * PageTransition's [data-autofocus] pass runs while this route is still a
+   * spinner, so it finds nothing to focus. Repeat it once the form exists, so
+   * F4/F7 land on the Date field instead of on <body>.
+   */
+  useEffect(() => {
+    if (loading) return
+    const el = dateRef.current
+    if (!el) return
+    const raf = requestAnimationFrame(() => el.focus())
+    return () => cancelAnimationFrame(raf)
+  }, [loading])
 
   // ─── Render ────────────────────────────────────────────────────────────────
   if (loading) {
@@ -501,7 +673,7 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-4 pb-32">
+    <div className="max-w-6xl mx-auto space-y-4 pb-32" onKeyDown={onPageKeyDown}>
       <button
         onClick={handleEsc}
         className="inline-flex items-center gap-1 text-sm hover:opacity-80 mb-1"
@@ -577,9 +749,8 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
             </Button>
           )}
           {!costCenter && !costCentreId && (
-            <Button variant="ghost" size="sm" onClick={() => setCostCenterOpen(true)}>
+            <Button variant="ghost" size="sm" chord="Ctrl+L" onClick={() => setCostCenterOpen(true)}>
               <Layers size={14} /> Cost Centre
-              <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Ctrl+L</kbd>
             </Button>
           )}
           {originalEntry && <Badge variant="warning">Draft</Badge>}
@@ -589,31 +760,37 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
       <Card className="p-4 sm:p-5">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <Field label="Date" required>
-            <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+            <Input ref={dateRef} data-autofocus type="date" required value={date}
+              onChange={(e) => setDate(e.target.value)} />
           </Field>
-          {config.partyType ? (
-            <Field label={config.partyType} hint="Type letters to narrow · ↑↓ Enter">
-              <PartySearchPicker
-                parties={parties}
-                value={partyId}
-                onChange={(id) => {
-                  setPartyId(id)
-                  if (id) {
-                    const p = parties.find((x) => x.id === Number(id))
-                    if (p && narration === config.narrationTemplate) {
-                      setNarration(`${config.narrationTemplate}${p.name}`)
+          {/* F2's target. The wrapper is how the page reaches whichever
+              control this slot renders — neither of them takes a ref. */}
+          <div ref={headerBoxRef}>
+            {config.partyType ? (
+              <Field label={config.partyType} hint="Type letters to narrow · ↑↓ Enter · F2 to jump here">
+                <PartySearchPicker
+                  parties={parties}
+                  ariaLabel={config.partyType}
+                  value={partyId}
+                  onChange={(id) => {
+                    setPartyId(id)
+                    if (id) {
+                      const p = parties.find((x) => x.id === Number(id))
+                      if (p && narration === config.narrationTemplate) {
+                        setNarration(`${config.narrationTemplate}${p.name}`)
+                      }
                     }
-                  }
-                }}
-                storageKey={config.partyType}
-                placeholder={`Search ${config.partyType.toLowerCase()}…`}
-              />
-            </Field>
-          ) : (
-            <Field label="Reference #" hint="Optional">
-              <Input value={referenceId} onChange={(e) => setReferenceId(e.target.value)} />
-            </Field>
-          )}
+                  }}
+                  storageKey={config.partyType}
+                  placeholder={`Search ${config.partyType.toLowerCase()}…`}
+                />
+              </Field>
+            ) : (
+              <Field label="Reference #" hint="Optional · F2 to jump here">
+                <Input value={referenceId} onChange={(e) => setReferenceId(e.target.value)} />
+              </Field>
+            )}
+          </div>
           <Field label="Voucher Type">
             <Input
               value={config.label} readOnly
@@ -648,14 +825,32 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
                 <th className="w-8" />
               </tr>
             </thead>
-            <tbody>
-              {lines.map((line) => (
+            {/* React focus events, so the ledger dropdown — portalled to
+                <body>, still a child of its row in the React tree — counts as
+                being in the grid. focusout fires before focusin, so moving
+                between cells clears and re-sets the flag with no keystroke in
+                between. */}
+            <tbody
+              onFocus={() => { caretInGrid.current = true }}
+              onBlur={() => { caretInGrid.current = false }}
+            >
+              {lines.map((line, i) => (
                 <VoucherLineRow
                   key={line.uid}
                   line={line}
+                  rowIdx={i}
                   accounts={accounts}
                   accountFilter={config.accountFilter}
-                  onChange={(p) => patchLine(line.uid, p)}
+                  onChange={(p) => {
+                    patchLine(line.uid, p)
+                    // Ledger chosen → carry on along the row, straight to the
+                    // figure that goes with it.
+                    if (p.account != null) focusLineCell(i, 'amount')
+                  }}
+                  onCellKeyDown={(e, colId) => lineKeyDown(e, i, colId)}
+                  // Alt+D deletes the line the caret is in, so the grid has to
+                  // remember which one that is.
+                  onRowFocus={() => setFocusedLine(i)}
                   onRemove={() => removeLine(line.uid)}
                   onAltC={handleAltCFromLine}
                   removeDisabled={lines.length <= 1}
@@ -668,20 +863,24 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
                   <div className="flex items-center gap-4">
                     <button
                       type="button"
-                      onClick={addLine}
+                      onClick={appendLine}
+                      aria-keyshortcuts="Alt+A"
                       className="inline-flex items-center gap-1.5 text-sm hover:opacity-90"
                       style={{ color: 'var(--brand)' }}
                     >
                       <Plus size={14} /> Add line
+                      <kbd className="hidden md:inline mono text-[10px]" style={{ color: 'var(--ink-3)' }}>Alt+A</kbd>
                     </button>
                     <button
                       type="button"
                       onClick={() => setGstOpen(true)}
+                      aria-keyshortcuts="Alt+G"
                       className="inline-flex items-center gap-1.5 text-sm hover:opacity-90"
                       style={{ color: 'var(--brand)' }}
-                      title="Auto-fill CGST/SGST or IGST lines from a taxable amount"
+                      title="Auto-fill CGST/SGST or IGST lines from a taxable amount (Alt+G)"
                     >
                       <Calculator size={14} /> GST
+                      <kbd className="hidden md:inline mono text-[10px]" style={{ color: 'var(--ink-3)' }}>Alt+G</kbd>
                     </button>
                   </div>
                 </td>
@@ -702,19 +901,23 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
               </tr>
               <tr>
                 <td colSpan={5} className="px-4 py-2 text-right">
-                  {totals.dr > 0 && !isBalanced ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: 'var(--danger)' }}>
-                      Difference {formatCurrency(Math.abs(totals.diff))}
-                    </span>
-                  ) : isBalanced ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: 'var(--success)' }}>
-                      <Check size={12} /> Balanced
-                    </span>
-                  ) : (
-                    <span className="text-xs" style={{ color: 'var(--ink-3)' }}>
-                      Enter amounts to balance
-                    </span>
-                  )}
+                  {/* A keyboard user never sees the totals move, so the balance
+                      state has to be announced, not only coloured. */}
+                  <span role="status" aria-live="polite">
+                    {totals.dr > 0 && !isBalanced ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: 'var(--danger)' }}>
+                        Difference {formatCurrency(Math.abs(totals.diff))}
+                      </span>
+                    ) : isBalanced ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: 'var(--success)' }}>
+                        <Check size={12} /> Balanced
+                      </span>
+                    ) : (
+                      <span className="text-xs" style={{ color: 'var(--ink-3)' }}>
+                        Enter amounts to balance
+                      </span>
+                    )}
+                  </span>
                 </td>
               </tr>
             </tfoot>
@@ -744,21 +947,23 @@ export default function VoucherEditor({ voucherType }: VoucherEditorProps) {
           boxShadow: '0 -4px 12px rgba(0,0,0,0.04)',
         }}
       >
-        <Button variant="ghost" onClick={handleRepeatLast} disabled={!!editingId}>
+        <Button variant="ghost" chord="Ctrl+H" onClick={handleRepeatLast} disabled={!!editingId}>
           <History size={14} /> <span className="hidden sm:inline">Repeat Last</span>
-          <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Ctrl+H</kbd>
         </Button>
-        <Button variant="secondary" onClick={handleEsc}>
-          Cancel <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Esc</kbd>
+        <Button variant="secondary" chord="Esc" onClick={handleEsc}>
+          Cancel
         </Button>
-        <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving || posting || allStores}>
+        <Button variant="secondary" chord="Ctrl+S" onClick={() => handleSave(false)} disabled={saving || posting || allStores}>
           {saving && !posting ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
           Save Draft
         </Button>
-        <Button onClick={() => handleSave(true)} disabled={saving || posting || !isBalanced || allStores}>
+        {/* Disabled while unbalanced, as it has always been — an out-of-balance
+            voucher cannot post. The keyboard path is not lost with it: Ctrl+A
+            stays bound (see canSave) and routes through validate(), which
+            toasts the exact Dr/Cr difference instead of going quiet. */}
+        <Button chord="Ctrl+A" onClick={() => handleSave(true)} disabled={saving || posting || !isBalanced || allStores}>
           {posting ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}
           Save & Post
-          <kbd className="hidden md:inline mono text-[10px] ml-1 text-white/80">Ctrl+A</kbd>
         </Button>
       </div>
 

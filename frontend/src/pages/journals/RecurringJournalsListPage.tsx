@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Plus, Loader2, Search, Repeat, Play, AlertCircle } from 'lucide-react'
 import { toast } from 'sonner'
@@ -14,6 +14,8 @@ import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 const STATUS_BADGE: Record<RecurringStatus, 'default' | 'success' | 'warning' | 'error'> = {
   active: 'success', paused: 'warning', stopped: 'default',
@@ -30,6 +32,7 @@ export default function RecurringJournalsListPage() {
   const [running, setRunning] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [search, setSearch] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
 
   async function load() {
     setLoading(true)
@@ -74,6 +77,22 @@ export default function RecurringJournalsListPage() {
 
   const hasFilters = filter !== 'all' || !!search
 
+  // Rows open a record on click, which a keyboard cannot do to a <tr>. Roving
+  // focus makes ↑↓ walk the list and Enter open the highlighted row.
+  const list = useListKeyboardNav({
+    count: profiles.length,
+    onActivate: (i) => navigate(`/journals/recurring/${profiles[i].id}`),
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'New profile', run: () => navigate('/journals/recurring/new') },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    searchRef,
+    onFocusList: list.focusList,
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 sm:gap-4 flex-wrap">
@@ -109,8 +128,8 @@ export default function RecurringJournalsListPage() {
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-0 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search profile name or narration…" className="pl-9" />
+          <Input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search profile name or narration… (F2)" className="pl-9" />
         </div>
       </div>
 
@@ -137,11 +156,16 @@ export default function RecurringJournalsListPage() {
                 <Th className="text-left">Status</Th>
               </Tr>
             </Thead>
-            <Tbody>
-              {profiles.map((p) => {
+            <Tbody {...list.containerProps}>
+              {profiles.map((p, i) => {
                 const isDue = p.status === 'active' && p.next_run_date <= today
                 return (
-                  <Tr key={p.id} className="cursor-pointer" onClick={() => navigate(`/journals/recurring/${p.id}`)}>
+                  <Tr
+                    key={p.id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/journals/recurring/${p.id}`)}
+                    {...list.rowProps(i)}
+                  >
                     <Td>
                       <Link to={`/journals/recurring/${p.id}`} onClick={(e) => e.stopPropagation()}
                         className="font-medium hover:underline inline-flex items-center gap-1.5" style={{ color: 'var(--brand)' }}>

@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Loader2, Plus, Pencil, Trash2, Play, CreditCard } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -15,10 +16,15 @@ import { Badge } from '../components/ui/badge'
 import { Input } from '../components/ui/input'
 import { Card } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
+import { ConfirmDialog } from '../components/ui/ConfirmDialog'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 
 // ─── Employees Tab ──────────────────────────────────────────────────────────
 
 function EmployeesTab() {
+  const navigate = useNavigate()
+  const formRef = useRef<HTMLFormElement>(null)
   const [employees, setEmployees] = useState<Employee[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -73,6 +79,29 @@ function EmployeesTab() {
     catch { toast.error('Cannot delete employee with payroll runs') }
   }
 
+  // Roving tabindex over the register: one tab stop for the whole table, ↑↓ to
+  // walk it, Enter to edit the focused employee, and Tab from a row lands on
+  // that row's own Edit/Delete rather than on row one's.
+  const list = useListKeyboardNav({
+    count: employees.length,
+    onActivate: (i) => openEdit(employees[i]),
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'Add employee', run: openNew },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+      {
+        chord: 'Ctrl+S',
+        label: 'Save',
+        run: () => formRef.current?.requestSubmit(),
+        when: dialogOpen,
+      },
+    ],
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div>
       <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
@@ -92,26 +121,53 @@ function EmployeesTab() {
               <Th className="w-20" />
             </Tr>
           </Thead>
-          <Tbody>
+          <Tbody {...list.containerProps}>
             {loading ? (
               <tr><td colSpan={6} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
             ) : employees.length === 0 ? (
               <tr><td colSpan={6} className="text-center py-12 text-slate-400 text-sm">No employees</td></tr>
-            ) : employees.map((emp) => (
-              <Tr key={emp.id} className="group">
+            ) : employees.map((emp, i) => {
+              const rowKb = list.rowProps(i)
+              return (
+              <Tr
+                key={emp.id}
+                className="group"
+                aria-label={`${emp.employee_code} ${emp.name} — Enter to edit`}
+                {...rowKb}
+                // Keyboard only: Enter on the focused row edits, while a click
+                // stays inert as it always was — Edit is the pointer's target.
+                // Enter on the row's own Edit/Delete button belongs to that
+                // button, so the list handler runs only while the ROW has focus.
+                onKeyDown={(e) => { if (e.target === e.currentTarget) rowKb.onKeyDown(e) }}
+              >
                 <Td className="font-mono text-xs text-slate-500">{emp.employee_code}</Td>
                 <Td className="font-medium">{emp.name}</Td>
                 <Td className="text-sm text-slate-500">{emp.pan || '-'}</Td>
                 <Td className="text-sm text-slate-500">{emp.date_of_joining}</Td>
                 <Td><Badge variant={emp.is_active ? 'success' : 'warning'}>{emp.is_active ? 'Active' : 'Inactive'}</Badge></Td>
                 <Td>
-                  <div className="flex items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => openEdit(emp)} className="p-1 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 text-slate-400 hover:text-teal-600"><Pencil size={14} /></button>
-                    <button onClick={() => handleDelete(emp.id)} className="p-1 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 text-slate-400 hover:text-red-500"><Trash2 size={14} /></button>
+                  {/* group-focus-within as well as group-hover: an opacity-0
+                      button is still focusable and still clickable, so Tab used
+                      to land on an invisible control and Enter deleted an
+                      employee the user could not see they had selected. */}
+                  <div className="flex items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      aria-label={`Edit ${emp.name}`}
+                      onClick={() => openEdit(emp)}
+                      className="p-1 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 rounded text-slate-400 hover:text-teal-600 focus-visible:text-teal-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-teal-500"
+                    ><Pencil size={14} /></button>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${emp.name}`}
+                      onClick={() => handleDelete(emp.id)}
+                      className="p-1 min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 rounded text-slate-400 hover:text-red-500 focus-visible:text-red-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-red-400"
+                    ><Trash2 size={14} /></button>
                   </div>
                 </Td>
               </Tr>
-            ))}
+              )
+            })}
           </Tbody>
         </Table>
       </Card>
@@ -119,11 +175,13 @@ function EmployeesTab() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editId ? 'Edit Employee' : 'Add Employee'}</DialogTitle></DialogHeader>
-          <form onSubmit={handleSave} className="flex flex-col gap-4">
+          <form ref={formRef} onSubmit={handleSave} className="flex flex-col gap-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Employee Code *</label>
-                <Input required value={form.employee_code} onChange={(e) => setForm({ ...form, employee_code: e.target.value })} />
+                {/* DialogContent focuses [data-autofocus] on open, so the form
+                    starts on its first field rather than the close X. */}
+                <Input required data-autofocus value={form.employee_code} onChange={(e) => setForm({ ...form, employee_code: e.target.value })} />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Name *</label>
@@ -170,6 +228,8 @@ function EmployeesTab() {
 // ─── Salary Structures Tab ──────────────────────────────────────────────────
 
 function SalaryStructuresTab() {
+  const navigate = useNavigate()
+  const formRef = useRef<HTMLFormElement>(null)
   const [structures, setStructures] = useState<SalaryStructureData[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [loading, setLoading] = useState(true)
@@ -236,6 +296,25 @@ function SalaryStructuresTab() {
   const gross = ['basic_salary', 'hra', 'conveyance', 'medical', 'special_allowance']
     .reduce((s, k) => s + Number((form as unknown as Record<string, string>)[k] || 0), 0)
 
+  // No row action exists for a structure, so the list navigates without an
+  // Enter target — it is there to give a keyboard reader a "you are here" rail.
+  const list = useListKeyboardNav({ count: structures.length })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'Add structure', run: openNew },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+      {
+        chord: 'Ctrl+S',
+        label: 'Save',
+        run: () => formRef.current?.requestSubmit(),
+        when: dialogOpen,
+      },
+    ],
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div>
       <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
@@ -257,13 +336,13 @@ function SalaryStructuresTab() {
               <Th>Status</Th>
             </Tr>
           </Thead>
-          <Tbody>
+          <Tbody {...list.containerProps}>
             {loading ? (
               <tr><td colSpan={8} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
             ) : structures.length === 0 ? (
               <tr><td colSpan={8} className="text-center py-12 text-slate-400 text-sm">No salary structures</td></tr>
-            ) : structures.map((s) => (
-              <Tr key={s.id}>
+            ) : structures.map((s, i) => (
+              <Tr key={s.id} aria-label={`Salary structure for ${s.employee_name}`} {...list.rowProps(i)}>
                 <Td className="font-medium">{s.employee_name}</Td>
                 <Td className="text-right font-mono text-sm">{formatCurrency(s.basic_salary)}</Td>
                 <Td className="text-right font-mono text-sm">{formatCurrency(s.hra)}</Td>
@@ -281,11 +360,11 @@ function SalaryStructuresTab() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{editId ? 'Edit Structure' : 'Add Salary Structure'}</DialogTitle></DialogHeader>
-          <form onSubmit={handleSave} className="flex flex-col gap-3">
+          <form ref={formRef} onSubmit={handleSave} className="flex flex-col gap-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Employee *</label>
-                <select required value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })}
+                <select required data-autofocus value={form.employee} onChange={(e) => setForm({ ...form, employee: e.target.value })}
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
                   <option value="">-- Select --</option>
                   {employees.map((emp) => <option key={emp.id} value={emp.id}>{emp.employee_code} - {emp.name}</option>)}
@@ -334,10 +413,20 @@ function SalaryStructuresTab() {
 // ─── Payroll Processing Tab ─────────────────────────────────────────────────
 
 function PayrollProcessingTab() {
+  const navigate = useNavigate()
+  const periodRef = useRef<HTMLInputElement>(null)
   const [runs, setRuns] = useState<PayrollRunData[]>([])
   const [loading, setLoading] = useState(false)
   const [processing, setProcessing] = useState(false)
   const [period, setPeriod] = useState(getCurrentPeriod())
+  // Marking a run paid POSTS a payment. It used to be one unconfirmed
+  // keystroke on a button buried deep in the tab order; now it is a confirm.
+  const [payingRun, setPayingRun] = useState<PayrollRunData | null>(null)
+  const [markingPaid, setMarkingPaid] = useState(false)
+  // Alt+N posts a payroll journal for every employee in the period. A chord has
+  // no click target to hesitate over, so the keyboard path asks first; the
+  // button keeps the flow it always had.
+  const [confirmProcess, setConfirmProcess] = useState(false)
 
   async function load() {
     setLoading(true)
@@ -360,23 +449,42 @@ function PayrollProcessingTab() {
     finally { setProcessing(false) }
   }
 
-  async function handleMarkPaid(id: number) {
+  async function handleMarkPaid() {
+    if (!payingRun || markingPaid) return
+    setMarkingPaid(true)
     try {
-      await markPayrollPaid(id)
+      await markPayrollPaid(payingRun.id)
       toast.success('Marked as paid')
+      setPayingRun(null)
       load()
     } catch { toast.error('Failed to mark paid') }
+    finally { setMarkingPaid(false) }
   }
 
   const totalGross = runs.reduce((s, r) => s + Number(r.gross_salary), 0)
   const totalNet = runs.reduce((s, r) => s + Number(r.net_salary), 0)
+
+  const list = useListKeyboardNav({
+    count: runs.length,
+    onActivate: (i) => { if (runs[i].status === 'processed') setPayingRun(runs[i]) },
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'Process payroll', run: () => setConfirmProcess(true), when: !processing },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    searchRef: periodRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
 
   return (
     <div>
       <div className="flex items-center gap-3 mb-4 flex-wrap">
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs text-slate-500 font-medium">Period</label>
-          <Input type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-full sm:w-auto px-2.5 py-1.5" />
+          <Input ref={periodRef} type="month" value={period} onChange={(e) => setPeriod(e.target.value)} className="w-full sm:w-auto px-2.5 py-1.5" />
         </div>
         <Button onClick={handleProcess} disabled={processing} className="w-full sm:w-auto">
           {processing ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
@@ -399,13 +507,28 @@ function PayrollProcessingTab() {
               <Th className="w-20" />
             </Tr>
           </Thead>
-          <Tbody>
+          <Tbody {...list.containerProps}>
             {loading ? (
               <tr><td colSpan={9} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
             ) : runs.length === 0 ? (
               <tr><td colSpan={9} className="text-center py-12 text-slate-400 text-sm">No payroll runs for this period</td></tr>
-            ) : runs.map((run) => (
-              <Tr key={run.id}>
+            ) : runs.map((run, i) => {
+              const rowKb = list.rowProps(i)
+              // Only a processed run can be marked paid. rowProps stamps
+              // role="button" on every row of an activatable list, and the
+              // stylesheet gives that role a pointer cursor — so a draft or
+              // already-paid row was announced as a button and painted as one
+              // while Enter and Space did nothing. Those rows keep the arrow
+              // navigation and the focus rail, and drop the promise.
+              const payable = run.status === 'processed'
+              return (
+              <Tr
+                key={run.id}
+                aria-label={`${run.employee_name} — ${run.status}${payable ? ', Enter to mark paid' : ''}`}
+                {...rowKb}
+                role={payable ? rowKb.role : undefined}
+                onKeyDown={(e) => { if (e.target === e.currentTarget) rowKb.onKeyDown(e) }}
+              >
                 <Td>
                   <span className="font-mono text-xs text-slate-500 mr-2">{run.employee_code}</span>
                   <span className="font-medium">{run.employee_name}</span>
@@ -423,14 +546,17 @@ function PayrollProcessingTab() {
                 <Td className="text-xs font-mono text-teal-600">{run.journal_entry_no || '-'}</Td>
                 <Td>
                   {run.status === 'processed' && (
-                    <Button variant="ghost" size="sm" onClick={() => handleMarkPaid(run.id)}
+                    <Button variant="ghost" size="sm"
+                      aria-label={`Mark ${run.employee_name}'s payroll as paid`}
+                      onClick={() => setPayingRun(run)}
                       className="text-xs bg-teal-50 hover:bg-teal-100 text-teal-600">
                       <CreditCard size={12} /> Pay
                     </Button>
                   )}
                 </Td>
               </Tr>
-            ))}
+              )
+            })}
           </Tbody>
           {runs.length > 0 && (
             <tfoot>
@@ -445,6 +571,35 @@ function PayrollProcessingTab() {
           )}
         </Table>
       </Card>
+
+      <ConfirmDialog
+        open={confirmProcess}
+        onOpenChange={setConfirmProcess}
+        title={`Process payroll for ${period}?`}
+        description="Calculates every active employee's salary for the period and posts the payroll journal entries."
+        confirmLabel="Process payroll"
+        // Posts a journal per employee, so the dialog opens on Cancel: Alt+N is
+        // a chord, and the Enter that follows it must not be the Enter that
+        // posts. Same reason the mark-paid confirm below is a danger tone.
+        tone="danger"
+        onConfirm={() => { setConfirmProcess(false); handleProcess() }}
+        loading={processing}
+      />
+
+      <ConfirmDialog
+        open={!!payingRun}
+        onOpenChange={(o) => { if (!o) setPayingRun(null) }}
+        title="Mark payroll run as paid?"
+        description={payingRun
+          ? `${payingRun.employee_name} · net ${formatCurrency(payingRun.net_salary)} for ${period}. This posts the payment and cannot be undone from here.`
+          : undefined}
+        confirmLabel="Mark paid"
+        // Opened by Enter on the focused run row — the same key would otherwise
+        // land on "Mark paid" and post the payment on a double-tap.
+        tone="danger"
+        onConfirm={handleMarkPaid}
+        loading={markingPaid}
+      />
     </div>
   )
 }

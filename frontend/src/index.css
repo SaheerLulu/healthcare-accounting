@@ -231,6 +231,54 @@ button:active:not(:disabled), [role="button"]:active:not(:disabled) {
   transition: background-color 150ms ease, box-shadow 150ms ease;
 }
 
+/* Keyboard row focus (useListKeyboardNav).
+
+   A keyboard-only user needs the same "you are here" the mouse gets from
+   :hover, and needs it MORE — there is no pointer to look at. The focused row
+   therefore reuses the hover treatment and adds a solid teal rail, so the
+   focused row still reads as focused while the pointer happens to rest on a
+   different one.
+
+   :focus-visible rather than :focus so clicking a row does not leave a rail
+   behind; the rail means "the keyboard is here". outline:none is safe only
+   because the rail replaces it — never drop one without the other. */
+.table-striped tbody tr[data-kbd-row]:focus-visible,
+tr[data-kbd-row]:focus-visible,
+[data-kbd-row]:focus-visible {
+  outline: none;
+  background-color: var(--color-table-hover);
+  box-shadow: inset 4px 0 0 var(--brand);
+}
+
+/* NO cursor rule here on purpose.
+   useListKeyboardNav stamps role="button" on any row it can activate, which is
+   not the same as the row being clickable — several registers are navigable by
+   keyboard while a click deliberately does nothing (activating them posts or
+   disposes something). Styling every such row with a pointer promised the
+   mouse an action that was not there. A page that DOES handle onClick adds
+   `cursor-pointer` itself, next to the handler, where the two stay together. */
+
+/* The rail above is a TABLE-row treatment: an inset left edge reads as a rail
+   only across a full-width row. The same hook drives card grids too — the
+   dashboard KPI tiles, the Gateway voucher tiles — where an inset shadow is
+   swallowed by the card's own background and rounded corners, so those
+   elements ended up with `outline: none` and nothing in its place, i.e. worse
+   than before they were focusable. Anything that is not a <tr> gets a real
+   ring instead. */
+[data-kbd-row]:not(tr):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--brand);
+  border-radius: inherit;
+}
+
+/* Thead is `sticky top-0`, and useListKeyboardNav scrolls the focused row with
+   `block: 'nearest'` — which counts the header's space as visible, so arrowing
+   upward parked the focused row underneath it. The reserve is the 40px Th
+   height (h-10). */
+[data-kbd-row] {
+  scroll-margin-top: 2.5rem;
+}
+
 /* Cards */
 .card-shadow {
   background-color: var(--surface-0);

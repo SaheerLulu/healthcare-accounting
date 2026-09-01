@@ -9,7 +9,11 @@ import { cn } from '../../lib/utils'
  * light/dark theme from index.css without needing Tailwind dark: variants.
  */
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-60 disabled:pointer-events-none',
+  // `ring-offset-2` draws its halo in Tailwind's default white, which on a
+  // dark surface reads as a bright band around the button rather than a gap.
+  // The theme lives in CSS variables the ring utilities do not read, so the
+  // offset colour has to be named explicitly.
+  'inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--surface-0)] disabled:opacity-60 disabled:pointer-events-none',
   {
     variants: {
       variant: {
@@ -41,10 +45,20 @@ export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean
+  /**
+   * The chord that also runs this action, e.g. "Alt+N".
+   *
+   * Rendered as a trailing keycap and announced via `aria-keyshortcuts`, so
+   * the binding is advertised at the control it belongs to instead of only in
+   * the bottom hint bar. It does NOT bind the key — the screen still registers
+   * it through usePageKeyboard, which is what puts it in the hint bar and the
+   * F1 catalogue; this is the label half of that same contract.
+   */
+  chord?: string
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, style, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, style, chord, children, ...props }, ref) => {
     const Comp = asChild ? Slot : 'button'
 
     // Apply theme-var backgrounds via inline style so dark mode works via CSS vars
@@ -66,8 +80,34 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         className={cn(buttonVariants({ variant, size, className }))}
         style={themeStyle}
         ref={ref}
+        aria-keyshortcuts={chord}
         {...props}
-      />
+      >
+        {/* Slot requires EXACTLY ONE child — React.Children.only throws on an
+            array, and `{children}{cond && <kbd/>}` is always an array of two
+            even when the second element is `false`. So in asChild mode the
+            child is passed through untouched and the keycap is dropped;
+            `aria-keyshortcuts` above still advertises the chord. */}
+        {asChild ? (
+          children
+        ) : (
+          <>
+            {children}
+            {chord && (
+              <kbd
+                className="mono text-[10px] px-1 py-0.5 rounded hidden lg:inline-block"
+                style={{
+                  border: '1px solid currentColor',
+                  opacity: 0.55,
+                  lineHeight: 1.4,
+                }}
+              >
+                {chord}
+              </kbd>
+            )}
+          </>
+        )}
+      </Comp>
     )
   }
 )

@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Info, Loader2, ShieldAlert } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { AlertTriangle, CheckCircle2, Info, Loader2, RefreshCw, ShieldAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { getGSTFilingHealth, type FilingHealthReport, type FilingHealthSection } from '../../lib/api'
 import { getCurrentPeriod } from '../../lib/utils'
+import { Button } from '../../components/ui/button'
 import { PeriodPicker } from '../../components/ui/period-picker'
 import { Card } from '../../components/ui/card'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 import { useLocation } from '../../contexts/LocationContext'
 
 const SEVERITY_STYLE: Record<string, { bg: string; fg: string; Icon: typeof Info }> = {
@@ -13,17 +17,40 @@ const SEVERITY_STYLE: Record<string, { bg: string; fg: string; Icon: typeof Info
   info: { bg: '#f0f9ff', fg: '#0369a1', Icon: Info },
 }
 
-function SectionCard({ section }: { section: FilingHealthSection }) {
-  const [open, setOpen] = useState(false)
+/** The exact prop bag useListKeyboardNav hands each row. */
+type RowProps = ReturnType<ReturnType<typeof useListKeyboardNav>['rowProps']>
+
+interface SectionCardProps {
+  section: FilingHealthSection
+  /** Lifted to the page so one key can open/close the section the user is on. */
+  open: boolean
+  onToggle: () => void
+  panelId: string
+  rowProps: RowProps
+}
+
+function SectionCard({ section, open, onToggle, panelId, rowProps }: SectionCardProps) {
   const sev = SEVERITY_STYLE[section.severity] ?? SEVERITY_STYLE.info
   const clean = section.status === 'ok' && section.count === 0
   const columns = section.rows.length > 0 ? Object.keys(section.rows[0]) : []
+  const expandable = section.rows.length > 0
 
   return (
     <Card className="overflow-hidden">
+      {/*
+        The header used to be a bare <div onClick>: the offending invoices —
+        the whole point of the screen — were behind a mouse click and nothing
+        else. rowProps supplies the role, the roving tabIndex and the
+        Enter/Space handler, so this is a real button to the keyboard and to a
+        screen reader without becoming one more Tab stop per section.
+      */}
       <div
         className="flex items-center gap-3 px-4 py-3 cursor-pointer"
-        onClick={() => section.rows.length > 0 && setOpen((o) => !o)}
+        onClick={() => expandable && onToggle()}
+        aria-expanded={expandable ? open : undefined}
+        aria-controls={expandable && open ? panelId : undefined}
+        aria-disabled={expandable ? undefined : true}
+        {...rowProps}
       >
         {clean ? (
           <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
@@ -47,7 +74,16 @@ function SectionCard({ section }: { section: FilingHealthSection }) {
         )}
       </div>
       {open && section.rows.length > 0 && (
-        <div className="border-t table-scroll" style={{ borderColor: 'var(--line)' }}>
+        // The detail table scrolls sideways, so the rail is a focusable region:
+        // otherwise its right-hand columns are unreachable without a pointer.
+        <div
+          id={panelId}
+          className="border-t table-scroll"
+          style={{ borderColor: 'var(--line)' }}
+          tabIndex={0}
+          role="region"
+          aria-label={`${section.title} — offending rows`}
+        >
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-slate-50" style={{ color: 'var(--ink-2)' }}>
@@ -82,10 +118,24 @@ function SectionCard({ section }: { section: FilingHealthSection }) {
 }
 
 export default function GSTFilingHealthPage() {
+  const navigate = useNavigate()
   const [data, setData] = useState<FilingHealthReport | null>(null)
   const [loading, setLoading] = useState(false)
   const [period, setPeriod] = useState(getCurrentPeriod())
+  // Which sections are open, keyed by title — lifted out of SectionCard so the
+  // page-level row cursor can toggle the section the user is standing on.
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
   const { activeLocationId } = useLocation()
+
+  // PeriodPicker forwards its ref to the MONTH select — the entry point of the
+  // pair. That element is both the F2 target and what PageTransition focuses on
+  // arrival, since the period is the only input on this screen.
+  // usePageKeyboard only calls focus()/select?.(), both safe on a <select>.
+  const periodRef = useRef<HTMLInputElement | null>(null)
+  const bindPeriod = useCallback((el: HTMLSelectElement | null) => {
+    el?.setAttribute('data-autofocus', '')
+    periodRef.current = el as unknown as HTMLInputElement | null
+  }, [])
 
   async function load() {
     setLoading(true)
@@ -104,6 +154,30 @@ export default function GSTFilingHealthPage() {
   const order = { error: 0, warning: 1, info: 2 }
   sections.sort((a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3))
 
+  const toggleSection = useCallback((title: string) => {
+    setOpenSections((prev) => ({ ...prev, [title]: !prev[title] }))
+  }, [])
+
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // ↑↓ walk the section cards (errors first), Enter/Space opens the one under
+  // the cursor. F3 jumps here from the period picker.
+  const list = useListKeyboardNav({
+    count: sections.length,
+    onActivate: (i) => {
+      const s = sections[i]
+      if (s && s.rows.length > 0) toggleSection(s.title)
+    },
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Re-run check', run: load, when: !loading },
+    ],
+    searchRef: periodRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div className="max-w-5xl mx-auto space-y-5">
       <div className="mb-6">
@@ -119,8 +193,16 @@ export default function GSTFilingHealthPage() {
       <div className="flex items-center gap-2 sm:gap-3 mb-5 flex-wrap">
         <div className="flex items-center gap-2">
           <label className="text-xs text-slate-500 font-medium">Period</label>
-          <PeriodPicker value={period} onChange={setPeriod} />
+          <PeriodPicker ref={bindPeriod} value={period} onChange={setPeriod} label="Filing health period" />
         </div>
+        {/* Alt+R re-runs the scan, but the only evidence of that was the hint
+            bar: nothing on the screen said the check could be run again and
+            there was nothing to Tab to. The chord and the control are the same
+            action — a plain GET, so no confirmation is owed. */}
+        <Button variant="secondary" onClick={load} disabled={loading}>
+          {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+          Re-run check
+        </Button>
         {data && (
           <span
             className="ml-auto text-xs font-semibold px-3 py-1.5 rounded-full"
@@ -140,8 +222,17 @@ export default function GSTFilingHealthPage() {
       ) : !data ? (
         <Card className="p-8 sm:p-12 text-center text-slate-400 text-sm">Select a period to run the check</Card>
       ) : (
-        <div className="flex flex-col gap-3">
-          {sections.map((s) => <SectionCard key={s.title} section={s} />)}
+        <div className="flex flex-col gap-3" {...list.containerProps}>
+          {sections.map((s, i) => (
+            <SectionCard
+              key={s.title}
+              section={s}
+              open={!!openSections[s.title]}
+              onToggle={() => toggleSection(s.title)}
+              panelId={`filing-health-panel-${i}`}
+              rowProps={list.rowProps(i)}
+            />
+          ))}
         </div>
       )}
     </div>

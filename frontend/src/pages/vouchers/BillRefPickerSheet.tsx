@@ -8,6 +8,7 @@ import {
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose,
 } from '../../components/ui/sheet'
@@ -152,6 +153,17 @@ export function BillRefPickerSheet({
     onOpenChange(false)
   }
 
+  /**
+   * Ctrl+S / Ctrl+Enter commit whatever the visible tab offers. The AGAINST
+   * tab has nothing to commit on its own — there the choice IS the row, so
+   * Enter on the focused row is the commit.
+   */
+  function submitCurrentTab() {
+    if (tab === 'NEW') pickFreeform()
+    else if (tab === 'ADVANCE') pickAdvance()
+    else if (tab === 'ON_ACCOUNT') pickOnAccount()
+  }
+
   const partyLabel = partyId
     ? `${partyType ?? 'Party'}: ${partyName}`
     : 'No party — only freeform reference is available'
@@ -163,7 +175,7 @@ export function BillRefPickerSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent width="lg">
+      <SheetContent width="lg" onSubmit={submitCurrentTab}>
         <div className="flex flex-col h-full">
           <SheetHeader>
             <SheetTitle>Bill / Invoice Reference</SheetTitle>
@@ -171,7 +183,7 @@ export function BillRefPickerSheet({
           </SheetHeader>
           <SheetBody>
             <Tabs value={tab} onValueChange={(v) => setTab(v as BillRefKind)}>
-              <TabsList>
+              <TabsList label="Reference type">
                 <TabsTrigger value="AGAINST" disabled={!partyId}>Against Bill</TabsTrigger>
                 <TabsTrigger value="ADVANCE" disabled={!partyId}>Advance</TabsTrigger>
                 <TabsTrigger value="ON_ACCOUNT" disabled={!partyId}>On Account</TabsTrigger>
@@ -188,6 +200,7 @@ export function BillRefPickerSheet({
                     <Empty>No outstanding bills for this supplier</Empty>
                   ) : (
                     <RefTable
+                      label="Outstanding bills"
                       cols={['Bill #', 'Date', 'Due', 'Balance']}
                       rows={billsList.map((b) => {
                         const overdue = !!b.due_date && b.due_date < today
@@ -210,6 +223,7 @@ export function BillRefPickerSheet({
                   <Empty>No outstanding invoices for this customer</Empty>
                 ) : (
                   <RefTable
+                    label="Outstanding invoices"
                     cols={['Invoice #', 'Date', '', 'Amount']}
                     rows={invoicesList.map((inv, i) => ({
                       key: `i-${inv.invoice_no}-${i}`,
@@ -252,7 +266,14 @@ export function BillRefPickerSheet({
                       <Input
                         value={freeRefNo}
                         onChange={(e) => setFreeRefNo(e.target.value)}
+                        // Enter commits the reference — this pair of fields IS
+                        // the form, and the confirm button is three tab stops
+                        // away past the footer.
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); pickFreeform() }
+                        }}
                         placeholder="INV-2026-007"
+                        data-autofocus
                         autoFocus
                       />
                     </label>
@@ -262,6 +283,9 @@ export function BillRefPickerSheet({
                         type="date"
                         value={freeRefDate}
                         onChange={(e) => setFreeRefDate(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); pickFreeform() }
+                        }}
                       />
                     </label>
                   </div>
@@ -274,7 +298,7 @@ export function BillRefPickerSheet({
               <Button type="button" variant="secondary">Cancel</Button>
             </SheetClose>
             {tab === 'NEW' && (
-              <Button type="button" onClick={pickFreeform}>
+              <Button type="button" onClick={pickFreeform} chord="Ctrl+Enter">
                 <Check size={14} /> Use this reference
               </Button>
             )}
@@ -293,15 +317,34 @@ function Empty({ children }: { children: React.ReactNode }) {
   )
 }
 
-function RefTable({ cols, rows }: {
+function RefTable({ label, cols, rows }: {
+  label: string
   cols: string[]
   rows: { key: string; onClick: () => void; cells: React.ReactNode[] }[]
 }) {
+  // Picking a reference IS clicking a row, so without a roving tabindex the
+  // whole AGAINST tab is pointer-only: ↑↓ move, Enter picks, and the table
+  // costs one tab stop rather than one per outstanding bill.
+  const list = useListKeyboardNav({
+    count: rows.length,
+    onActivate: (i) => rows[i].onClick(),
+  })
+
+  useEffect(() => {
+    // The rows arrive after the panel opened, by which time Radix has parked
+    // focus on the header close button. Claim it — but only from there, so
+    // switching tabs by keyboard does not yank focus out of the tab strip.
+    const el = document.activeElement as HTMLElement | null
+    const parked = !el || el === document.body || el.getAttribute('aria-label') === 'Close'
+    if (parked) list.focusList()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <div className="table-scroll">
       {/* 380px is under the sheet's own content width, so the rail only
           engages once the sheet has gone full-screen on a phone. */}
-      <table className="w-full text-sm min-w-[380px]">
+      <table className="w-full text-sm min-w-[380px]" aria-label={label}>
         <thead className="border-b" style={{ borderColor: 'var(--line)' }}>
           <tr>
             {cols.map((c, i) => (
@@ -315,20 +358,21 @@ function RefTable({ cols, rows }: {
             ))}
           </tr>
         </thead>
-        <tbody>
-          {rows.map((r) => (
+        <tbody {...list.containerProps}>
+          {rows.map((r, i) => (
             <tr
               key={r.key}
               onClick={r.onClick}
+              {...list.rowProps(i)}
               className="border-b cursor-pointer transition-colors"
               style={{ borderColor: 'var(--line)' }}
               onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
               onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
             >
-              {r.cells.map((cell, i) => (
+              {r.cells.map((cell, ci) => (
                 <td
-                  key={i}
-                  className={`px-2 py-2 ${i === r.cells.length - 1 ? 'text-right' : ''}`}
+                  key={ci}
+                  className={`px-2 py-2 ${ci === r.cells.length - 1 ? 'text-right' : ''}`}
                 >
                   {cell}
                 </td>
@@ -347,7 +391,7 @@ function SimpleTabBody({ body, action, onAction }: {
   return (
     <div className="pt-2 space-y-4">
       <p className="text-sm" style={{ color: 'var(--ink-2)' }}>{body}</p>
-      <Button type="button" onClick={onAction}>
+      <Button type="button" onClick={onAction} chord="Ctrl+Enter">
         <Check size={14} /> {action}
       </Button>
     </div>

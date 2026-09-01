@@ -19,9 +19,9 @@ import { Input } from '../../components/ui/input'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose, SheetTrigger,
 } from '../../components/ui/sheet'
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '../../components/ui/dialog'
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 const STATUS_BADGE = {
   draft: 'default',
@@ -48,6 +48,9 @@ export default function BillDetailPage() {
   const [busy, setBusy] = useState(false)
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // Both lifted out of their children so a chord can reach them.
+  const [payOpen, setPayOpen] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function load() {
     setLoading(true)
@@ -114,6 +117,34 @@ export default function BillDetailPage() {
     }
   }
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Every action is gated by the same status condition that renders its button,
+  // so a chord is never bound to something the screen is not offering — and the
+  // hint bar shows exactly the verbs this bill can take right now.
+  const isDraft = bill?.status === 'draft'
+  const isPayable = bill?.status === 'open' || bill?.status === 'partially_paid'
+  const canCancel = !!bill && bill.status !== 'cancelled' && bill.status !== 'paid' && bill.status !== 'draft'
+
+  // Read-only rows still earn a cursor: F3 then ↑↓ walk the line items and drag
+  // the horizontal scroller along with them.
+  const lineList = useListKeyboardNav({ count: bill?.lines.length ?? 0 })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+E', label: 'Edit', when: isDraft, run: () => navigate(`/bills/${billId}/edit`) },
+      // Ctrl+A posts, exactly as it does on the journal and expense detail
+      // screens — approving a bill is the same "commit it to the books" verb.
+      { chord: 'Ctrl+A', label: 'Approve', when: isDraft && !busy, run: handleApprove },
+      { chord: 'Alt+N', label: 'Record payment', when: isPayable, run: () => setPayOpen(true) },
+      { chord: 'Alt+U', label: 'Attach file', when: !!bill, run: () => fileInputRef.current?.click() },
+      { chord: 'Alt+V', label: 'Cancel bill', when: canCancel, run: () => setConfirmCancel(true) },
+      { chord: 'Alt+D', label: 'Delete', when: isDraft, run: () => setConfirmDelete(true) },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    onFocusList: lineList.focusList,
+    onBack: () => navigate('/bills'),
+  })
+
   if (loading || !bill) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
   }
@@ -172,7 +203,7 @@ export default function BillDetailPage() {
             </>
           )}
           {(bill.status === 'open' || bill.status === 'partially_paid') && (
-            <RecordPaymentSheet bill={bill} onRecorded={load} />
+            <RecordPaymentSheet bill={bill} open={payOpen} onOpenChange={setPayOpen} onRecorded={load} />
           )}
           {bill.status !== 'cancelled' && bill.status !== 'paid' && bill.status !== 'draft' && (
             <Button variant="secondary" size="sm" onClick={() => setConfirmCancel(true)}>
@@ -219,9 +250,10 @@ export default function BillDetailPage() {
                 <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
               </tr>
             </thead>
-            <tbody>
-              {bill.lines.map((l) => (
-                <tr key={l.id} className="border-b border-slate-100 last:border-0">
+            <tbody {...lineList.containerProps}>
+              {bill.lines.map((l, i) => (
+                <tr key={l.id} className="border-b border-slate-100 last:border-0"
+                  {...lineList.rowProps(i)}>
                   <td className="px-4 py-2.5">
                     <div className="font-medium text-slate-900">{l.account_name}</div>
                     <div className="text-xs text-slate-400 font-mono">{l.account_code}</div>
@@ -293,8 +325,9 @@ export default function BillDetailPage() {
                       ) : '—'}
                     </td>
                     <td className="px-2 py-2.5">
-                      <button onClick={() => handleDeletePayment(p.id)}
+                      <button type="button" onClick={() => handleDeletePayment(p.id)}
                         className="p-2.5 sm:p-1.5 text-slate-300 hover:text-rose-600 rounded hover:bg-slate-100"
+                        aria-label={`Void payment of ${formatCurrency(p.amount)} on ${formatDate(p.date)}`}
                         title="Void payment">
                         <Trash2 size={13} />
                       </button>
@@ -307,7 +340,7 @@ export default function BillDetailPage() {
         )}
       </Card>
 
-      <AttachmentsCard bill={bill} onChange={load} />
+      <AttachmentsCard bill={bill} onChange={load} inputRef={fileInputRef} />
 
       {bill.notes && (
         <Card className="p-4 mb-4">
@@ -316,41 +349,42 @@ export default function BillDetailPage() {
         </Card>
       )}
 
-      {/* Cancel dialog */}
-      <Dialog open={confirmCancel} onOpenChange={setConfirmCancel}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Cancel this bill?</DialogTitle></DialogHeader>
-          <p className="text-sm text-slate-600">
-            Cancelling reverses the bill journal entry. Any recorded payments must be voided first.
-          </p>
-          <div className="flex flex-wrap gap-2 justify-end pt-4">
-            <Button variant="secondary" onClick={() => setConfirmCancel(false)}>Keep open</Button>
-            <Button variant="destructive" onClick={handleCancel} disabled={busy}>
-              {busy && <Loader2 className="animate-spin" size={14} />} Cancel Bill
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Both destructive actions are chord-reachable (Alt+V, Alt+D), so they
+          go through ConfirmDialog — which lands focus on Cancel for a danger
+          tone and takes Ctrl+Enter as the explicit "yes". */}
+      <ConfirmDialog
+        open={confirmCancel}
+        onOpenChange={setConfirmCancel}
+        title="Cancel this bill?"
+        description="Cancelling reverses the bill journal entry. Any recorded payments must be voided first."
+        confirmLabel="Cancel Bill"
+        cancelLabel="Keep open"
+        tone="danger"
+        loading={busy}
+        onConfirm={handleCancel}
+      />
 
-      {/* Delete dialog */}
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Delete this draft bill?</DialogTitle></DialogHeader>
-          <p className="text-sm text-slate-600">This cannot be undone. Drafts have no journal entry to reverse.</p>
-          <div className="flex flex-wrap gap-2 justify-end pt-4">
-            <Button variant="secondary" onClick={() => setConfirmDelete(false)}>Keep</Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={busy}>
-              {busy && <Loader2 className="animate-spin" size={14} />} Delete
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Delete this draft bill?"
+        description="This cannot be undone. Drafts have no journal entry to reverse."
+        confirmLabel="Delete"
+        cancelLabel="Keep"
+        tone="danger"
+        loading={busy}
+        onConfirm={handleDelete}
+      />
     </div>
   )
 }
 
-function RecordPaymentSheet({ bill, onRecorded }: { bill: Bill; onRecorded: () => void }) {
-  const [open, setOpen] = useState(false)
+function RecordPaymentSheet({ bill, open, onOpenChange, onRecorded }: {
+  bill: Bill
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onRecorded: () => void
+}) {
   const [saving, setSaving] = useState(false)
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [amount, setAmount] = useState(bill.balance_due)
@@ -364,7 +398,7 @@ function RecordPaymentSheet({ bill, onRecorded }: { bill: Bill; onRecorded: () =
     try {
       await recordBillPayment(bill.id, { date, amount, mode, reference, notes })
       toast.success('Payment recorded')
-      setOpen(false)
+      onOpenChange(false)
       onRecorded()
     } catch (err) {
       const e = err as { response?: { data?: { detail?: string } } }
@@ -374,7 +408,7 @@ function RecordPaymentSheet({ bill, onRecorded }: { bill: Bill; onRecorded: () =
 
   return (
     <Sheet open={open} onOpenChange={(o) => {
-      setOpen(o)
+      onOpenChange(o)
       if (o) {
         setAmount(bill.balance_due)
         setReference('')
@@ -401,18 +435,26 @@ function RecordPaymentSheet({ bill, onRecorded }: { bill: Bill; onRecorded: () =
                   <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
                 </Field>
                 <Field label="Amount" required>
-                  <Input type="number" step="0.01" min="0.01" max={bill.balance_due} required value={amount}
+                  {/* The sheet opens straight into the amount (seeded with the
+                      balance due, selected on focus), so a part-payment is one
+                      keystroke away instead of a Tab walk off the close X. */}
+                  <Input data-autofocus type="number" step="0.01" min="0.01" max={bill.balance_due} required value={amount}
                     onChange={(e) => setAmount(e.target.value)} className="text-right font-mono" />
                 </Field>
               </div>
-              <Field label="Paid from">
-                <div className="flex gap-2">
+              {/* `as="div"`: a radiogroup may not sit inside a <label>. sr-only
+                  rather than `hidden` keeps the radios focusable, so ←/→ picks
+                  bank vs cash. */}
+              <Field label="Paid from" as="div">
+                <div className="flex gap-2" role="radiogroup" aria-label="Paid from">
                   {(['bank', 'cash'] as const).map((m) => (
                     <label key={m} className={cn(
                       'flex-1 flex items-center justify-center px-3 py-2 rounded-lg border cursor-pointer text-sm capitalize',
+                      'focus-within:ring-2 focus-within:ring-teal-500 focus-within:ring-offset-1',
                       mode === m ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-slate-200 text-slate-600'
                     )}>
-                      <input type="radio" checked={mode === m} onChange={() => setMode(m)} className="hidden" />
+                      <input type="radio" name="bill-payment-mode" value={m}
+                        checked={mode === m} onChange={() => setMode(m)} className="sr-only" />
                       {m}
                     </label>
                   ))}
@@ -438,20 +480,22 @@ function RecordPaymentSheet({ bill, onRecorded }: { bill: Bill; onRecorded: () =
   )
 }
 
-function Field({ label, required, hint, children }: {
+function Field({ label, required, hint, children, as: Tag = 'label' }: {
   label: string
   required?: boolean
   hint?: string
   children: React.ReactNode
+  /** 'div' for groups of controls (a radiogroup) that must not sit in a label. */
+  as?: 'label' | 'div'
 }) {
   return (
-    <label className="block">
+    <Tag className="block">
       <span className="block text-xs font-medium text-slate-600 mb-1.5">
         {label} {required && <span className="text-rose-500">*</span>}
       </span>
       {children}
       {hint && <span className="block text-xs text-slate-400 mt-1">{hint}</span>}
-    </label>
+    </Tag>
   )
 }
 
@@ -478,8 +522,12 @@ function isImage(a: BillAttachment) {
   return a.content_type?.startsWith('image/')
 }
 
-function AttachmentsCard({ bill, onChange }: { bill: Bill; onChange: () => void }) {
-  const inputRef = useRef<HTMLInputElement>(null)
+function AttachmentsCard({ bill, onChange, inputRef }: {
+  bill: Bill
+  onChange: () => void
+  /** Owned by the page so the Alt+U chord can open the file dialog too. */
+  inputRef: React.RefObject<HTMLInputElement>
+}) {
   const [isDragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const attachments = bill.attachments || []
@@ -534,9 +582,19 @@ function AttachmentsCard({ bill, onChange }: { bill: Bill; onChange: () => void 
       </div>
 
       <div className="p-4">
-        {/* Drop zone */}
+        {/* Drop zone. The real <input type="file"> is display:none and cannot
+            take focus, so the zone itself is the keyboard affordance: a button
+            role with Enter/Space, reachable directly with Alt+U. */}
         <div
+          role="button"
+          tabIndex={0}
+          aria-label="Attach files — opens the file picker"
           onClick={() => inputRef.current?.click()}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return
+            e.preventDefault()
+            inputRef.current?.click()
+          }}
           onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
@@ -546,6 +604,7 @@ function AttachmentsCard({ bill, onChange }: { bill: Bill; onChange: () => void 
           }}
           className={cn(
             'border-2 border-dashed rounded-lg py-6 px-4 flex flex-col items-center justify-center text-center cursor-pointer transition-colors',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2',
             isDragging
               ? 'border-teal-400 bg-teal-50'
               : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
@@ -561,6 +620,7 @@ function AttachmentsCard({ bill, onChange }: { bill: Bill; onChange: () => void 
               <UploadCloud size={20} className="text-slate-400 mb-1.5" />
               <p className="text-sm text-slate-600">
                 <span className="text-teal-700 font-medium">Click to upload</span> or drag and drop
+                <span className="hidden md:inline"> · <kbd className="mono text-[10px]">Alt+U</kbd></span>
               </p>
               <p className="text-xs text-slate-400 mt-0.5">Bill PDFs, scanned copies, supporting docs</p>
             </>
@@ -613,19 +673,23 @@ function AttachmentsCard({ bill, onChange }: { bill: Bill; onChange: () => void 
                 </div>
                 {/* Touch devices never fire :hover, so the row actions have to
                     be visible outright below the desktop breakpoint. */}
+                {/* Hover-reveal has to answer to the keyboard as well, or Tab
+                    lands on an invisible control at desktop width. */}
                 <a
                   href={a.file_url}
                   download={a.original_name}
                   target="_blank"
                   rel="noreferrer"
-                  className="p-2.5 sm:p-1.5 flex-shrink-0 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
+                  className="p-2.5 sm:p-1.5 flex-shrink-0 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
+                  aria-label={`Download ${a.original_name}`}
                   title="Download"
                 >
                   <Download size={14} />
                 </a>
                 <button
                   onClick={() => handleDelete(a)}
-                  className="p-2.5 sm:p-1.5 flex-shrink-0 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
+                  className="p-2.5 sm:p-1.5 flex-shrink-0 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100 lg:focus-visible:opacity-100"
+                  aria-label={`Remove ${a.original_name}`}
                   title="Remove"
                 >
                   <Trash2 size={14} />

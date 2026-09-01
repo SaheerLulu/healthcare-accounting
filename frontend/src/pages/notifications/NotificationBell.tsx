@@ -52,14 +52,34 @@ export default function NotificationBell() {
     }
   }, [tick, schedule])
 
+  // No chord is registered here. The bell renders on every screen, so a hotkey
+  // bound in this component would be app-wide — and an app-wide chord has no
+  // way to advertise itself: registerHints REPLACES the current page's hints,
+  // so it would appear in neither the bottom bar nor the F1 catalogue, and it
+  // would silently take a letter the page-scoped Alt+ range already uses
+  // (Alt+B is "Pay bills", "Deposit cash" and "Bounce" on three screens). The
+  // bell is a link in the header and stays reachable by Tab.
   return (
-    <Link to="/notifications" className="relative flex-shrink-0 p-2.5 sm:p-2 rounded hover:bg-gray-100" aria-label={`Notifications (${count} unread)`}>
+    <Link
+      to="/notifications"
+      className="relative flex-shrink-0 p-2.5 sm:p-2 rounded hover:bg-gray-100"
+      aria-label={`Notifications (${count} unread)`}
+    >
       <Bell size={18} />
       {count > 0 && (
-        <span className="absolute top-0.5 right-0.5 sm:-top-0.5 sm:-right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-medium flex items-center justify-center">
+        <span
+          aria-hidden="true"
+          className="absolute top-0.5 right-0.5 sm:-top-0.5 sm:-right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-medium flex items-center justify-center"
+        >
           {count > 99 ? '99+' : count}
         </span>
       )}
+      {/* The count changes on a background poll. Without a live region the only
+          way to learn that something arrived is to go and look at the badge —
+          which a keyboard-only or screen-reader user has no cheap way to do. */}
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {count > 0 ? `${count} unread notifications` : 'No unread notifications'}
+      </span>
     </Link>
   )
 }

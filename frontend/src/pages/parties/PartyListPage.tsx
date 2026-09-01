@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import {
   CUSTOMER_TYPES, getPartiesList, type PartyListRow, type PartyType,
@@ -12,6 +12,8 @@ import { MasterPage } from '../../components/ui/MasterPage'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
 import { useLocation } from '../../contexts/LocationContext'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 export default function PartyListPage({ partyType }: { partyType: PartyType }) {
   const [rows, setRows] = useState<PartyListRow[]>([])
@@ -22,6 +24,8 @@ export default function PartyListPage({ partyType }: { partyType: PartyType }) {
   const [customerType, setCustomerType] = useState('')
   const { activeLocationId } = useLocation()
   const isCustomer = partyType === 'Customer'
+  const searchRef = useRef<HTMLInputElement>(null)
+  const navigate = useNavigate()
 
   async function load() {
     setLoading(true)
@@ -58,6 +62,28 @@ export default function PartyListPage({ partyType }: { partyType: PartyType }) {
   const heading = partyType === 'Supplier' ? 'Suppliers' : 'Customers'
   const outstandingLabel = partyType === 'Supplier' ? 'Payable' : 'Receivable'
 
+  // Each row's name is a <Link>, so the rows were *reachable* by Tab — but only
+  // one stop at a time through however many parties the store has. Roving
+  // focus makes ↑↓ the way through the list and leaves Tab to jump past it.
+  const list = useListKeyboardNav({
+    count: rows.length,
+    onActivate: (i) => navigate(`${baseRoute}/${rows[i].id}`),
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+      {
+        chord: 'Alt+C',
+        label: 'Clear filters',
+        run: () => { setSearch(''); setCustomerType('') },
+        when: !!search || !!customerType,
+      },
+    ],
+    searchRef,
+    onFocusList: list.focusList,
+  })
+
   return (
     <div className="max-w-7xl mx-auto">
       <MasterPage
@@ -69,8 +95,9 @@ export default function PartyListPage({ partyType }: { partyType: PartyType }) {
           </span>
         }
         searchValue={search}
-        searchPlaceholder={`Search ${heading.toLowerCase()}…`}
+        searchPlaceholder={`Search ${heading.toLowerCase()}… (F2)`}
         onSearchChange={setSearch}
+        searchRef={searchRef}
         toolbar={isCustomer ? (
           <select
             value={customerType}
@@ -123,9 +150,14 @@ export default function PartyListPage({ partyType }: { partyType: PartyType }) {
                   <Th className="text-left">Status</Th>
                 </Tr>
               </Thead>
-              <Tbody>
-                {rows.map((r) => (
-                  <Tr key={r.id}>
+              <Tbody {...list.containerProps}>
+                {rows.map((r, i) => (
+                  <Tr
+                    key={r.id}
+                    className="cursor-pointer"
+                    aria-label={r.name}
+                    {...list.rowProps(i)}
+                  >
                     <Td className="font-medium">
                       <Link to={`${baseRoute}/${r.id}`} className="hover:underline" style={{ color: 'var(--brand)' }}>
                         {r.name}

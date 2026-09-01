@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getGSTComputation, type GSTComputation } from '../../lib/api'
@@ -7,12 +8,26 @@ import { PeriodPicker } from '../../components/ui/period-picker'
 import { Card, CardContent } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
 import { useLocation } from '../../contexts/LocationContext'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 export default function GSTComputationPage() {
+  const navigate = useNavigate()
   const [data, setData] = useState<GSTComputation | null>(null)
   const [loading, setLoading] = useState(false)
   const [period, setPeriod] = useState(getCurrentPeriod())
   const { activeLocationId } = useLocation()
+
+  // PeriodPicker forwards its ref to the MONTH select — the entry point of the
+  // pair. That element is both the F2 target and what PageTransition focuses on
+  // arrival, since the period is what every figure on this worksheet is
+  // computed from.
+  // usePageKeyboard only calls focus()/select?.(), both safe on a <select>.
+  const periodRef = useRef<HTMLInputElement | null>(null)
+  const bindPeriod = useCallback((el: HTMLSelectElement | null) => {
+    el?.setAttribute('data-autofocus', '')
+    periodRef.current = el as unknown as HTMLInputElement | null
+  }, [])
 
   async function load() {
     setLoading(true)
@@ -29,6 +44,23 @@ export default function GSTComputationPage() {
 
   useEffect(() => { if (period) load() }, [period, activeLocationId])
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Nothing on this worksheet opens anything, so this is the read-only variant
+  // of the list nav: one roving tab stop over the rate-wise output rows,
+  // ↑↓/Home/End/PgUp/PgDn to read down them, and Tab still steps out to the
+  // cards below rather than through every rate.
+  const rateRows = data?.output_tax.by_rate ?? []
+  const list = useListKeyboardNav({ count: rateRows.length })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Refresh', run: load, when: !loading },
+    ],
+    searchRef: periodRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div className="max-w-5xl mx-auto space-y-5">
       <div className="mb-6">
@@ -38,9 +70,21 @@ export default function GSTComputationPage() {
 
       <div className="flex items-center gap-2 sm:gap-3 mb-6 flex-wrap">
         <div className="flex items-center gap-2">
-          <label className="text-xs text-slate-500 font-medium">Period</label>
-          <PeriodPicker value={period} onChange={setPeriod} />
+          {/* A caption for the pair, not a <label>: it labels no single control,
+              and the picker carries its own group name from `label`. */}
+          <span className="text-xs text-slate-500 font-medium">Period</span>
+          <PeriodPicker ref={bindPeriod} value={period} onChange={setPeriod} label="GST computation period" />
         </div>
+      </div>
+
+      {/* Every figure below is recomputed when the period changes and focus
+          never moves, so say what arrived. */}
+      <div className="sr-only" role="status" aria-live="polite">
+        {loading
+          ? 'Loading GST computation…'
+          : data
+            ? `GST computation for ${period}. Net payable ${formatCurrency(data.net_payable.total)}.`
+            : ''}
       </div>
 
       {loading ? (
@@ -53,7 +97,7 @@ export default function GSTComputationPage() {
           <Card className="overflow-hidden">
             <CardContent>
               <h2 className="text-sm font-semibold text-slate-900 mb-3">Output Tax (Sales)</h2>
-              <Table>
+              <Table label="Output tax by rate">
                 <Thead>
                   <Tr className="bg-slate-50">
                     <Th className="text-left">Rate</Th>
@@ -63,9 +107,9 @@ export default function GSTComputationPage() {
                     <Th className="text-right">IGST</Th>
                   </Tr>
                 </Thead>
-                <Tbody>
-                  {data.output_tax.by_rate.map((r) => (
-                    <Tr key={r.rate}>
+                <Tbody {...list.containerProps}>
+                  {rateRows.map((r, i) => (
+                    <Tr key={r.rate} aria-label={`${r.rate} percent, taxable ${formatCurrency(r.taxable)}`} {...list.rowProps(i)}>
                       <Td className="text-slate-500">{r.rate}%</Td>
                       <Td className="text-right font-mono text-slate-900">{formatCurrency(r.taxable)}</Td>
                       <Td className="text-right font-mono text-slate-500">{formatCurrency(r.cgst)}</Td>
@@ -91,7 +135,7 @@ export default function GSTComputationPage() {
           <Card className="overflow-hidden">
             <CardContent>
               <h2 className="text-sm font-semibold text-slate-900 mb-3">Adjustments</h2>
-              <Table>
+              <Table label="Adjustments">
                 <Thead>
                   <Tr className="bg-slate-50">
                     <Th className="text-left">Item</Th>

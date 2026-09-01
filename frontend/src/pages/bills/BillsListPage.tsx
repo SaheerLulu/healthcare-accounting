@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import {
   Plus, Search, Calendar, X, AlertCircle,
@@ -13,6 +13,8 @@ import { useLocation } from '../../contexts/LocationContext'
 import { Button } from '../../components/ui/button'
 import { Badge } from '../../components/ui/badge'
 import { Input } from '../../components/ui/input'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/EmptyState'
@@ -46,6 +48,7 @@ export default function BillsListPage() {
   const [filter, setFilter] = useState<Filter>('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
 
   async function load() {
     setLoading(true)
@@ -87,6 +90,29 @@ export default function BillsListPage() {
 
   const hasFilters = !!(search || filter !== 'all' || dateFrom || dateTo)
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // The rows carry an onClick that opens the bill, which on its own is a
+  // pointer-only affordance: a <tr> is not focusable and does not answer Enter.
+  // useListKeyboardNav gives the table a roving tabindex — ↑↓ move, Enter
+  // opens, and Tab still steps clean out of the list rather than through all
+  // fifty rows of it.
+  const list = useListKeyboardNav({
+    count: bills.length,
+    onActivate: (i) => navigate(`/bills/${bills[i].id}`),
+  })
+
+  const clearFilters = () => { setSearch(''); setFilter('all'); setDateFrom(''); setDateTo('') }
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'New bill', run: () => navigate('/bills/new') },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+      { chord: 'Alt+C', label: 'Clear filters', run: clearFilters, when: hasFilters },
+    ],
+    searchRef,
+    onFocusList: list.focusList,
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       {/* Header */}
@@ -124,8 +150,8 @@ export default function BillsListPage() {
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 min-w-[12rem] sm:min-w-[220px] max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search bill #, vendor, notes…" className="pl-9" />
+          <Input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search bill #, vendor, notes… (F2)" className="pl-9" />
         </div>
         <div
           className="flex items-center gap-1 px-2 h-9 rounded-md w-full sm:w-auto"
@@ -139,7 +165,7 @@ export default function BillsListPage() {
             className="text-xs bg-transparent focus:outline-none min-w-0 flex-1 sm:flex-initial" style={{ color: 'var(--ink)' }} />
         </div>
         {hasFilters && (
-          <button onClick={() => { setSearch(''); setFilter('all'); setDateFrom(''); setDateTo('') }}
+          <button onClick={clearFilters}
             className="text-xs hover:underline inline-flex items-center gap-1" style={{ color: 'var(--ink-2)' }}>
             <X size={12} /> Clear
           </button>
@@ -170,11 +196,17 @@ export default function BillsListPage() {
                 <Th className="text-left">Status</Th>
               </Tr>
             </Thead>
-            <Tbody>
-              {bills.map((b) => {
+            <Tbody {...list.containerProps}>
+              {bills.map((b, i) => {
                 const overdue = isOverdue(b)
                 return (
-                  <Tr key={b.id} className="cursor-pointer" onClick={() => navigate(`/bills/${b.id}`)}>
+                  <Tr
+                    key={b.id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/bills/${b.id}`)}
+                    aria-label={`Bill ${b.bill_no || b.id} from ${b.vendor_name}`}
+                    {...list.rowProps(i)}
+                  >
                     <Td>
                       <Link to={`/bills/${b.id}`} onClick={(e) => e.stopPropagation()}
                         className="font-medium hover:underline mono" style={{ color: 'var(--brand)' }}>

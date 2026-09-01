@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import { Plus, Search } from 'lucide-react'
 
 interface MasterPageProps {
@@ -7,6 +7,8 @@ interface MasterPageProps {
   searchValue?: string
   searchPlaceholder?: string
   onSearchChange?: (value: string) => void
+  /** Attach the page's F2 target to the built-in search box. */
+  searchRef?: RefObject<HTMLInputElement>
   addLabel?: string
   onAdd?: () => void
   toolbar?: ReactNode
@@ -20,6 +22,7 @@ export function MasterPage({
   searchValue,
   searchPlaceholder = 'Search…',
   onSearchChange,
+  searchRef,
   addLabel,
   onAdd,
   toolbar,
@@ -56,6 +59,7 @@ export function MasterPage({
                 style={{ color: 'var(--ink-3)' }}
               />
               <input
+                ref={searchRef}
                 type="text"
                 value={searchValue ?? ''}
                 onChange={(e) => onSearchChange?.(e.target.value)}

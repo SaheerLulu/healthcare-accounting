@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, Fragment } from 'react'
+import { useEffect, useRef, useState, useCallback, Fragment } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { getAuditLogs, exportAuditLogsCsv, type AuditLog, type AuditLogParams } from '../lib/api'
 import { toast } from 'sonner'
 import { Search, ScrollText, Download } from 'lucide-react'
@@ -9,6 +10,8 @@ import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
 import { EmptyState } from '../components/ui/EmptyState'
 import { SkeletonTable } from '../components/ui/Skeletons'
 import { Pagination } from '../components/ui/Pagination'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 
 const ACTION_COLORS: Record<string, { bg: string; fg: string }> = {
   CREATE:   { bg: 'rgba(31,138,76,0.10)', fg: 'var(--success)' },
@@ -67,6 +70,8 @@ const MODEL_OPTIONS = [
 const ACTION_OPTIONS = ['', 'CREATE', 'UPDATE', 'DELETE', 'POST', 'REVERSE', 'GENERATE', 'SYNC']
 
 export default function AuditLogPage() {
+  const navigate = useNavigate()
+  const searchRef = useRef<HTMLInputElement>(null)
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [count, setCount] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -126,9 +131,91 @@ export default function AuditLogPage() {
   }
 
   const totalPages = Math.ceil(count / PAGE_SIZE)
+  const hasFilters = !!(search || filterAction || filterModel || dateFrom || dateTo)
+
+  // ─── Keyboard ─────────────────────────────────────────────────────────────
+  // Fifty rows, and the only tab stop in each was its Details button — so
+  // expanding the twentieth event cost forty Tab presses. A roving tabindex
+  // turns the table into one tab stop with ↑↓/Home/End/PgUp/PgDn inside it and
+  // Enter toggling the same disclosure the button does.
+  const list = useListKeyboardNav({
+    count: logs.length,
+    onActivate: (i) => {
+      const log = logs[i]
+      if (log) setExpandedId((cur) => (cur === log.id ? null : log.id))
+    },
+  })
+
+  // Paging by chord leaves focus on the pager, which says nothing about the
+  // fifty rows that just changed underneath it. Land in the new first row.
+  const focusAfterLoad = useRef(false)
+  function goToPage(next: number) {
+    if (next < 1 || next > totalPages) return
+    focusAfterLoad.current = true
+    setPage(next)
+  }
+  useEffect(() => {
+    if (loading || !focusAfterLoad.current) return
+    focusAfterLoad.current = false
+    if (logs.length > 0) list.focusList()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, logs])
+
+  function refresh() {
+    // A refresh swaps the table for the skeleton, so the row the user was
+    // standing on unmounts and focus falls to <body>. Reuse the same landing
+    // mechanism paging uses — but only when focus was actually in the table,
+    // so Alt+R from the search box leaves the caret in the search box.
+    focusAfterLoad.current = !!document.activeElement?.closest('[data-kbd-row]')
+    load()
+  }
+
+  /**
+   * Alt+← / Alt+→ from inside a filter field.
+   *
+   * Neither chord is in the shared GLOBAL_ALLOW_LIST, so the app-wide hotkey
+   * listener drops them the moment focus sits in an input or a select — and
+   * this screen has five of them, one of which (the search box) is exactly
+   * where F2 parks focus. So the two paging chords the hint bar advertises did
+   * nothing from anywhere a filtering user actually stands. Rather than widen
+   * a list every screen shares, the page answers the same two chords as they
+   * bubble out of its own fields; everywhere else (a focused row, the body)
+   * the global listener still owns them, and it ignores exactly the events
+   * handled here, so a chord can never fire twice.
+   */
+  function onFieldKeyDown(e: React.KeyboardEvent) {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+    const tag = (e.target as HTMLElement | null)?.tagName
+    if (tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA') return
+    if (e.key === 'ArrowRight') {
+      e.preventDefault()
+      goToPage(page + 1)
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault()
+      goToPage(page - 1)
+    }
+  }
+
+  function clearFilters() {
+    setSearch(''); setFilterAction(''); setFilterModel('')
+    setDateFrom(''); setDateTo(''); setPage(1)
+  }
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+X', label: 'Export CSV', run: handleExport, when: !exporting },
+      { chord: 'Alt+R', label: 'Refresh', run: refresh },
+      { chord: 'Alt+C', label: 'Clear filters', run: clearFilters, when: hasFilters },
+      { chord: 'Alt+Right', label: 'Next page', run: () => goToPage(page + 1), when: page < totalPages },
+      { chord: 'Alt+Left', label: 'Prev page', run: () => goToPage(page - 1), when: page > 1 },
+    ],
+    searchRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
 
   return (
-    <div className="max-w-7xl mx-auto space-y-5">
+    <div className="max-w-7xl mx-auto space-y-5" onKeyDown={onFieldKeyDown}>
       <div>
         <h1 className="text-lg sm:text-xl font-semibold" style={{ color: 'var(--ink)', letterSpacing: '-0.01em' }}>Audit Log</h1>
         <p className="text-sm mt-0.5" style={{ color: 'var(--ink-2)' }}>Track all create, update, delete, and system actions.</p>
@@ -139,6 +226,7 @@ export default function AuditLogPage() {
         <div className="relative w-full sm:w-auto">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--ink-3)' }} />
           <Input
+            ref={searchRef}
             className="pl-8 pr-3 w-full sm:w-52"
             placeholder="Search object / user…"
             value={search}
@@ -208,10 +296,14 @@ export default function AuditLogPage() {
                 <Th>Details</Th>
               </Tr>
             </Thead>
-            <Tbody>
-              {logs.map((log) => (
+            <Tbody {...list.containerProps}>
+              {logs.map((log, i) => (
                 <Fragment key={log.id}>
-                  <Tr>
+                  <Tr
+                    aria-expanded={expandedId === log.id}
+                    aria-controls={`audit-detail-${log.id}`}
+                    {...list.rowProps(i)}
+                  >
                     <Td className="whitespace-nowrap" style={{ color: 'var(--ink-2)' }}>{formatTimestamp(log.timestamp)}</Td>
                     <Td className="font-medium" style={{ color: 'var(--ink)' }}>
                       {log.username ?? <span style={{ color: 'var(--ink-3)' }}>System</span>}
@@ -223,6 +315,12 @@ export default function AuditLogPage() {
                     <Td>
                       <button
                         onClick={() => setExpandedId(expandedId === log.id ? null : log.id)}
+                        // tabIndex={-1}: the row is the single tab stop for the
+                        // table and Enter on it runs this same toggle, so a
+                        // tabbable button here would restore the 50-stop walk.
+                        tabIndex={-1}
+                        aria-expanded={expandedId === log.id}
+                        aria-controls={`audit-detail-${log.id}`}
                         className="text-xs hover:underline"
                         style={{ color: 'var(--brand)' }}
                       >
@@ -232,7 +330,7 @@ export default function AuditLogPage() {
                   </Tr>
                   {expandedId === log.id && (
                     <tr style={{ background: 'var(--color-grey-light)' }}>
-                      <td colSpan={7} className="px-4 py-3">
+                      <td colSpan={7} className="px-4 py-3" id={`audit-detail-${log.id}`}>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-1.5 text-xs mb-3">
                           <Detail label="Object">{log.object_repr || '—'}</Detail>
                           <Detail label="Object ID">{log.object_id || '—'}</Detail>

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { getBills, type Bill } from '../../lib/api'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose,
 } from '../../components/ui/sheet'
@@ -33,11 +34,15 @@ export function BillAllocationSheet({ open, onOpenChange, vendorId, vendorName, 
   const [bills, setBills] = useState<Bill[]>([])
   const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  // The rows are the only thing on this panel; focus is parked on the header
+  // close button until they arrive, so hand it over once they do.
+  const pendingFocusRef = useRef(false)
 
   useEffect(() => {
     if (!open) return
     setSelected(new Set())
     setLoading(true)
+    pendingFocusRef.current = true
     getBills({ vendor_id: String(vendorId) })
       .then((res) => {
         // Defensive client-side filter — only outstanding bills.
@@ -71,6 +76,24 @@ export function BillAllocationSheet({ open, onOpenChange, vendorId, vendorName, 
     return { sum, refs }
   }, [bills, selected])
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Every row is a checkbox that was only ever clickable: a <tr> is not
+  // focusable and does not answer Enter, so a keyboard user could open this
+  // panel and select nothing. Roving tabindex gives the table ONE tab stop,
+  // ↑↓/Home/End/PgUp/PgDn inside it, and Enter/Space to toggle the row.
+  const list = useListKeyboardNav({
+    count: bills.length,
+    onActivate: (i) => toggle(bills[i].id),
+  })
+
+  useEffect(() => {
+    if (!open || loading || bills.length === 0) return
+    if (!pendingFocusRef.current) return
+    pendingFocusRef.current = false
+    list.focusList()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, loading, bills.length])
+
   function commit() {
     if (selected.size === 0) {
       toast.info('Select at least one bill to allocate')
@@ -97,7 +120,9 @@ export function BillAllocationSheet({ open, onOpenChange, vendorId, vendorName, 
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent width="lg">
+      {/* Ctrl+S / Ctrl+Enter allocate from anywhere in the panel — the footer
+          button is the last stop in the DOM, past every row. */}
+      <SheetContent width="lg" onSubmit={commit}>
         <div className="flex flex-col h-full">
           <SheetHeader>
             <SheetTitle>Bill-wise Allocation</SheetTitle>
@@ -129,29 +154,39 @@ export function BillAllocationSheet({ open, onOpenChange, vendorId, vendorName, 
                       <th className="text-right text-[10px] font-semibold uppercase mono px-2 py-2 tracking-wider" style={{ color: 'var(--ink-2)' }}>Balance Due</th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {bills.map((b) => {
+                  <tbody {...list.containerProps}>
+                    {bills.map((b, i) => {
                       const isSel = selected.has(b.id)
                       const overdue = b.due_date && b.due_date < today
                       return (
                         <tr
                           key={b.id}
                           onClick={() => toggle(b.id)}
-                          className="border-b cursor-pointer transition-colors"
-                          style={{
-                            borderColor: 'var(--line)',
-                            backgroundColor: isSel ? 'rgba(15,157,154,0.08)' : 'transparent',
-                          }}
-                          onMouseEnter={(e) => {
-                            if (!isSel) e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)'
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isSel) e.currentTarget.style.backgroundColor = 'transparent'
-                          }}
+                          {...list.rowProps(i)}
+                          // Selection is otherwise carried by background colour
+                          // alone, which says nothing to a screen reader.
+                          aria-pressed={isSel}
+                          // Selection tint and hover are CLASSES, not inline
+                          // `style`. index.css gives the keyboard-focused row
+                          // its tint through `[data-kbd-row]:focus-visible`,
+                          // and an inline background beats any stylesheet — so
+                          // an inline tint here left focus signalled by the
+                          // 4px rail alone. Utilities sit in Tailwind's layer,
+                          // which the unlayered focus rule still outranks, so
+                          // focus reads over both selection and hover.
+                          className={`group border-b cursor-pointer transition-colors ${
+                            isSel ? 'bg-[rgba(15,157,154,0.08)]' : 'hover:bg-[var(--color-hover-bg)]'
+                          }`}
+                          style={{ borderColor: 'var(--line)' }}
                         >
                           <td className="px-2 py-2">
                             <span
-                              className="inline-flex items-center justify-center w-4 h-4 rounded border"
+                              aria-hidden="true"
+                              // Selected rows are tinted the same teal the
+                              // focus rule paints, so the rail would otherwise
+                              // be the only "you are here" on them. Ring the
+                              // box the row's Enter/Space actually toggles.
+                              className="inline-flex items-center justify-center w-4 h-4 rounded border transition-shadow group-focus-visible:ring-2 group-focus-visible:ring-[var(--brand)] group-focus-visible:ring-offset-1 group-focus-visible:ring-offset-[var(--surface-0)]"
                               style={{
                                 borderColor: isSel ? 'var(--brand)' : 'var(--line)',
                                 background: isSel ? 'var(--brand)' : 'transparent',
@@ -200,7 +235,7 @@ export function BillAllocationSheet({ open, onOpenChange, vendorId, vendorName, 
             <SheetClose asChild>
               <Button type="button" variant="secondary">Cancel</Button>
             </SheetClose>
-            <Button type="button" onClick={commit} disabled={selected.size === 0}>
+            <Button type="button" onClick={commit} disabled={selected.size === 0} chord="Ctrl+Enter">
               Allocate {selected.size > 0 && `${formatCurrency(totals.sum)}`}
             </Button>
           </SheetFooter>

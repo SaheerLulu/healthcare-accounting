@@ -17,7 +17,7 @@ import { Card } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { useLocation as useActiveLocation } from '../../contexts/LocationContext'
-import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
 import { AccountPicker } from '../journals/AccountPicker'
 import { CreateLedgerModal } from './CreateLedgerModal'
 import { CostCenterPopup } from './CostCenterPopup'
@@ -176,6 +176,14 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
   const [createLedgerOpen, setCreateLedgerOpen] = useState(false)
   const [costCenterOpen, setCostCenterOpen] = useState(false)
   const altCRowUidRef = useRef<string | null>(null)
+  // The row table is rendered by PaymentRowEditor, so the row that owns focus
+  // is tracked from the DOM (which <tr> the focus event came from) rather than
+  // through a prop that row component does not expose.
+  const rowsBodyRef = useRef<HTMLTableSectionElement | null>(null)
+  const [focusedRowUid, setFocusedRowUid] = useState<string | null>(null)
+  // Alt+B from outside the table: which row was asked for, plus a counter so
+  // asking twice for the same row is still two requests.
+  const [refOpenRequest, setRefOpenRequest] = useState<{ uid: string; n: number } | null>(null)
 
   // ─── Initial load ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -334,6 +342,73 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
   const allStores = activeLocationId === null
 
   // ─── Row helpers ───────────────────────────────────────────────────────────
+  /**
+   * Put focus on a row's first control — its ledger picker. Used by F3, by
+   * Alt+A once the appended row has rendered, and after Alt+D removes one.
+   */
+  function focusRowCell(index: number) {
+    // A row added by setState only exists on the next tick.
+    window.setTimeout(() => {
+      const body = rowsBodyRef.current
+      const tr = body?.children[index] as HTMLElement | undefined
+      tr?.querySelector<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled])'
+      )?.focus()
+    }, 0)
+  }
+
+  /** Remember the row being keyed, so Alt+D deletes that one. */
+  function handleRowsFocus(e: React.FocusEvent<HTMLTableSectionElement>) {
+    const body = rowsBodyRef.current
+    if (!body) return
+    const tr = (e.target as HTMLElement).closest('tr')
+    if (!tr) return
+    const idx = Array.from(body.children).indexOf(tr)
+    if (idx >= 0 && idx < rows.length) setFocusedRowUid(rows[idx].uid)
+  }
+
+  /**
+   * Alt+D — drop the row under the cursor (the last one if focus is elsewhere).
+   *
+   * Registered unconditionally even with a single row left: gating it off with
+   * `when` would leave the chord unbound, and an unbound chord is never
+   * preventDefault-ed, so Alt+D would fall through to the browser (Firefox
+   * jumps to the address bar) and take the user off the voucher.
+   */
+  function deleteFocusedRow() {
+    if (rows.length <= 1) {
+      toast.info('A voucher needs at least one line')
+      return
+    }
+    const focused = focusedRowUid ? rows.findIndex((r) => r.uid === focusedRowUid) : -1
+    const idx = focused >= 0 ? focused : rows.length - 1
+    removeRow(rows[idx].uid)
+    setFocusedRowUid(null)
+    // Land on whatever row takes its place, so keying continues in the table.
+    focusRowCell(Math.min(idx, rows.length - 2))
+  }
+
+  /**
+   * Alt+B — open the reference picker for the row under the cursor (the last
+   * one if focus is elsewhere).
+   *
+   * PaymentRowEditor handles the chord itself while the caret is inside a row,
+   * because only that row knows the picker belongs to it — but from the header
+   * strip or the footer buttons the chord was inert, and it appeared in no hint
+   * bar at all (registerHints replaces the page's list, so the row cannot
+   * advertise it without wiping the voucher's own hints). Binding it here does
+   * both: the hint bar and the F1 catalogue pick it up, and it reaches the
+   * last-focused row the same way Alt+D does. When focus IS in a row the row's
+   * own handler stops the event before it reaches this listener, so the two
+   * never both fire.
+   */
+  function openFocusedRowRef() {
+    if (rows.length === 0) return
+    const focused = focusedRowUid ? rows.findIndex((r) => r.uid === focusedRowUid) : -1
+    const target = rows[focused >= 0 ? focused : rows.length - 1]
+    setRefOpenRequest((prev) => ({ uid: target.uid, n: (prev?.n ?? 0) + 1 }))
+  }
+
   function patchRow(uid: string, patch: Partial<PaymentRow>) {
     setRows((rs) => rs.map((r) => {
       if (r.uid !== uid) return r
@@ -352,6 +427,8 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
 
   function addRow() {
     setRows((rs) => [...rs, makeRow()])
+    // Alt+A / "Add line" both land the cursor in the new row's ledger picker.
+    focusRowCell(rows.length)
   }
 
   // Bill-wise allocation: expand one row into one settlement row per invoice
@@ -380,6 +457,31 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
 
   function removeRow(uid: string) {
     setRows((rs) => rs.length <= 1 ? rs : rs.filter((r) => r.uid !== uid))
+  }
+
+  // ─── Bank / Cash radiogroup ────────────────────────────────────────────────
+  /**
+   * Switch the header side. Re-pointing the ledger only on an ACTUAL change is
+   * what makes the pair safe from the keyboard: activating the already-selected
+   * mode would otherwise silently replace the account this voucher settles to.
+   */
+  function selectPaymentMode(next: 'bank' | 'cash') {
+    if (next === paymentMode) return
+    setPaymentMode(next)
+    const first = next === 'bank' ? bankAccounts[0] : cashAccounts[0]
+    if (first) setBankCashId(first.id)
+  }
+
+  /** The pair is one tab stop; Left/Right (and Home/End) move within it. */
+  function handleModeKey(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return
+    e.preventDefault()
+    const next: 'bank' | 'cash' =
+      e.key === 'Home' ? 'bank'
+        : e.key === 'End' ? 'cash'
+          : paymentMode === 'bank' ? 'cash' : 'bank'
+    selectPaymentMode(next)
+    document.getElementById(`pv-mode-${next}`)?.focus()
   }
 
   // ─── Save / Post ───────────────────────────────────────────────────────────
@@ -572,24 +674,58 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
     if (target) patchRow(target, { account_id: acc.id })
   }
 
-  // ─── Hotkeys ───────────────────────────────────────────────────────────────
-  const handlers = useMemo<HotkeyHandler[]>(() => [
-    { chord: 'Ctrl+A', preventDefault: true, handler: () => handleSave(true) },
-    { chord: 'Ctrl+H', preventDefault: true, handler: handleRepeatLast },
-    { chord: 'Alt+C', preventDefault: true, handler: handleAltCGlobal },
-    { chord: 'Ctrl+L', preventDefault: true, handler: () => setCostCenterOpen(true) },
-    { chord: 'Escape', preventDefault: false, handler: handleEsc },
-  ], [handleSave, handleRepeatLast, handleAltCGlobal, handleEsc])
-  useHotkeys(handlers)
-
-  const hints = useMemo<HotkeyHint[]>(() => [
-    { chord: 'Ctrl+A', label: 'Save & Post' },
-    { chord: 'Ctrl+H', label: 'Repeat Last' },
-    { chord: 'Alt+C', label: 'New Ledger' },
-    { chord: 'Ctrl+L', label: 'Cost Centre' },
-    { chord: 'Esc', label: 'Cancel' },
-  ], [])
-  useHintRegister(hints)
+  // ─── Keyboard contract ─────────────────────────────────────────────────────
+  // One declaration for the whole screen — every chord registered here is what
+  // the bottom hint bar and the F1 catalogue advertise, so the two cannot drift.
+  usePageKeyboard({
+    actions: [
+      // NOTHING here carries a `when`. A chord that is only registered while
+      // it is actionable is not preventDefault-ed the rest of the time, so the
+      // browser gets the keystroke: Ctrl+S while a save is in flight opened
+      // Chrome's Save-Page-As over the voucher, Ctrl+H the History UI while
+      // editing a draft, Alt+D the address bar on a one-line voucher. The
+      // window is not momentary either — handleSave awaits the entry and then
+      // a bill reference per allocation, which is exactly when an impatient
+      // user hits Ctrl+S again. So every chord stays bound and each one guards
+      // itself inside `run`: the browser default is suppressed AND the
+      // duplicate save never happens.
+      {
+        chord: 'Ctrl+S',
+        label: 'Save Draft',
+        run: () => { if (saving || posting) return; void handleSave(false) },
+      },
+      {
+        chord: 'Ctrl+A',
+        label: 'Save & Post',
+        run: () => { if (saving || posting) return; void handleSave(true) },
+      },
+      // The F1 sheet advertises Ctrl+Enter for "save and post" too. Same
+      // action, so it is bound but kept out of the hint bar as a duplicate.
+      {
+        chord: 'Ctrl+Enter',
+        label: 'Save & Post',
+        run: () => { if (saving || posting) return; void handleSave(true) },
+        hidden: true,
+      },
+      {
+        chord: 'Ctrl+H',
+        label: 'Repeat Last',
+        run: () => { void handleRepeatLast() },
+      },
+      { chord: 'Alt+A', label: 'Add line', run: addRow },
+      { chord: 'Alt+D', label: 'Delete line', run: deleteFocusedRow },
+      { chord: 'Alt+B', label: 'Bill reference', run: openFocusedRowRef },
+      { chord: 'Alt+C', label: 'New Ledger', run: handleAltCGlobal },
+      { chord: 'Ctrl+L', label: 'Cost Centre', run: () => setCostCenterOpen(true) },
+    ],
+    // F3 drops into the line table — the equivalent of a list screen's rows.
+    onFocusList: () => focusRowCell(0),
+    onBack: handleEsc,
+    // While one of this screen's own overlays is open, Escape belongs to it.
+    // Without this the discard dialog re-opened itself: Radix closed it and the
+    // same keystroke then ran handleEsc again behind it.
+    backActive: !escConfirmOpen && !createLedgerOpen && !costCenterOpen,
+  })
 
   // ─── Render ────────────────────────────────────────────────────────────────
   if (loading) {
@@ -668,33 +804,38 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
           <div className="md:col-span-3">
             <Field label="Date" required>
-              <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+              {/* PageTransition focuses [data-autofocus] on arrival, so F5/F6 lands
+                  the cursor on the first entry field instead of the back button. */}
+              <Input type="date" required data-autofocus value={date} onChange={(e) => setDate(e.target.value)} />
             </Field>
           </div>
 
           <div className="md:col-span-6">
             <Field label={cfg.bankCashLabel} required hint={cfg.bankCashHint}>
               <div className="flex flex-wrap gap-2">
-                <div className="flex gap-0.5 rounded-md border overflow-hidden" style={{ borderColor: 'var(--line)' }}>
+                {/* One tab stop for the pair (roving tabindex), Left/Right to
+                    switch — an off-by-one Tab can no longer land on "Cash" and
+                    re-point the account with a stray Enter. */}
+                <div
+                  role="radiogroup"
+                  aria-label={`${cfg.bankCashLabel} — bank or cash`}
+                  onKeyDown={handleModeKey}
+                  className="flex gap-0.5 rounded-md border overflow-hidden"
+                  style={{ borderColor: 'var(--line)' }}
+                >
                   <ModeBtn
+                    id="pv-mode-bank"
                     icon={<Banknote size={12} />}
                     label="Bank"
                     active={paymentMode === 'bank'}
-                    onClick={() => {
-                      setPaymentMode('bank')
-                      const first = bankAccounts[0]
-                      if (first) setBankCashId(first.id)
-                    }}
+                    onClick={() => selectPaymentMode('bank')}
                   />
                   <ModeBtn
+                    id="pv-mode-cash"
                     icon={<Wallet size={12} />}
                     label="Cash"
                     active={paymentMode === 'cash'}
-                    onClick={() => {
-                      setPaymentMode('cash')
-                      const first = cashAccounts[0]
-                      if (first) setBankCashId(first.id)
-                    }}
+                    onClick={() => selectPaymentMode('cash')}
                   />
                 </div>
                 {/* Keeps a floor under the ledger picker so it drops to its own
@@ -704,6 +845,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
                     accounts={paymentMode === 'bank' ? bankAccounts : cashAccounts}
                     value={bankCashId}
                     onChange={setBankCashId}
+                    ariaLabel={cfg.bankCashLabel}
                   />
                 </div>
               </div>
@@ -762,7 +904,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
                 <th className="w-8" />
               </tr>
             </thead>
-            <tbody>
+            <tbody ref={rowsBodyRef} onFocus={handleRowsFocus}>
               {rows.map((row) => (
                 <PaymentRowEditor
                   key={row.uid}
@@ -773,6 +915,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
                   onAltC={handleAltCFromRow}
                   onAllocate={(items) => handleAllocate(row.uid, items)}
                   removeDisabled={rows.length <= 1}
+                  openRefNonce={refOpenRequest?.uid === row.uid ? refOpenRequest.n : 0}
                 />
               ))}
             </tbody>
@@ -782,10 +925,12 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
                   <button
                     type="button"
                     onClick={addRow}
+                    aria-keyshortcuts="Alt+A"
                     className="inline-flex items-center gap-1.5 text-sm hover:opacity-90"
                     style={{ color: 'var(--brand)' }}
                   >
                     <Plus size={14} /> Add line
+                    <kbd className="hidden md:inline mono text-[10px]" style={{ color: 'var(--ink-3)' }}>Alt+A</kbd>
                   </button>
                 </td>
                 <td className="px-2 py-2 text-right text-xs" style={{ color: 'var(--ink-2)' }}>
@@ -827,7 +972,7 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
         <Button variant="secondary" onClick={handleEsc}>
           Cancel <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Esc</kbd>
         </Button>
-        <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving || posting || allStores}>
+        <Button variant="secondary" chord="Ctrl+S" onClick={() => handleSave(false)} disabled={saving || posting || allStores}>
           {saving && !posting ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
           Save Draft
         </Button>
@@ -873,7 +1018,8 @@ export default function SimplePaymentVoucher({ mode = 'payment' }: { mode?: Vouc
   )
 }
 
-function ModeBtn({ icon, label, active, onClick }: {
+function ModeBtn({ id, icon, label, active, onClick }: {
+  id: string
   icon?: React.ReactNode
   label: string
   active: boolean
@@ -881,7 +1027,12 @@ function ModeBtn({ icon, label, active, onClick }: {
 }) {
   return (
     <button
+      id={id}
       type="button"
+      role="radio"
+      aria-checked={active}
+      // Roving tabindex: only the selected mode is a tab stop.
+      tabIndex={active ? 0 : -1}
       onClick={onClick}
       className="px-2 py-1.5 text-xs font-semibold transition-colors inline-flex items-center gap-1"
       style={active

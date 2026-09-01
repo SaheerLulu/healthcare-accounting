@@ -1,14 +1,17 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Download, Landmark, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import api, { getAssetRegister, type AssetRegisterRow } from '../../lib/api'
-import { formatCurrency, formatDate } from '../../lib/utils'
+import { cn, formatCurrency, formatDate } from '../../lib/utils'
 import { Input } from '../../components/ui/input'
 import { Button } from '../../components/ui/button'
 import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 type AssetTotals = {
   acquisition_cost: string; cgst: string; sgst: string; igst: string
@@ -16,12 +19,15 @@ type AssetTotals = {
 }
 
 export default function AssetRegisterPage() {
+  const navigate = useNavigate()
   const [rows, setRows] = useState<AssetRegisterRow[]>([])
   const [totals, setTotals] = useState<AssetTotals | null>(null)
   const [loading, setLoading] = useState(false)
   const [fetched, setFetched] = useState(false)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [focusedRow, setFocusedRow] = useState<number | null>(null)
+  const fromRef = useRef<HTMLInputElement>(null)
 
   async function load() {
     setLoading(true)
@@ -57,6 +63,28 @@ export default function AssetRegisterPage() {
     }
   }
 
+  // ─── Keyboard ────────────────────────────────────────────────────────────
+  // An asset row opens nothing — there is no per-asset screen — so this is the
+  // read-only variant: no onActivate, but ↑↓/Home/End/PgUp/PgDn walk the rows
+  // through a single roving tab stop. Focusing a row also scrolls the 13-column
+  // register sideways, which is how Accum. Dep. / NBV / Status become reachable
+  // without a pointer.
+  const list = useListKeyboardNav({ count: rows.length })
+
+  const hasFilters = !!(dateFrom || dateTo)
+  const clearFilters = () => { setDateFrom(''); setDateTo('') }
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Run report', run: load, when: !loading },
+      { chord: 'Alt+X', label: 'Export CSV', run: () => exportAs('csv'), when: rows.length > 0 },
+      { chord: 'Alt+C', label: 'Clear filters', run: clearFilters, when: hasFilters },
+    ],
+    searchRef: fromRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
@@ -67,7 +95,7 @@ export default function AssetRegisterPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" onClick={() => exportAs('csv')} disabled={rows.length === 0}>
+          <Button variant="secondary" onClick={() => exportAs('csv')} disabled={rows.length === 0} chord="Alt+X">
             <Download size={15} />CSV
           </Button>
           <Button variant="secondary" onClick={() => exportAs('xlsx')} disabled={rows.length === 0}>
@@ -76,21 +104,25 @@ export default function AssetRegisterPage() {
         </div>
       </div>
 
-      {/* Acquisition-date filters — leave blank for the full register */}
-      <div className="flex flex-wrap items-center gap-3">
+      {/* Acquisition-date filters — leave blank for the full register.
+          A form, so Enter in either date runs the report. */}
+      <form
+        className="flex flex-wrap items-center gap-3"
+        onSubmit={(e) => { e.preventDefault(); load() }}
+      >
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>Acquired From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
+          <Input ref={fromRef} data-autofocus type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
           <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button className="w-full sm:w-auto" onClick={load} disabled={loading}>
+        <Button type="submit" className="w-full sm:w-auto" disabled={loading} chord="Alt+R">
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>
-      </div>
+      </form>
 
       {loading ? (
         <SkeletonTable rows={8} cols={10} />
@@ -106,7 +138,7 @@ export default function AssetRegisterPage() {
         <EmptyState variant="no-data" title="No assets found" description="Capitalise fixed assets from the Fixed Assets screen first." />
       ) : (
         <Card className="overflow-hidden p-0">
-          <Table>
+          <Table label="Asset register">
             <Thead>
               <Tr>
                 <Th className="text-left">Asset No</Th>
@@ -124,13 +156,22 @@ export default function AssetRegisterPage() {
                 <Th className="text-left">Status</Th>
               </Tr>
             </Thead>
-            <Tbody>
+            <Tbody {...list.containerProps}>
               {rows.map((r, i) => (
-                <Tr key={i}>
+                <Tr
+                  key={i}
+                  {...list.rowProps(i)}
+                  // Capture phase so the hook's own onFocus (which tracks the
+                  // active row) is not shadowed by this one.
+                  onFocusCapture={() => setFocusedRow(i)}
+                  onBlur={() => setFocusedRow((f) => (f === i ? null : f))}
+                >
                   <Td className="mono text-xs" style={{ color: 'var(--ink-3)' }}>{r.asset_no}</Td>
-                  <Td className="font-medium max-w-[180px] truncate" style={{ color: 'var(--ink)' }} title={r.name}>{r.name}</Td>
+                  {/* Asset and vendor names lived untruncated only in a hover
+                      title, so the focused row shows them in full. */}
+                  <Td className={cn('font-medium', focusedRow === i ? '' : 'max-w-[180px] truncate')} style={{ color: 'var(--ink)' }} title={r.name}>{r.name}</Td>
                   <Td style={{ color: 'var(--ink-2)' }}>{r.asset_class}</Td>
-                  <Td className="max-w-[150px] truncate" style={{ color: 'var(--ink-2)' }} title={r.party_name}>{r.party_name}</Td>
+                  <Td className={cn(focusedRow === i ? '' : 'max-w-[150px] truncate')} style={{ color: 'var(--ink-2)' }} title={r.party_name}>{r.party_name}</Td>
                   <Td className="mono text-xs" style={{ color: 'var(--ink-3)' }}>{r.gstin || '-'}</Td>
                   <Td style={{ color: 'var(--ink-2)' }}>{formatDate(r.acquisition_date)}</Td>
                   <Td className="text-right mono">{formatCurrency(r.acquisition_cost)}</Td>

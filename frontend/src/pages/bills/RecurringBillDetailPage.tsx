@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft, Loader2, Pencil, Trash2, Repeat, Pause, Play, Square,
@@ -15,9 +15,9 @@ import { formatCurrency, formatDate, cn } from '../../lib/utils'
 import { Card } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '../../components/ui/dialog'
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 const FREQ_LABEL: Record<string, string> = {
   daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly',
@@ -38,6 +38,15 @@ export default function RecurringBillDetailPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmStop, setConfirmStop] = useState(false)
+  // Generating creates a real bill against the vendor. The recurring-JOURNAL
+  // twin confirms it; a clerk moves between the two screens, so this one does
+  // too rather than being the sibling where one keystroke writes.
+  const [confirmGenerate, setConfirmGenerate] = useState(false)
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  // Focus is moved into the page once per profile — not on every refetch, which
+  // would yank it off the button the user just pressed.
+  const focusedFor = useRef<number | null>(null)
 
   async function load() {
     setLoading(true)
@@ -87,6 +96,56 @@ export default function RecurringBillDetailPage() {
     }
   }
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Each chord mirrors the condition that renders its button, so the hint bar
+  // lists exactly the lifecycle verbs this profile can take. Stop and Delete
+  // are irreversible, so both confirm first.
+  const isActive = rb?.status === 'active'
+  const isPaused = rb?.status === 'paused'
+  const isStopped = rb?.status === 'stopped'
+
+  // The generated bills open a record, so they get the standard roving
+  // tabindex: F3 jumps in, ↑↓ move, Enter opens the bill.
+  const generated = rb?.generated_recent ?? []
+  const list = useListKeyboardNav({
+    count: generated.length,
+    onActivate: (i) => navigate(`/bills/${generated[i].id}`),
+  })
+
+  // Same chords as the recurring *journal* detail screen — the two profiles are
+  // the same shape and a clerk moves between them.
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+E', label: 'Edit', when: !!rb && !isStopped, run: () => navigate(`/bills/recurring/${rbId}/edit`) },
+      { chord: 'Alt+G', label: 'Generate now', when: isActive && !busy, run: () => setConfirmGenerate(true) },
+      {
+        chord: 'Alt+S',
+        label: isPaused ? 'Resume' : 'Pause',
+        when: (isActive || isPaused) && !busy,
+        run: () => {
+          if (!rb) return
+          if (rb.status === 'paused') action('Resumed', () => resumeRecurringBill(rb.id))
+          else action('Paused', () => pauseRecurringBill(rb.id))
+        },
+      },
+      // Stopping ends the schedule for good, so the chord goes through the same
+      // confirm the button does.
+      { chord: 'Alt+V', label: 'Stop', when: !!rb && !isStopped, run: () => setConfirmStop(true) },
+      { chord: 'Alt+D', label: 'Delete', when: !!rb, run: () => setConfirmDelete(true) },
+    ],
+    onFocusList: generated.length > 0 ? list.focusList : undefined,
+    onBack: () => navigate('/bills/recurring'),
+  })
+
+  // Land focus on the page heading once it exists — the route-level focus pass
+  // runs while this screen is still a spinner, so without this the first Tab
+  // after arriving walks the whole nav again.
+  useEffect(() => {
+    if (loading || !rb || focusedFor.current === rb.id) return
+    focusedFor.current = rb.id
+    headingRef.current?.focus({ preventScroll: true })
+  }, [loading, rb])
+
   if (loading || !rb) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
   }
@@ -105,7 +164,7 @@ export default function RecurringBillDetailPage() {
         <div>
           <div className="flex flex-wrap items-center gap-2 mb-1">
             <Repeat size={18} className="text-teal-600 flex-shrink-0" />
-            <h1 className="text-lg sm:text-xl font-semibold min-w-0" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{rb.profile_name}</h1>
+            <h1 ref={headingRef} tabIndex={-1} className="text-lg sm:text-xl font-semibold min-w-0 focus:outline-none" style={{ color: "var(--ink)", letterSpacing: "-0.01em" }}>{rb.profile_name}</h1>
             <Badge variant={STATUS_BADGE[rb.status]}>{rb.status}</Badge>
             {rb.auto_approve && <Badge variant="info">Auto-approve</Badge>}
           </div>
@@ -123,7 +182,7 @@ export default function RecurringBillDetailPage() {
           )}
           {rb.status === 'active' && (
             <>
-              <Button size="sm" onClick={handleGenerateNow} disabled={busy}>
+              <Button size="sm" onClick={() => setConfirmGenerate(true)} disabled={busy}>
                 {busy ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />} Generate Now
               </Button>
               <Button variant="secondary" size="sm" onClick={() => action('Paused', () => pauseRecurringBill(rb.id))} disabled={busy}>
@@ -137,7 +196,7 @@ export default function RecurringBillDetailPage() {
             </Button>
           )}
           {rb.status !== 'stopped' && (
-            <Button variant="secondary" size="sm" onClick={() => action('Stopped', () => stopRecurringBill(rb.id))} disabled={busy}>
+            <Button variant="secondary" size="sm" onClick={() => setConfirmStop(true)} disabled={busy}>
               <Square size={14} /> Stop
             </Button>
           )}
@@ -238,11 +297,14 @@ export default function RecurringBillDetailPage() {
                   <th className="text-left text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Status</th>
                 </tr>
               </thead>
-              <tbody>
-                {rb.generated_recent.map((b) => (
-                  <tr key={b.id} className="border-b border-slate-100 last:border-0">
+              <tbody {...list.containerProps}>
+                {rb.generated_recent.map((b, i) => (
+                  <tr key={b.id} className="border-b border-slate-100 last:border-0 cursor-pointer"
+                    onClick={() => navigate(`/bills/${b.id}`)}
+                    {...list.rowProps(i)}>
                     <td className="px-4 py-2.5">
-                      <Link to={`/bills/${b.id}`} className="text-teal-700 hover:underline font-medium">
+                      <Link to={`/bills/${b.id}`} className="text-teal-700 hover:underline font-medium"
+                        onClick={(ev) => ev.stopPropagation()}>
                         {b.bill_no || `BILL-${b.id}`}
                       </Link>
                     </td>
@@ -264,20 +326,48 @@ export default function RecurringBillDetailPage() {
         </Card>
       )}
 
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Delete this profile?</DialogTitle></DialogHeader>
-          <p className="text-sm text-slate-600">
-            Bills already generated by this profile will not be touched. The template itself will be removed.
-          </p>
-          <div className="flex flex-wrap gap-2 justify-end pt-4">
-            <Button variant="secondary" onClick={() => setConfirmDelete(false)}>Keep</Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={busy}>
-              {busy && <Loader2 className="animate-spin" size={14} />} Delete
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Alt+V and Alt+D both end the profile's life, so both confirm — and a
+          danger-tone ConfirmDialog opens on Cancel, which is what a reflexive
+          Enter hits. */}
+      <ConfirmDialog
+        open={confirmGenerate}
+        onOpenChange={setConfirmGenerate}
+        title="Generate this bill now?"
+        description="A bill is created against the vendor immediately, outside the schedule."
+        confirmLabel="Generate"
+        loading={busy}
+        onConfirm={async () => {
+          await handleGenerateNow()
+          setConfirmGenerate(false)
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmStop}
+        onOpenChange={setConfirmStop}
+        title="Stop this recurring profile?"
+        description="No further bills will be generated. A stopped profile cannot be resumed or edited."
+        confirmLabel="Stop"
+        cancelLabel="Keep running"
+        tone="danger"
+        loading={busy}
+        onConfirm={async () => {
+          await action('Stopped', () => stopRecurringBill(rb.id))
+          setConfirmStop(false)
+        }}
+      />
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Delete this profile?"
+        description="Bills already generated by this profile will not be touched. The template itself will be removed."
+        confirmLabel="Delete"
+        cancelLabel="Keep"
+        tone="danger"
+        loading={busy}
+        onConfirm={handleDelete}
+      />
     </div>
   )
 }

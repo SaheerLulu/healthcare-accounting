@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Download, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import api, { getB2CSummary, type B2CSummaryRow, type RegisterTotals } from '../../lib/api'
@@ -7,9 +8,12 @@ import { Button } from '../../components/ui/button'
 import { PeriodPicker } from '../../components/ui/period-picker'
 import { Card } from '../../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 import { useLocation } from '../../contexts/LocationContext'
 
 export default function B2CSummaryPage() {
+  const navigate = useNavigate()
   const [rows, setRows] = useState<B2CSummaryRow[]>([])
   const [totals, setTotals] = useState<RegisterTotals | null>(null)
   const [b2clExcluded, setB2clExcluded] = useState(0)
@@ -49,6 +53,36 @@ export default function B2CSummaryPage() {
     }
   }
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // The period is this report's only filter, so it is the F2 target and where
+  // the caret belongs on arrival. PeriodPicker renders bare <select>s and takes
+  // no ref, so the page holds a ref on the wrapper and resolves the month
+  // select out of it; `data-autofocus` is what PageTransition's post-navigation
+  // focus pass looks for.
+  const periodBoxRef = useRef<HTMLDivElement>(null)
+  const periodRef = useRef<HTMLInputElement | null>(null)
+  useEffect(() => {
+    const select = periodBoxRef.current?.querySelector('select')
+    if (!select) return
+    select.setAttribute('data-autofocus', '')
+    select.setAttribute('aria-label', 'Period — month')
+    periodRef.current = select as unknown as HTMLInputElement
+  }, [])
+
+  // Rate rows open nothing, so this is a read-only cursor — F3 then ↑↓ walks
+  // the rate bands the same way every other register on the app does.
+  const list = useListKeyboardNav({ count: rows.length })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+X', label: 'Export CSV', run: exportCsv, when: rows.length > 0 },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    searchRef: periodRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
@@ -66,18 +100,26 @@ export default function B2CSummaryPage() {
 
       {/* Controls */}
       <div className="flex items-center gap-2 sm:gap-3 mb-5 flex-wrap">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2" ref={periodBoxRef}>
           <label className="text-xs text-slate-500 font-medium">Period</label>
           <PeriodPicker value={period} onChange={setPeriod} />
         </div>
         {b2clExcluded > 0 && (
-          <span
-            className="px-2 py-1 rounded text-[11px] font-medium"
-            style={{ backgroundColor: '#fff8e6', color: '#92600a' }}
-            title="Inter-state invoices above the B2C-Large threshold belong in Table 5 (B2CL), not this summary"
-          >
-            {b2clExcluded} B2C-Large invoice{b2clExcluded > 1 ? 's' : ''} excluded (Table 5)
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span
+              className="px-2 py-1 rounded text-[11px] font-medium"
+              style={{ backgroundColor: '#fff8e6', color: '#92600a' }}
+              aria-describedby="b2cl-note"
+            >
+              {b2clExcluded} B2C-Large invoice{b2clExcluded > 1 ? 's' : ''} excluded (Table 5)
+            </span>
+            {/* Where those invoices went used to live in a `title` on a span no
+                keyboard could reach, so the count read as an unexplained
+                discrepancy. It is plain text now. */}
+            <span id="b2cl-note" className="text-[11px] text-slate-500 max-w-md">
+              Inter-state invoices above the B2C-Large threshold belong in Table 5 (B2CL), not this summary.
+            </span>
+          </div>
         )}
       </div>
 
@@ -95,14 +137,18 @@ export default function B2CSummaryPage() {
               <Th className="text-right">Total Tax</Th>
             </Tr>
           </Thead>
-          <Tbody>
+          <Tbody {...list.containerProps}>
             {loading ? (
               <tr><td colSpan={8} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
             ) : rows.length === 0 ? (
               <tr><td colSpan={8} className="text-center py-12 text-slate-400 text-sm">No B2C supplies in this period</td></tr>
             ) : (
               rows.map((r, i) => (
-                <Tr key={i}>
+                <Tr
+                  key={i}
+                  aria-label={`${Number(r.rate)} percent, ${r.place_of_supply}, ${r.supply_type === 'inter_state' ? 'inter-state' : 'intra-state'}`}
+                  {...list.rowProps(i)}
+                >
                   <Td className="font-mono font-medium">{Number(r.rate)}%</Td>
                   <Td className="font-mono text-xs text-slate-500">{r.place_of_supply}</Td>
                   <Td className="text-slate-500 text-xs">{r.supply_type === 'inter_state' ? 'Inter-state' : 'Intra-state'}</Td>

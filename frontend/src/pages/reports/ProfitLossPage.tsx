@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { getProfitLoss, type PLReport, type PLSection } from '../../lib/api'
@@ -7,13 +8,20 @@ import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Card } from '../../components/ui/card'
 import { Table, Tbody, Tr, Td } from '../../components/ui/table'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
+
+/** The roving-tabindex props the page hands down to each section's rows. */
+type RowProps = ReturnType<typeof useListKeyboardNav>['rowProps']
 
 export default function ProfitLossPage() {
+  const navigate = useNavigate()
   const fy = getCurrentFY()
   const [report, setReport] = useState<PLReport | null>(null)
   const [loading, setLoading] = useState(false)
   const [dateFrom, setDateFrom] = useState(fy.start)
   const [dateTo, setDateTo] = useState(fy.end)
+  const fromRef = useRef<HTMLInputElement>(null)
 
   async function load() {
     setLoading(true)
@@ -31,6 +39,51 @@ export default function ProfitLossPage() {
   const netProfit = report ? Number(report.net_profit) : 0
   const otherExpensesShown = report && report.other_expenses.items.length > 0
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Revenue / Direct / Indirect / Other are four cards but one statement, so
+  // they share ONE row cursor: F3 lands on the first row of the report and ↑↓
+  // read straight down across the section breaks instead of stopping dead at
+  // the end of a card. Tab still steps clean past the whole thing, and Enter
+  // drills into that account's ledger.
+  const items = useMemo(
+    () => (report
+      ? [
+          ...report.revenue.items,
+          ...report.direct_expenses.items,
+          ...report.indirect_expenses.items,
+          ...report.other_expenses.items,
+        ]
+      : []),
+    [report],
+  )
+  // Where each section's first row sits in the page-wide cursor.
+  const directOffset = report ? report.revenue.items.length : 0
+  const indirectOffset = directOffset + (report ? report.direct_expenses.items.length : 0)
+  const otherOffset = indirectOffset + (report ? report.indirect_expenses.items.length : 0)
+
+  const openLedger = (code: string) =>
+    navigate(`/reports/ledger/${encodeURIComponent(code)}?from=${dateFrom}&to=${dateTo}`)
+
+  const list = useListKeyboardNav({
+    count: items.length,
+    onActivate: (i) => openLedger(items[i].account_code),
+  })
+
+  const hasRows = items.length > 0
+
+  const isDefaultRange = dateFrom === fy.start && dateTo === fy.end
+  const resetRange = () => { setDateFrom(fy.start); setDateTo(fy.end) }
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Run report', run: load, when: !loading },
+      { chord: 'Alt+C', label: 'Reset period', run: resetRange, when: !isDefaultRange },
+    ],
+    searchRef: fromRef,
+    onFocusList: hasRows ? list.focusList : undefined,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div className="max-w-5xl mx-auto space-y-5">
       <div>
@@ -40,20 +93,24 @@ export default function ProfitLossPage() {
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
+      {/* Period filters — a form, so Enter in either date runs the report */}
+      <form
+        className="flex flex-wrap items-center gap-3"
+        onSubmit={(e) => { e.preventDefault(); load() }}
+      >
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
+          <label htmlFor="pl-from" className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
+          <Input id="pl-from" ref={fromRef} data-autofocus type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
+          <label htmlFor="pl-to" className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
+          <Input id="pl-to" type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button className="w-full sm:w-auto" onClick={load} disabled={loading}>
+        <Button type="submit" className="w-full sm:w-auto" disabled={loading} chord="Alt+R">
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>
-      </div>
+      </form>
 
       {loading && (
         <div className="flex items-center justify-center py-20">
@@ -68,7 +125,7 @@ export default function ProfitLossPage() {
       )}
 
       {!loading && report && (
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4" {...list.containerProps}>
           {/* Revenue */}
           <Section
             title="Revenue"
@@ -76,6 +133,9 @@ export default function ProfitLossPage() {
             section={report.revenue}
             totalLabel="Total Revenue"
             emptyLabel="No revenue entries"
+            onOpenAccount={openLedger}
+            offset={0}
+            rowProps={list.rowProps}
           />
 
           {/* Direct Expenses */}
@@ -85,6 +145,9 @@ export default function ProfitLossPage() {
             section={report.direct_expenses}
             totalLabel="Total Direct Expenses"
             emptyLabel="No direct expense entries (no COGS or direct-cost postings yet)"
+            onOpenAccount={openLedger}
+            offset={directOffset}
+            rowProps={list.rowProps}
           />
 
           {/* Gross Profit subtotal */}
@@ -102,6 +165,9 @@ export default function ProfitLossPage() {
             section={report.indirect_expenses}
             totalLabel="Total Indirect Expenses"
             emptyLabel="No indirect expense entries"
+            onOpenAccount={openLedger}
+            offset={indirectOffset}
+            rowProps={list.rowProps}
           />
 
           {/* Other Expenses — only rendered when there's something to show */}
@@ -112,6 +178,9 @@ export default function ProfitLossPage() {
               section={report.other_expenses}
               totalLabel="Total Other Expenses"
               emptyLabel=""
+              onOpenAccount={openLedger}
+              offset={otherOffset}
+              rowProps={list.rowProps}
             />
           )}
 
@@ -151,23 +220,34 @@ const TONES = {
   },
 } as const
 
-function Section({ title, tone, section, totalLabel, emptyLabel }: {
+function Section({ title, tone, section, totalLabel, emptyLabel, onOpenAccount, offset, rowProps }: {
   title: string
   tone: keyof typeof TONES
   section: PLSection
   totalLabel: string
   emptyLabel: string
+  onOpenAccount: (code: string) => void
+  /** Where this section's first row sits in the page-wide row cursor. */
+  offset: number
+  rowProps: RowProps
 }) {
   const t = TONES[tone]
+
   return (
     <Card className="overflow-hidden p-0">
       <div className="px-5 py-3 border-b" style={{ background: t.bg, borderColor: t.border }}>
         <h2 className="text-sm font-semibold" style={{ color: t.color }}>{title}</h2>
       </div>
-      <Table>
+      <Table label={title}>
         <Tbody>
           {section.items.map((row, i) => (
-            <Tr key={i}>
+            <Tr
+              key={i}
+              className="cursor-pointer"
+              aria-label={`${row.account_code} ${row.account_name}, ${formatCurrency(row.amount)} — open ledger`}
+              onClick={() => onOpenAccount(row.account_code)}
+              {...rowProps(offset + i)}
+            >
               <Td className="mono text-xs" style={{ color: 'var(--ink-3)' }}>{row.account_code}</Td>
               <Td style={{ color: 'var(--ink-2)' }}>{row.account_name}</Td>
               <Td className="text-right mono" style={{ color: 'var(--ink)' }}>{formatCurrency(row.amount)}</Td>

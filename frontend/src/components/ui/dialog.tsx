@@ -2,6 +2,7 @@ import * as React from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { cn } from '../../lib/utils'
+import { OverlayDepthProvider } from '../../contexts/HotkeyContext'
 
 const Dialog = DialogPrimitive.Root
 const DialogTrigger = DialogPrimitive.Trigger
@@ -25,12 +26,72 @@ DialogOverlay.displayName = 'DialogOverlay'
 
 const DialogContent = React.forwardRef<
   React.ComponentRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { description?: string }
->(({ className, children, style, description, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+    description?: string
+    /**
+     * Keyboard commit path for a dialog that holds a form: Ctrl+Enter and
+     * Ctrl+S both run it from any field, so the primary button — always the
+     * last stop in the DOM — never has to be Tabbed to. Bare Enter is left
+     * to the browser: several dialogs here hold more than one field, and a
+     * reflexive Enter mid-form should not submit them.
+     */
+    onSubmit?: () => void
+  }
+>(({ className, children, style, description, onSubmit, onKeyDown, ...props }, ref) => {
+  const opener = React.useRef<HTMLElement | null>(null)
+  return (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
+      onKeyDown={(e) => {
+        onKeyDown?.(e)
+        if (e.defaultPrevented || !onSubmit) return
+        const isSave = (e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')
+        const isCommit = (e.ctrlKey || e.metaKey) && e.key === 'Enter'
+        if (isSave || isCommit) {
+          e.preventDefault()
+          // Keep the page's own Ctrl+S, behind the modal, out of it.
+          e.stopPropagation()
+          onSubmit()
+        }
+      }}
+      // As in SheetContent: focus the dialog's entry field rather than the
+      // close X that happens to be first in the DOM.
+      /**
+       * Restore focus to whatever opened this overlay.
+       *
+       * Radix's own close handler is `preventDefault(); triggerRef.current
+       * ?.focus()`, which works only for a <Dialog.Trigger>. Almost every
+       * overlay here is state-driven and opened from a button outside the
+       * subtree, so triggerRef is null: the preventDefault cancels
+       * FocusScope's restore and nothing replaces it, dropping focus on
+       * <body>. For a keyboard-only user that means every confirm and every
+       * edit panel ends with them Tabbing from the top of the document to
+       * find their place again.
+       *
+       * Ours runs first (Radix composes the prop ahead of its own) and the
+       * preventDefault stops Radix's null-trigger version running at all.
+       */
+      onCloseAutoFocus={(e) => {
+        e.preventDefault()
+        const el = opener.current
+        if (el?.isConnected) el.focus()
+      }}
+      onOpenAutoFocus={(e) => {
+        // Still the opener here — Radix has not moved focus yet.
+        opener.current = document.activeElement as HTMLElement | null
+        const root = e.currentTarget as HTMLElement
+        const target =
+          root.querySelector<HTMLElement>('[data-autofocus]') ??
+          root.querySelector<HTMLElement>(
+            'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled])',
+          )
+        if (target) {
+          e.preventDefault()
+          target.focus()
+        }
+      }}
       className={cn(
         // `w-[calc(100%-1.5rem)]` keeps a 12px gutter on either side at phone
         // widths, where a plain `w-full` dialog would run edge to edge.
@@ -51,10 +112,13 @@ const DialogContent = React.forwardRef<
       <DialogPrimitive.Description className="sr-only">
         {description ?? 'Dialog'}
       </DialogPrimitive.Description>
-      {children}
+      {/* Chords registered inside this dialog outrank the page's; the page's
+          are suppressed while it is open. See OverlayDepthProvider. */}
+      <OverlayDepthProvider>{children}</OverlayDepthProvider>
     </DialogPrimitive.Content>
   </DialogPortal>
-))
+  )
+})
 DialogContent.displayName = 'DialogContent'
 
 const DialogHeader = ({
@@ -68,8 +132,9 @@ const DialogHeader = ({
   >
     {children}
     <DialogClose
-      className="transition-colors hover:opacity-80"
+      className="transition-colors hover:opacity-80 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]"
       style={{ color: 'var(--ink-3)' }}
+      aria-label="Close"
     >
       <X size={18} />
     </DialogClose>

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Loader2, BookOpen, ArrowRight } from 'lucide-react'
 import { getAccountMappings, type AccountMapping } from '../lib/api'
 import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
 
 /**
  * Activity → Account map. Documents every user-facing business activity
@@ -456,7 +457,11 @@ const ACTIVITIES: Activity[] = [
 
 const AREAS = ['Sales', 'Purchases', 'Stock', 'Banking', 'Loans & Assets', 'Payroll', 'Tax', 'Period-end']
 
+/** DOM id of an area heading — also the jump target for Alt+↑ / Alt+↓. */
+const areaId = (area: string) => `area-${area.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+
 export default function ActivityMapPage() {
+  const navigate = useNavigate()
   const [mappings, setMappings] = useState<AccountMapping[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -474,6 +479,52 @@ export default function ActivityMapPage() {
     for (const m of mappings) out[m.key] = m
     return out
   }, [mappings])
+
+  // Areas that actually render, in document order — the sequence Alt+↑ / Alt+↓ walk.
+  const visibleAreas = useMemo(
+    () => AREAS.filter((area) => ACTIVITIES.some((a) => a.area === area)),
+    [],
+  )
+
+  /**
+   * Jump to the previous / next area heading.
+   *
+   * This is a very long reference document with eight sections and no search,
+   * so without a section key the only way to reach 'Payroll' from the top is
+   * to scroll or Tab through everything above it. The headings are real <h2>s
+   * carrying tabIndex={-1}, so focus lands on the heading itself — a screen
+   * reader announces the section it just moved to.
+   */
+  const jumpArea = useCallback((delta: number) => {
+    if (visibleAreas.length === 0) return
+    const headings = visibleAreas
+      .map((area) => document.getElementById(areaId(area)))
+      .filter((el): el is HTMLElement => !!el)
+    if (headings.length === 0) return
+    const current = headings.findIndex((el) => el.contains(document.activeElement))
+    // Nothing focused inside a section yet: start from whichever heading the
+    // viewport is showing, so Alt+↓ continues the read rather than restarting.
+    // `fallback` is the first heading still below the top edge, so the section
+    // being read is the one before it — and `fallback === 0` means the reader
+    // is ABOVE the first section, which has to stay distinct from being IN it:
+    // clamping that to 0 made Alt+↓ from a freshly loaded page skip 'Sales'.
+    const fallback = headings.findIndex((el) => el.getBoundingClientRect().top > 8)
+    const from =
+      current >= 0 ? current
+      : fallback < 0 ? headings.length - 1  // scrolled past every heading
+      : fallback - 1                        // -1 = above the first section
+    const next = Math.max(0, Math.min(headings.length - 1, from + delta))
+    headings[next].focus()
+    headings[next].scrollIntoView({ block: 'start' })
+  }, [visibleAreas])
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+Down', label: 'Next area', run: () => jumpArea(1) },
+      { chord: 'Alt+Up', label: 'Previous area', run: () => jumpArea(-1) },
+    ],
+    onBack: () => navigate(-1),
+  })
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
@@ -508,17 +559,20 @@ export default function ActivityMapPage() {
           <Loader2 size={20} className="animate-spin inline" style={{ color: 'var(--brand)' }} />
         </div>
       ) : (
-        AREAS.map((area) => {
+        visibleAreas.map((area) => {
           const items = ACTIVITIES.filter((a) => a.area === area)
-          if (items.length === 0) return null
           return (
             <div key={area}>
-              <div
-                className="mono uppercase text-[11px] font-semibold tracking-wider mb-2"
+              {/* A real heading, and focusable from Alt+↑ / Alt+↓ — tabIndex={-1}
+                  keeps it out of the Tab order while letting the chord land on it. */}
+              <h2
+                id={areaId(area)}
+                tabIndex={-1}
+                className="mono uppercase text-[11px] font-semibold tracking-wider mb-2 focus:outline-none"
                 style={{ color: 'var(--ink-3)' }}
               >
                 {area}
-              </div>
+              </h2>
               <Card className="p-0 overflow-hidden">
                 {items.map((act, i) => (
                   <ActivityRow
@@ -542,6 +596,26 @@ function ActivityRow({ activity, last, byKey }: {
   last: boolean
   byKey: Record<string, AccountMapping>
 }) {
+  // Only a rail that actually scrolls earns a Tab stop — the same measurement
+  // components/ui/table.tsx makes for every other table in the app. This page
+  // renders one rail per activity, and at any desktop width none of them
+  // overflows: an unconditional tabIndex turned every one of them into a dead
+  // Tab stop on a page that otherwise has a handful.
+  const railRef = useRef<HTMLDivElement>(null)
+  const [scrollable, setScrollable] = useState(false)
+  useEffect(() => {
+    const el = railRef.current
+    if (!el) return
+    const measure = () => setScrollable(el.scrollWidth > el.clientWidth + 1)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    const table = el.querySelector('table')
+    if (table) ro.observe(table)
+    return () => ro.disconnect()
+  }, [])
+
   return (
     <div
       className={last ? 'p-4' : 'p-4 border-b'}
@@ -569,7 +643,19 @@ function ActivityRow({ activity, last, byKey }: {
         )}
       </div>
       <div className="rounded-lg overflow-hidden" style={{ border: '1px solid var(--line)' }}>
-        <div className="table-scroll">
+        {/* The rail scrolls sideways below ~560px, and the account-code column
+            — the point of this page — is the part that goes off-screen. A
+            scroll container is only keyboard-scrollable once it is focusable. */}
+        <div
+          ref={railRef}
+          // The wrapper above is `overflow-hidden`, which clips a plain outline
+          // — so the rail uses the inset ring the shared table primitive uses,
+          // and only while it is focusable at all.
+          className="table-scroll focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--brand)]"
+          tabIndex={scrollable ? 0 : undefined}
+          role={scrollable ? 'region' : undefined}
+          aria-label={scrollable ? `${activity.name} — journal lines` : undefined}
+        >
           <table className="w-full text-xs min-w-[560px]">
             <tbody>
               {activity.lines.map((l, i) => {

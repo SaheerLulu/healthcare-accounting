@@ -12,6 +12,8 @@ import { Button } from '../../components/ui/button'
 import { Input } from '../../components/ui/input'
 import { Card } from '../../components/ui/card'
 import { AccountPicker } from '../journals/AccountPicker'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useGridKeyboardNav } from '../../hooks/useGridKeyboardNav'
 
 interface Item {
   uid: string
@@ -34,6 +36,10 @@ const FREQUENCIES: { v: RecurringFrequency; label: string; sub: string }[] = [
 ]
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
+
+/** Cell ids for the line grid — see hooks/useGridKeyboardNav. */
+const COLUMN_IDS = ['account', 'description', 'amount']
+const cellId = (row: number, col: string) => `rb-line-${row}-${col}`
 
 export default function RecurringBillEditorPage() {
   const { id } = useParams<{ id?: string }>()
@@ -63,6 +69,8 @@ export default function RecurringBillEditorPage() {
 
   const [original, setOriginal] = useState<RecurringBill | null>(null)
   const [saving, setSaving] = useState(false)
+  // The line the keyboard is on, so Alt+D removes that one.
+  const [focusedRow, setFocusedRow] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -181,6 +189,71 @@ export default function RecurringBillEditorPage() {
     } finally { setSaving(false) }
   }
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // Ctrl+S is the documented submit for this screen — the page is not a <form>,
+  // and Ctrl+S is allow-listed so it fires from inside any field. Alt+A/Alt+D
+  // add and remove lines; Enter and ↑/↓ walk a column, and Tab past the very
+  // last cell appends a line.
+  const grid = useGridKeyboardNav({
+    rowCount: items.length,
+    columnIds: COLUMN_IDS,
+    buildCellId: cellId,
+    onAppendRow: addItem,
+    onEnterAppendRow: addItem,
+  })
+
+  /**
+   * Tab keeps the row's natural DOM order — ledger picker → description →
+   * amount → remove — and only the very last cell overrides it, where the grid
+   * appends a line and moves into its picker.
+   *
+   * Overriding Tab on every cell (which is what this screen used to do) skipped
+   * the AccountPicker of every line after the first, and every Remove button,
+   * in both directions. An item with no account is dropped by payload() while
+   * its amount still counts towards the per-cycle total, so the profile saved
+   * with a total its stored items do not add up to.
+   */
+  function lineKeyDown(e: React.KeyboardEvent, rowIdx: number, colId: string) {
+    const lastCell = colId === 'amount' && rowIdx === items.length - 1
+    if (e.key === 'Tab' && (e.shiftKey || !lastCell)) return
+    grid.handleKeyDown(e, rowIdx, colId)
+  }
+
+  function deleteFocusedItem() {
+    const it = items[Math.min(focusedRow, items.length - 1)]
+    if (it) removeItem(it.uid)
+  }
+
+  usePageKeyboard({
+    actions: [
+      {
+        chord: 'Ctrl+S',
+        label: editingId ? 'Save changes' : 'Create profile',
+        run: () => { void handleSave() },
+        when: !saving,
+      },
+      { chord: 'Alt+A', label: 'Add line', run: addItem },
+      { chord: 'Alt+D', label: 'Delete line', run: deleteFocusedItem, when: items.length > 1 },
+    ],
+    onBack: () => navigate('/bills/recurring'),
+  })
+
+  /** Arrow keys inside the frequency radiogroup: move selection and focus. */
+  function onFrequencyKey(e: React.KeyboardEvent, index: number) {
+    const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End']
+    if (!keys.includes(e.key)) return
+    e.preventDefault()
+    const last = FREQUENCIES.length - 1
+    const next =
+      e.key === 'Home' ? 0
+        : e.key === 'End' ? last
+          : e.key === 'ArrowRight' || e.key === 'ArrowDown'
+            ? (index === last ? 0 : index + 1)
+            : (index === 0 ? last : index - 1)
+    setFrequency(FREQUENCIES[next].v)
+    document.getElementById(`rb-freq-${FREQUENCIES[next].v}`)?.focus()
+  }
+
   if (loading) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
   }
@@ -207,7 +280,7 @@ export default function RecurringBillEditorPage() {
       <Card className="p-5 mb-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Profile Name" required hint="Internal label, not shown on the bill">
-            <Input required value={profileName} onChange={(e) => setProfileName(e.target.value)}
+            <Input data-autofocus required value={profileName} onChange={(e) => setProfileName(e.target.value)}
               placeholder="e.g. Monthly office rent" />
           </Field>
           <Field label="Vendor" required hint="Pick a known supplier or enter a name">
@@ -230,13 +303,21 @@ export default function RecurringBillEditorPage() {
 
       <Card className="p-5 mb-4">
         <h2 className="text-sm font-semibold text-slate-900 mb-3">Schedule</h2>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4">
-          {FREQUENCIES.map((f) => (
+        {/* A real radiogroup: one tab stop for the five options, ←/→/↑/↓ (and
+            Home/End) select, so a frequency costs one key rather than five Tabs. */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-4" role="radiogroup" aria-label="Frequency">
+          {FREQUENCIES.map((f, i) => (
             <button
               key={f.v}
+              id={`rb-freq-${f.v}`}
               type="button"
+              role="radio"
+              aria-checked={frequency === f.v}
+              tabIndex={frequency === f.v ? 0 : -1}
               onClick={() => setFrequency(f.v)}
+              onKeyDown={(e) => onFrequencyKey(e, i)}
               className={'rounded-lg border px-3 py-2 text-left transition-colors ' +
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-1 ' +
                 (frequency === f.v
                   ? 'border-teal-500 bg-teal-50 text-teal-800'
                   : 'border-slate-200 text-slate-600 hover:border-slate-300')}
@@ -288,24 +369,31 @@ export default function RecurringBillEditorPage() {
               </tr>
             </thead>
             <tbody>
-              {items.map((it) => (
-                <tr key={it.uid} className="border-b border-slate-100 last:border-0">
+              {items.map((it, i) => (
+                <tr key={it.uid} className="border-b border-slate-100 last:border-0"
+                  onFocus={() => setFocusedRow(i)}>
                   <td className="px-4 py-2 align-top">
                     <AccountPicker accounts={expenseAccounts} value={it.account}
+                      triggerId={cellId(i, 'account')}
+                      ariaLabel={`Line ${i + 1} expense account`}
                       onChange={(id) => updateItem(it.uid, { account: id })} />
                   </td>
                   <td className="px-4 py-2">
-                    <Input value={it.description} onChange={(e) => updateItem(it.uid, { description: e.target.value })}
+                    <Input id={cellId(i, 'description')} value={it.description}
+                      onChange={(e) => updateItem(it.uid, { description: e.target.value })}
+                      onKeyDown={(e) => lineKeyDown(e, i, 'description')}
                       placeholder="Description" />
                   </td>
                   <td className="px-4 py-2">
-                    <Input type="number" step="0.01" min="0" value={it.amount}
+                    <Input id={cellId(i, 'amount')} type="number" step="0.01" min="0" value={it.amount}
                       onChange={(e) => updateItem(it.uid, { amount: e.target.value })}
+                      onKeyDown={(e) => lineKeyDown(e, i, 'amount')}
                       className="text-right font-mono" placeholder="0.00" />
                   </td>
                   <td className="px-2 py-2 align-middle">
                     <button type="button" onClick={() => removeItem(it.uid)} disabled={items.length <= 1}
-                      className="text-slate-400 hover:text-rose-600 disabled:opacity-30 p-1.5 rounded hover:bg-slate-100">
+                      className="text-slate-400 hover:text-rose-600 disabled:opacity-30 p-1.5 rounded hover:bg-slate-100"
+                      aria-label={`Remove line ${i + 1}`} title="Remove line (Alt+D)">
                       <Trash2 size={14} />
                     </button>
                   </td>
@@ -318,6 +406,7 @@ export default function RecurringBillEditorPage() {
                   <button type="button" onClick={addItem}
                     className="inline-flex items-center gap-1.5 text-sm text-teal-700 hover:text-teal-800">
                     <Plus size={14} /> Add another line
+                    <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Alt+A</kbd>
                   </button>
                 </td>
                 <td className="px-4 py-2 text-right">
@@ -372,10 +461,13 @@ export default function RecurringBillEditorPage() {
       <div
         className="sticky bottom-0 -mx-3 sm:-mx-4 lg:-mx-6 px-3 sm:px-4 lg:px-6 py-3 bg-white border-t border-slate-200 shadow-[0_-4px_12px_rgba(0,0,0,0.04)] flex flex-wrap items-center justify-end gap-2 mt-4 safe-bottom"
       >
-        <Button variant="secondary" onClick={() => navigate('/bills/recurring')}>Cancel</Button>
+        <Button variant="secondary" onClick={() => navigate('/bills/recurring')}>
+          Cancel <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Esc</kbd>
+        </Button>
         <Button onClick={handleSave} disabled={saving}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
           {editingId ? 'Save Changes' : 'Create Profile'}
+          <kbd className="hidden md:inline mono text-[10px] ml-1 text-white/80">Ctrl+S</kbd>
         </Button>
       </div>
     </div>

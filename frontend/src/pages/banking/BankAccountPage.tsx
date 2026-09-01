@@ -23,11 +23,15 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose, SheetTrigger,
 } from '../../components/ui/sheet'
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '../../components/ui/dialog'
 import { AccountPicker } from '../journals/AccountPicker'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 type Tab = 'review' | 'matched' | 'excluded' | 'all'
+
+const TAB_ORDER: Tab[] = ['review', 'matched', 'excluded', 'all']
 
 export default function BankAccountPage() {
   const { id } = useParams<{ id: string }>()
@@ -42,6 +46,15 @@ export default function BankAccountPage() {
   const [glAccounts, setGlAccounts] = useState<Account[]>([])
   const [suppliers, setSuppliers] = useState<Party[]>([])
   const [customers, setCustomers] = useState<Party[]>([])
+
+  // The three header overlays keep their open state up here so a page chord
+  // can open them; each still renders its own trigger button, which is what
+  // Radix hands focus back to on close.
+  const [depositOpen, setDepositOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [manualOpen, setManualOpen] = useState(false)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const tablistRef = useRef<HTMLDivElement>(null)
 
   async function load() {
     setLoading(true)
@@ -85,13 +98,90 @@ export default function BankAccountPage() {
     return { unmatched, matched, excluded }
   }, [txns])
 
+  // ─── Keyboard ─────────────────────────────────────────────────────────────
+  // The register was a plain <ul> of <li>s: not focusable, no arrow keys, and
+  // three or four tab stops per row, so the fortieth transaction to review sat
+  // over a hundred Tab presses away. One roving tab stop, ↑↓ between rows,
+  // Enter opens Match on the row you are on: it publishes the row index here,
+  // and the row clears it once its dialog has taken over, so activating the
+  // same row twice works.
+  const [matchIndex, setMatchIndex] = useState<number | null>(null)
+  const list = useListKeyboardNav({
+    count: txns.length,
+    onActivate: (i) => setMatchIndex(i),
+  })
+
+  /** Left/Right/Home/End across the status pills, as a tablist should. */
+  function onTabKeyDown(e: React.KeyboardEvent) {
+    const i = TAB_ORDER.indexOf(tab)
+    let next = -1
+    if (e.key === 'ArrowRight') next = (i + 1) % TAB_ORDER.length
+    else if (e.key === 'ArrowLeft') next = (i - 1 + TAB_ORDER.length) % TAB_ORDER.length
+    else if (e.key === 'Home') next = 0
+    else if (e.key === 'End') next = TAB_ORDER.length - 1
+    else return
+    e.preventDefault()
+    setTab(TAB_ORDER[next])
+    // Focus follows selection, the standard tablist behaviour — after the
+    // re-render that flips which pill holds the tab stop.
+    requestAnimationFrame(() => {
+      tablistRef.current?.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus()
+    })
+  }
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'Add transaction', run: () => setManualOpen(true) },
+      { chord: 'Alt+I', label: 'Import statement', run: () => setImportOpen(true) },
+      {
+        chord: 'Alt+B', label: 'Deposit cash',
+        run: () => setDepositOpen(true),
+        when: !!account && account.account_type !== 'cash',
+      },
+    ],
+    searchRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate('/banking'),
+  })
+
+  /**
+   * Alt+I / Alt+B from inside a field on this page.
+   *
+   * Alt+N is in the shared GLOBAL_ALLOW_LIST and these two are not, so the
+   * app-wide hotkey listener dropped them the moment focus sat in an input —
+   * i.e. straight after F2, which parks focus in the search box. Two of the
+   * three header actions the hint bar advertises were dead from the page's own
+   * search field while the third worked. Rather than widen a list every screen
+   * shares, the page answers its own two chords as they bubble out of its
+   * fields; everywhere else the global listener still owns them, and it ignores
+   * exactly the events handled here, so a chord never fires twice. Events from
+   * an open dialog or sheet bubble through the React tree even though Radix
+   * portals them, so those are skipped too — an overlay owns the keyboard.
+   */
+  function onFieldKeyDown(e: React.KeyboardEvent) {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+    const el = e.target as HTMLElement | null
+    const tag = el?.tagName
+    if (tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA') return
+    if (el?.closest('[role="dialog"], [role="menu"], [role="listbox"]')) return
+    const key = e.key.toLowerCase()
+    if (key === 'i') {
+      e.preventDefault()
+      setImportOpen(true)
+    } else if (key === 'b') {
+      if (!account || account.account_type === 'cash') return
+      e.preventDefault()
+      setDepositOpen(true)
+    }
+  }
+
   if (!account && loading) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
   }
   if (!account) return null
 
   return (
-    <div className="max-w-7xl mx-auto space-y-5">
+    <div className="max-w-7xl mx-auto space-y-5" onKeyDown={onFieldKeyDown}>
       <button onClick={() => navigate('/banking')}
         className="inline-flex items-center gap-1 text-sm text-slate-500 hover:text-teal-700 mb-3">
         <ArrowLeft size={14} /> Back to Banking
@@ -109,10 +199,13 @@ export default function BankAccountPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {account.account_type !== 'cash' && (
-            <DepositCashDialog bankAccount={account} onDeposited={load} />
+            <DepositCashDialog bankAccount={account} onDeposited={load}
+              open={depositOpen} onOpenChange={setDepositOpen} />
           )}
-          <ImportCsvDialog bankAccount={account} onImported={load} />
-          <ManualTxnSheet bankAccount={account} onCreated={load} />
+          <ImportCsvDialog bankAccount={account} onImported={load}
+            open={importOpen} onOpenChange={setImportOpen} />
+          <ManualTxnSheet bankAccount={account} onCreated={load}
+            open={manualOpen} onOpenChange={setManualOpen} />
         </div>
       </div>
 
@@ -138,21 +231,26 @@ export default function BankAccountPage() {
       </div>
 
       {/* Tab pills */}
-      <div className="flex items-center gap-1.5 mb-3 flex-wrap">
+      <div ref={tablistRef} role="tablist" aria-label="Transaction status"
+           className="flex items-center gap-1.5 mb-3 flex-wrap">
         <Pill label="For Review" count={tab === 'review' ? counts.unmatched : account.unmatched_count}
-              active={tab === 'review'} dot="bg-amber-400" onClick={() => setTab('review')} />
+              active={tab === 'review'} dot="bg-amber-400" onClick={() => setTab('review')}
+              onKeyDown={onTabKeyDown} />
         <Pill label="Matched" count={tab === 'matched' ? counts.matched : -1}
-              active={tab === 'matched'} dot="bg-emerald-500" onClick={() => setTab('matched')} />
+              active={tab === 'matched'} dot="bg-emerald-500" onClick={() => setTab('matched')}
+              onKeyDown={onTabKeyDown} />
         <Pill label="Excluded" count={tab === 'excluded' ? counts.excluded : -1}
-              active={tab === 'excluded'} dot="bg-slate-400" onClick={() => setTab('excluded')} />
-        <Pill label="All" count={-1} active={tab === 'all'} onClick={() => setTab('all')} />
+              active={tab === 'excluded'} dot="bg-slate-400" onClick={() => setTab('excluded')}
+              onKeyDown={onTabKeyDown} />
+        <Pill label="All" count={-1} active={tab === 'all'} onClick={() => setTab('all')}
+              onKeyDown={onTabKeyDown} />
       </div>
 
       {/* Search */}
       <div className="flex items-center gap-2 mb-3">
         <div className="relative flex-1 max-w-md">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)}
+          <Input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Search description / reference…" className="pl-9 py-1.5" />
         </div>
       </div>
@@ -168,8 +266,8 @@ export default function BankAccountPage() {
               : 'No transactions match your filters.'}
           </div>
         ) : (
-          <ul className="divide-y divide-slate-100">
-            {txns.map((t) => (
+          <ul className="divide-y divide-slate-100" {...list.containerProps}>
+            {txns.map((t, i) => (
               <TxnRow
                 key={t.id}
                 txn={t}
@@ -177,6 +275,11 @@ export default function BankAccountPage() {
                 suppliers={suppliers}
                 customers={customers}
                 onChange={load}
+                rowProps={list.rowProps(i)}
+                active={list.active === i}
+                openMatch={matchIndex === i}
+                onMatchOpened={() => setMatchIndex(null)}
+                onFocusList={list.focusList}
               />
             ))}
           </ul>
@@ -188,16 +291,77 @@ export default function BankAccountPage() {
 
 // ─── Single row with inline actions ─────────────────────────────────────────
 
-function TxnRow({ txn, glAccounts, suppliers, customers, onChange }: {
+/**
+ * Keys `useListKeyboardNav` consumes on a row.
+ *
+ * Radix portals the Match dialog and the Categorize sheet to <body>, but React
+ * events bubble through the React TREE, not the DOM tree — and both overlays
+ * are rendered inside the <li> that carries the row's onKeyDown. So every arrow
+ * press inside the Match listbox also ran the register behind the modal:
+ * setActive plus focus()/scrollIntoView() on a row nobody can see, with Radix's
+ * focus trap yanking focus back on each one, and PageUp/PageDown jumping the
+ * background list by ten. The open overlay owns these keys; Escape, F1 and the
+ * Alt/Ctrl chords are untouched and still reach the app-wide listener.
+ */
+const ROW_NAV_KEYS = new Set([
+  'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Enter', ' ',
+])
+
+function stopRowNav(e: React.KeyboardEvent) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  if (ROW_NAV_KEYS.has(e.key)) e.stopPropagation()
+}
+
+function TxnRow({
+  txn, glAccounts, suppliers, customers, onChange,
+  rowProps, active, openMatch, onMatchOpened, onFocusList,
+}: {
   txn: BankTransaction
   glAccounts: Account[]
   suppliers: Party[]
   customers: Party[]
   onChange: () => void
+  /** Roving-tabindex props for this row, from useListKeyboardNav. */
+  rowProps: React.HTMLAttributes<HTMLLIElement> & { 'data-kbd-row': number }
+  /** True while this is the row the arrow keys are on. */
+  active: boolean
+  /** Enter was pressed on this row — open Match. */
+  openMatch: boolean
+  onMatchOpened: () => void
+  onFocusList: () => void
 }) {
   const isIn = txn.direction === 'in'
   const [matchOpen, setMatchOpen] = useState(false)
   const [catOpen, setCatOpen] = useState(false)
+  const matchBtnRef = useRef<HTMLButtonElement>(null)
+  const catBtnRef = useRef<HTMLButtonElement>(null)
+
+  // Enter on the focused row opens Match, the row's primary verb — the same
+  // thing its first button does.
+  useEffect(() => {
+    if (!openMatch) return
+    onMatchOpened()
+    if (txn.status === 'unmatched') setMatchOpen(true)
+  }, [openMatch, onMatchOpened, txn.status])
+
+  /**
+   * Radix restores focus to the trigger it was opened from; these overlays are
+   * opened from ordinary buttons, so it has none and drops focus on <body>.
+   * Go back to the button when it survived the reload, and into the list when
+   * the row it belonged to has moved out of the current tab.
+   */
+  function returnFocus(ref: React.RefObject<HTMLButtonElement | null>) {
+    return (e: Event) => {
+      e.preventDefault()
+      const el = ref.current
+      if (el && el.isConnected) el.focus()
+      else onFocusList()
+    }
+  }
+
+  // Only the focused row keeps its verbs in the tab order, so Tab walks
+  // row → its actions → past the list, not four stops per transaction.
+  const actionTab = active ? 0 : -1
 
   async function handleExclude() {
     try { await excludeBankTxn(txn.id); onChange(); toast.success('Excluded') }
@@ -222,7 +386,9 @@ function TxnRow({ txn, glAccounts, suppliers, customers, onChange }: {
   }
 
   return (
-    <li className="px-4 py-3 hover:bg-slate-50">
+    <li className="px-4 py-3 hover:bg-slate-50 focus:outline-none"
+        aria-label={`${formatDate(txn.date)} ${txn.description || 'transaction'} ${isIn ? 'in' : 'out'} ${txn.abs_amount}`}
+        {...rowProps}>
       <div className="flex items-start gap-3">
         <div className={cn(
           'w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0',
@@ -261,50 +427,61 @@ function TxnRow({ txn, glAccounts, suppliers, customers, onChange }: {
       </div>
 
       {/* Action row */}
-      <div className="flex items-center gap-2 mt-2.5 ml-12 flex-wrap">
+      {/* Enter and Space belong to whichever button has focus. Without this the
+          row's own Enter/Space handler would also fire — and, worse, its
+          preventDefault would swallow the button's native Space activation. */}
+      <div className="flex items-center gap-2 mt-2.5 ml-12 flex-wrap"
+           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation() }}>
         {txn.status === 'unmatched' && (
           <>
-            <Button size="sm" onClick={() => setMatchOpen(true)}>
+            <Button size="sm" ref={matchBtnRef} tabIndex={actionTab} onClick={() => setMatchOpen(true)}>
               <Check size={13} /> Match
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => setCatOpen(true)}>
+            <Button size="sm" variant="secondary" ref={catBtnRef} tabIndex={actionTab} onClick={() => setCatOpen(true)}>
               <Tag size={13} /> Categorize
             </Button>
-            <Button size="sm" variant="ghost" onClick={handleExclude}>
+            <Button size="sm" variant="ghost" tabIndex={actionTab} onClick={handleExclude}>
               <Eye size={13} /> Exclude
             </Button>
           </>
         )}
         {txn.status === 'matched' && (
           <>
-            <Button size="sm" variant="secondary" onClick={handleUnmatch}>
+            <Button size="sm" variant="secondary" tabIndex={actionTab} onClick={handleUnmatch}>
               <X size={13} /> Unmatch
             </Button>
           </>
         )}
         {txn.status === 'excluded' && (
-          <Button size="sm" variant="secondary" onClick={handleRestore}>
+          <Button size="sm" variant="secondary" tabIndex={actionTab} onClick={handleRestore}>
             <Eye size={13} /> Restore
           </Button>
         )}
         {txn.source === 'manual' && txn.status !== 'matched' && (
-          <button onClick={handleDelete}
+          <button onClick={handleDelete} tabIndex={actionTab}
                   className="text-xs text-slate-400 hover:text-rose-600 ml-auto inline-flex items-center gap-1">
             <Trash2 size={12} /> Delete
           </button>
         )}
       </div>
 
-      {/* Match dialog */}
+      {/* Match dialog. The wrapper keeps the dialog's own ↑↓/Enter/PageUp out of
+          this row's list navigation — see ROW_NAV_KEYS. */}
       {matchOpen && (
-        <MatchDialog txn={txn} open={matchOpen} onClose={() => setMatchOpen(false)}
-          onMatched={() => { setMatchOpen(false); onChange() }} />
+        <div className="contents" onKeyDown={stopRowNav}>
+          <MatchDialog txn={txn} open={matchOpen} onClose={() => setMatchOpen(false)}
+            onCloseAutoFocus={returnFocus(matchBtnRef)}
+            onMatched={() => { setMatchOpen(false); onChange() }} />
+        </div>
       )}
       {/* Categorize sheet */}
       {catOpen && (
-        <CategorizeSheet txn={txn} open={catOpen} onClose={() => setCatOpen(false)}
-          glAccounts={glAccounts} suppliers={suppliers} customers={customers}
-          onCategorized={() => { setCatOpen(false); onChange() }} />
+        <div className="contents" onKeyDown={stopRowNav}>
+          <CategorizeSheet txn={txn} open={catOpen} onClose={() => setCatOpen(false)}
+            onCloseAutoFocus={returnFocus(catBtnRef)}
+            glAccounts={glAccounts} suppliers={suppliers} customers={customers}
+            onCategorized={() => { setCatOpen(false); onChange() }} />
+        </div>
       )}
     </li>
   )
@@ -312,25 +489,68 @@ function TxnRow({ txn, glAccounts, suppliers, customers, onChange }: {
 
 // ─── Match dialog ──────────────────────────────────────────────────────────
 
-function MatchDialog({ txn, open, onClose, onMatched }: {
+function MatchDialog({ txn, open, onClose, onMatched, onCloseAutoFocus }: {
   txn: BankTransaction
   open: boolean
   onClose: () => void
   onMatched: () => void
+  onCloseAutoFocus: (e: Event) => void
 }) {
   const [suggestions, setSuggestions] = useState<MatchSuggestion[]>([])
   const [loading, setLoading] = useState(true)
   const [matching, setMatching] = useState<number | null>(null)
   const [manualId, setManualId] = useState('')
+  // The suggestion list is a listbox, not a stack of buttons: ↑↓ move the
+  // highlight, Enter matches. Tabbing through every candidate's Match button
+  // was the only way to reach the third suggestion.
+  const [highlight, setHighlight] = useState(0)
+  const listRef = useRef<HTMLUListElement>(null)
 
   useEffect(() => {
     if (!open) return
     setLoading(true)
+    setHighlight(0)
     getBankTxnSuggestions(txn.id)
       .then((d) => setSuggestions(d.rows))
       .catch(() => toast.error('Failed to load suggestions'))
       .finally(() => setLoading(false))
   }, [open, txn.id])
+
+  // The dialog opens on the spinner, so DialogContent's onOpenAutoFocus runs
+  // while the listbox does not exist yet: its [data-autofocus] lookup finds
+  // nothing and focus falls through to the manual "Journal Entry ID" box at the
+  // bottom, leaving the ↑↓/Enter list reachable only by Shift+Tab. Move focus
+  // when the suggestions actually land instead.
+  useEffect(() => {
+    if (!open || loading || suggestions.length === 0) return
+    // Unless the user got there first and started typing an ID — then they have
+    // already said where they want to be.
+    const active = document.activeElement
+    if (active instanceof HTMLInputElement && active.value) return
+    listRef.current?.focus()
+  }, [open, loading, suggestions.length])
+
+  function onListKeyDown(e: React.KeyboardEvent) {
+    if (suggestions.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault(); setHighlight((h) => Math.min(h + 1, suggestions.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0))
+    } else if (e.key === 'PageDown') {
+      e.preventDefault(); setHighlight((h) => Math.min(h + 10, suggestions.length - 1))
+    } else if (e.key === 'PageUp') {
+      e.preventDefault(); setHighlight((h) => Math.max(h - 10, 0))
+    } else if (e.key === 'Home') {
+      e.preventDefault(); setHighlight(0)
+    } else if (e.key === 'End') {
+      e.preventDefault(); setHighlight(suggestions.length - 1)
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      const s = suggestions[highlight]
+      if (!s) return
+      e.preventDefault()
+      pick(s.entry_id)
+    }
+  }
 
   async function pick(entryId: number) {
     setMatching(entryId)
@@ -353,7 +573,7 @@ function MatchDialog({ txn, open, onClose, onMatched }: {
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader><DialogTitle>Match transaction</DialogTitle></DialogHeader>
         <div className="text-sm text-slate-500 mb-3">
           {formatDate(txn.date)} · {txn.description || '(no description)'} ·{' '}
@@ -367,9 +587,27 @@ function MatchDialog({ txn, open, onClose, onMatched }: {
             No matching journal entries found. Try Categorize, or paste a journal entry ID below.
           </p>
         ) : (
-          <ul className="border border-slate-200 rounded-lg divide-y divide-slate-100 mb-3">
-            {suggestions.map((s) => (
-              <li key={s.entry_id} className="p-3 hover:bg-slate-50 flex items-center justify-between gap-3">
+          <ul
+            ref={listRef}
+            role="listbox"
+            tabIndex={0}
+            // Only covers a re-render where the list is already present; the
+            // effect above is what lands focus here on a normal open.
+            data-autofocus
+            aria-label="Suggested journal entries"
+            aria-activedescendant={suggestions[highlight] ? `match-opt-${suggestions[highlight].entry_id}` : undefined}
+            onKeyDown={onListKeyDown}
+            className="border border-slate-200 rounded-lg divide-y divide-slate-100 mb-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+          >
+            {suggestions.map((s, i) => (
+              <li key={s.entry_id}
+                  id={`match-opt-${s.entry_id}`}
+                  role="option"
+                  aria-selected={i === highlight}
+                  className={cn(
+                    'p-3 flex items-center justify-between gap-3',
+                    i === highlight ? 'bg-teal-50' : 'hover:bg-slate-50',
+                  )}>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-mono text-xs text-teal-700">{s.entry_no}</span>
@@ -381,7 +619,7 @@ function MatchDialog({ txn, open, onClose, onMatched }: {
                   </div>
                   <div className="text-sm text-slate-600 truncate mt-0.5">{s.narration || '—'}</div>
                 </div>
-                <Button size="sm" onClick={() => pick(s.entry_id)} disabled={matching === s.entry_id}>
+                <Button size="sm" tabIndex={-1} onClick={() => pick(s.entry_id)} disabled={matching === s.entry_id}>
                   {matching === s.entry_id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
                   Match
                 </Button>
@@ -405,7 +643,7 @@ function MatchDialog({ txn, open, onClose, onMatched }: {
 
 // ─── Categorize sheet ──────────────────────────────────────────────────────
 
-function CategorizeSheet({ txn, open, onClose, glAccounts, suppliers, customers, onCategorized }: {
+function CategorizeSheet({ txn, open, onClose, glAccounts, suppliers, customers, onCategorized, onCloseAutoFocus }: {
   txn: BankTransaction
   open: boolean
   onClose: () => void
@@ -413,7 +651,12 @@ function CategorizeSheet({ txn, open, onClose, glAccounts, suppliers, customers,
   suppliers: Party[]
   customers: Party[]
   onCategorized: () => void
+  onCloseAutoFocus: (e: Event) => void
 }) {
+  // SheetContent's default entry-field rule finds the party <select> first,
+  // because the account picker's trigger is a button — but the picker is the
+  // one field this sheet cannot be submitted without.
+  const pickerRef = useRef<HTMLDivElement>(null)
   const [accountId, setAccountId] = useState<number | null>(null)
   const [partyType, setPartyType] = useState<'' | 'Supplier' | 'Customer'>('')
   const [partyId, setPartyId] = useState<number | ''>('')
@@ -453,7 +696,14 @@ function CategorizeSheet({ txn, open, onClose, glAccounts, suppliers, customers,
 
   return (
     <Sheet open={open} onOpenChange={(o) => { if (!o) onClose() }}>
-      <SheetContent width="md">
+      <SheetContent
+        width="md"
+        onCloseAutoFocus={onCloseAutoFocus}
+        onOpenAutoFocus={(e) => {
+          const btn = pickerRef.current?.querySelector('button')
+          if (btn) { e.preventDefault(); btn.focus() }
+        }}
+      >
         <form onSubmit={submit} className="flex flex-col h-full">
           <SheetHeader>
             <SheetTitle>Categorize {txn.direction === 'in' ? 'deposit' : 'spend'}</SheetTitle>
@@ -466,8 +716,10 @@ function CategorizeSheet({ txn, open, onClose, glAccounts, suppliers, customers,
             <div className="space-y-3">
               <Field label={txn.direction === 'in' ? 'Income / settled account' : 'Expense / settled account'} required
                 hint="A receipt credits this; a payment debits it">
-                <AccountPicker accounts={glAccounts} value={accountId}
-                  onChange={(id) => setAccountId(id)} />
+                <div ref={pickerRef}>
+                  <AccountPicker accounts={glAccounts} value={accountId}
+                    onChange={(id) => setAccountId(id)} />
+                </div>
               </Field>
 
               <Field label="Tag a party" hint="Optional — for outstanding tracking">
@@ -517,8 +769,13 @@ function CategorizeSheet({ txn, open, onClose, glAccounts, suppliers, customers,
 
 // ─── Deposit cash dialog ───────────────────────────────────────────────────
 
-function DepositCashDialog({ bankAccount, onDeposited }: { bankAccount: BankAccount; onDeposited: () => void }) {
-  const [open, setOpen] = useState(false)
+function DepositCashDialog({ bankAccount, onDeposited, open, onOpenChange }: {
+  bankAccount: BankAccount
+  onDeposited: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const setOpen = onOpenChange
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [amount, setAmount] = useState('')
   const [narration, setNarration] = useState('')
@@ -546,9 +803,14 @@ function DepositCashDialog({ bankAccount, onDeposited }: { bankAccount: BankAcco
 
   return (
     <Dialog open={open} onOpenChange={(o) => setOpen(o)}>
-      <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
-        <ArrowDownLeft size={14} /> Deposit Cash
-      </Button>
+      {/* A real DialogTrigger, not a bare button inside <Dialog>: Radix restores
+          focus to `triggerRef` on close, and without a Trigger that ref is null
+          — so closing the dialog dropped focus on <body> every time. */}
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm">
+          <ArrowDownLeft size={14} /> Deposit Cash
+        </Button>
+      </DialogTrigger>
       <DialogContent>
         <DialogHeader><DialogTitle>Deposit cash into {bankAccount.name}</DialogTitle></DialogHeader>
         <p className="text-xs text-slate-500 mb-3">
@@ -561,7 +823,7 @@ function DepositCashDialog({ bankAccount, onDeposited }: { bankAccount: BankAcco
         <form onSubmit={submit} className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Date" required>
-              <Input type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
+              <Input type="date" data-autofocus required value={date} onChange={(e) => setDate(e.target.value)} />
             </Field>
             <Field label="Amount" required>
               <Input type="number" step="0.01" min="0.01" required value={amount}
@@ -586,8 +848,13 @@ function DepositCashDialog({ bankAccount, onDeposited }: { bankAccount: BankAcco
 
 // ─── Import CSV dialog ─────────────────────────────────────────────────────
 
-function ImportCsvDialog({ bankAccount, onImported }: { bankAccount: BankAccount; onImported: () => void }) {
-  const [open, setOpen] = useState(false)
+function ImportCsvDialog({ bankAccount, onImported, open, onOpenChange }: {
+  bankAccount: BankAccount
+  onImported: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const setOpen = onOpenChange
   const [uploading, setUploading] = useState(false)
   const [result, setResult] = useState<{ imported: number; duplicates: number; errors: string[] } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -608,30 +875,54 @@ function ImportCsvDialog({ bankAccount, onImported }: { bankAccount: BankAccount
 
   return (
     <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setResult(null) }}>
-      <Button variant="secondary" size="sm" onClick={() => setOpen(true)}>
-        <UploadCloud size={14} /> Import Statement
-      </Button>
+      <DialogTrigger asChild>
+        <Button variant="secondary" size="sm">
+          <UploadCloud size={14} /> Import Statement
+        </Button>
+      </DialogTrigger>
       <DialogContent>
         <DialogHeader><DialogTitle>Import bank statement</DialogTitle></DialogHeader>
         <p className="text-xs text-slate-500 mb-3">
           Upload a CSV from your bank. We'll auto-detect columns named Date, Description, Reference,
           and either a single Amount column or Debit + Credit columns.
         </p>
-        <div className="border-2 border-dashed border-slate-200 rounded-lg py-8 text-center cursor-pointer hover:bg-slate-50"
-             onClick={() => inputRef.current?.click()}>
+        {/* Importing a statement is how transactions get onto this screen, and
+            the drop zone was a bare <div onClick> wrapping a display:none input
+            — nothing in the dialog could reach the file picker from a keyboard.
+            role/tabIndex/Enter/Space make the zone itself the control, and the
+            input moves to sr-only so it stays focusable as a fallback. */}
+        <div
+          role="button"
+          tabIndex={0}
+          // Wins over DialogContent's "first form control" rule, which would
+          // otherwise land on the sr-only file input below — invisible focus.
+          data-autofocus
+          aria-label="Choose a CSV statement to upload"
+          aria-busy={uploading}
+          className="border-2 border-dashed border-slate-200 rounded-lg py-8 text-center cursor-pointer hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+          onClick={() => inputRef.current?.click()}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return
+            e.preventDefault()
+            inputRef.current?.click()
+          }}
+        >
           {uploading ? (
             <Loader2 size={24} className="animate-spin inline text-teal-600" />
           ) : (
             <>
               <UploadCloud size={24} className="text-slate-400 mb-1.5 mx-auto" />
               <p className="text-sm text-slate-600">
-                <span className="text-teal-700 font-medium">Click to upload</span> a CSV file
+                <span className="text-teal-700 font-medium">Click or press Enter to upload</span> a CSV file
               </p>
             </>
           )}
-          <input ref={inputRef} type="file" accept=".csv,text/csv" className="hidden"
-            onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.target.value = '' }} />
         </div>
+        {/* Outside the drop zone: an sr-only input inside it would bubble its
+            own activation click back to the zone's onClick and re-open itself. */}
+        <input ref={inputRef} type="file" accept=".csv,text/csv" className="sr-only"
+          aria-label="CSV statement file"
+          onChange={(e) => { if (e.target.files?.[0]) handleFile(e.target.files[0]); e.target.value = '' }} />
 
         {result && (
           <div className="mt-4 text-sm">
@@ -658,8 +949,13 @@ function ImportCsvDialog({ bankAccount, onImported }: { bankAccount: BankAccount
 
 // ─── Manual transaction sheet ──────────────────────────────────────────────
 
-function ManualTxnSheet({ bankAccount, onCreated }: { bankAccount: BankAccount; onCreated: () => void }) {
-  const [open, setOpen] = useState(false)
+function ManualTxnSheet({ bankAccount, onCreated, open, onOpenChange }: {
+  bankAccount: BankAccount
+  onCreated: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const setOpen = onOpenChange
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [direction, setDirection] = useState<'in' | 'out'>('out')
   const [amount, setAmount] = useState('')
@@ -700,17 +996,27 @@ function ManualTxnSheet({ bankAccount, onCreated }: { bankAccount: BankAccount; 
           <SheetBody>
             <div className="space-y-3">
               <Field label="Direction" required>
-                <div className="flex flex-wrap gap-2">
+                {/* `hidden` radios with no shared name were neither focusable
+                    nor a radio group, so the direction was stuck at its 'out'
+                    default and a Money In transaction could not be recorded
+                    from the keyboard. sr-only + a shared name restores native
+                    ←/→ selection; the label shows where focus is. */}
+                <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Direction">
                   {[
                     { v: 'in' as const, label: 'Money In', cls: 'border-emerald-300 bg-emerald-50 text-emerald-700' },
                     { v: 'out' as const, label: 'Money Out', cls: 'border-rose-300 bg-rose-50 text-rose-700' },
                   ].map((opt) => (
                     <label key={opt.v} className={cn(
                       'flex-1 min-w-[7rem] flex items-center justify-center px-3 py-2 rounded-lg border cursor-pointer text-sm',
+                      'focus-within:ring-2 focus-within:ring-teal-500 focus-within:ring-offset-1',
                       direction === opt.v ? opt.cls : 'border-slate-200 text-slate-600'
                     )}>
-                      <input type="radio" checked={direction === opt.v} onChange={() => setDirection(opt.v)}
-                        className="hidden" />
+                      <input type="radio" name="direction" value={opt.v}
+                        checked={direction === opt.v} onChange={() => setDirection(opt.v)}
+                        // The sheet opens on the SELECTED direction, the way
+                        // tabbing into a native radio group behaves.
+                        {...(direction === opt.v ? { 'data-autofocus': '' } : {})}
+                        className="sr-only" />
                       {opt.label}
                     </label>
                   ))}
@@ -749,15 +1055,19 @@ function ManualTxnSheet({ bankAccount, onCreated }: { bankAccount: BankAccount; 
 
 // ─── Field wrapper ─────────────────────────────────────────────────────────
 
-function Pill({ label, count, active, dot, onClick }: {
+function Pill({ label, count, active, dot, onClick, onKeyDown }: {
   label: string
   count: number
   active: boolean
   dot?: string
   onClick: () => void
+  onKeyDown?: (e: React.KeyboardEvent) => void
 }) {
   return (
-    <button onClick={onClick} className={cn(
+    // A tablist, not four independent buttons: ←/→/Home/End switch tabs, the
+    // selected pill is the only tab stop, and aria-selected says which is on.
+    <button role="tab" aria-selected={active} tabIndex={active ? 0 : -1}
+      onClick={onClick} onKeyDown={onKeyDown} className={cn(
       'inline-flex items-center gap-2 px-3 py-2 sm:py-1.5 rounded-full border text-xs font-medium transition-colors',
       active
         ? 'bg-teal-50 border-teal-200 text-teal-700'

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, ChevronRight, Loader2, Settings as SettingsIcon } from 'lucide-react'
 import {
@@ -7,7 +7,8 @@ import {
 } from '../lib/api'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { useHintRegister } from '../contexts/HotkeyContext'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 
 interface CheckItem {
   id: string
@@ -34,13 +35,13 @@ export default function SetupChecklistPage() {
   const [banks, setBanks] = useState<BankAccount[]>([])
   const [loading, setLoading] = useState(true)
 
-  useHintRegister([
-    { chord: 'F11', label: 'Setup' },
-    { chord: 'Esc', label: 'Back' },
-  ])
-
-  useEffect(() => {
+  // Extracted so Alt+R can re-run the same three fetches the mount effect does
+  // — a checklist you cannot re-check after fixing something is half a tool.
+  const load = useCallback(() => {
     let cancelled = false
+    // Deliberately no setLoading(true): an Alt+R re-check swaps the whole list
+    // for a spinner if it does, and the focused row — with it, the keyboard
+    // user's place in the checklist — goes to <body>.
     Promise.all([getSettings(), getAccountMappings(), getBankAccounts().catch(() => [])])
       .then(([s, m, b]) => {
         if (cancelled) return
@@ -52,6 +53,8 @@ export default function SetupChecklistPage() {
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => load(), [load])
 
   const checks = useMemo<CheckItem[]>(() => {
     if (!settings) return []
@@ -152,6 +155,31 @@ export default function SetupChecklistPage() {
   const requiredTotal = required.length
   const allRequiredDone = requiredOk === requiredTotal && requiredTotal > 0
 
+  // ─── Keyboard ─────────────────────────────────────────────────────────────
+  // The rows are the screen's real content, so they are what F3 jumps into and
+  // what Enter acts on — including the passing ones, which previously exposed
+  // no control at all and so could not be opened from the keyboard.
+  const requiredNav = useListKeyboardNav({
+    count: required.length,
+    onActivate: (i) => { const f = required[i]?.fix; if (f) navigate(f.to) },
+  })
+  const optionalNav = useListKeyboardNav({
+    count: optional.length,
+    onActivate: (i) => { const f = optional[i]?.fix; if (f) navigate(f.to) },
+  })
+
+  // F11 is NOT registered here: it is a global chord that navigates to /setup,
+  // and this screen IS /setup, so advertising it promised a key that reloads
+  // nothing. Esc now has a real handler rather than only a hint.
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+S', label: 'Settings', run: () => navigate('/settings') },
+      { chord: 'Alt+R', label: 'Re-check', run: load },
+    ],
+    onFocusList: requiredNav.focusList,
+    onBack: () => navigate(-1),
+  })
+
   if (loading || !settings) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline" size={24} style={{ color: 'var(--brand)' }} /></div>
   }
@@ -223,35 +251,42 @@ export default function SetupChecklistPage() {
         </div>
       </Card>
 
-      <SectionList title="Required" items={required} navigate={navigate} />
-      <SectionList title="Optional" items={optional} navigate={navigate} />
+      <SectionList title="Required" items={required} navigate={navigate} nav={requiredNav} />
+      <SectionList title="Optional" items={optional} navigate={navigate} nav={optionalNav} />
     </div>
   )
 }
 
-function SectionList({ title, items, navigate }: {
+function SectionList({ title, items, navigate, nav }: {
   title: string
   items: CheckItem[]
   navigate: (to: string) => void
+  nav: ReturnType<typeof useListKeyboardNav>
 }) {
   if (items.length === 0) return null
   return (
     <div>
-      <div
+      <h2
         className="mono uppercase text-[11px] font-semibold tracking-wider mb-2"
         style={{ color: 'var(--ink-3)' }}
       >
         {title}
-      </div>
+      </h2>
       <Card className="p-0 overflow-hidden">
-        <ul>
+        <ul {...nav.containerProps}>
           {items.map((c, i) => (
             <li
               key={c.id}
               className={i < items.length - 1 ? 'border-b' : ''}
               style={i < items.length - 1 ? { borderColor: 'var(--line)' } : undefined}
             >
-              <div className="flex items-center gap-3 px-3 sm:px-4 py-3">
+              {/* The row itself is the activation target — one tab stop for the
+                  whole list, ↑↓ between items, Enter opens the fix. */}
+              <div
+                className="flex items-center gap-3 px-3 sm:px-4 py-3 focus:outline-none"
+                aria-label={`${c.label} — ${c.ok ? 'done' : 'needs attention'}`}
+                {...nav.rowProps(i)}
+              >
                 <div
                   className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
                   style={{
@@ -277,6 +312,10 @@ function SectionList({ title, items, navigate }: {
                     variant="ghost"
                     size="sm"
                     className="flex-shrink-0 whitespace-nowrap"
+                    // tabIndex={-1}: the row that contains it is already the
+                    // single tab stop and Enter on it runs this same navigate,
+                    // so leaving the button tabbable would double every stop.
+                    tabIndex={-1}
                     onClick={() => navigate(c.fix!.to)}
                   >
                     {c.fix.label} <ChevronRight size={12} />

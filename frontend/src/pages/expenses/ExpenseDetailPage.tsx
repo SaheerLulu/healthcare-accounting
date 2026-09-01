@@ -14,9 +14,9 @@ import { formatCurrency, formatDate, cn } from '../../lib/utils'
 import { Card } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '../../components/ui/dialog'
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 const ALLOWED_TYPES = [
   'application/pdf', 'image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/heic', 'image/gif',
@@ -40,6 +40,15 @@ export default function ExpenseDetailPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [confirmReverse, setConfirmReverse] = useState(false)
+
+  // Recording or reversing swaps the whole action block, taking the button the
+  // user just pressed with it and dropping focus to <body>. These hand focus to
+  // whichever primary action replaced it.
+  const recordBtnRef = useRef<HTMLButtonElement>(null)
+  const reverseBtnRef = useRef<HTMLButtonElement>(null)
+  const focusNext = (ref: React.RefObject<HTMLButtonElement | null>) =>
+    window.setTimeout(() => ref.current?.focus(), 0)
 
   async function load() {
     setLoading(true)
@@ -61,6 +70,7 @@ export default function ExpenseDetailPage() {
       const updated = await recordExpense(expense.id)
       setExpense(updated)
       toast.success('Expense recorded · ' + (updated.journal_entry_no || ''))
+      focusNext(reverseBtnRef)
     } catch (err) {
       const e = err as { response?: { data?: { detail?: string } } }
       toast.error(e.response?.data?.detail || 'Failed to record')
@@ -69,16 +79,19 @@ export default function ExpenseDetailPage() {
 
   async function handleReverse() {
     if (!expense) return
-    if (!confirm('Reverse this expense? It will create a reversal JE and reset to draft.')) return
     setBusy(true)
     try {
       const updated = await reverseExpense(expense.id)
       setExpense(updated)
       toast.success('Expense reversed')
+      focusNext(recordBtnRef)
     } catch (err) {
       const e = err as { response?: { data?: { detail?: string } } }
       toast.error(e.response?.data?.detail || 'Failed to reverse')
-    } finally { setBusy(false) }
+    } finally {
+      setBusy(false)
+      setConfirmReverse(false)
+    }
   }
 
   async function handleDelete() {
@@ -91,8 +104,28 @@ export default function ExpenseDetailPage() {
     } catch {
       toast.error('Failed to delete')
       setBusy(false)
+      setConfirmDelete(false)
     }
   }
+
+  const isDraft = expense?.status === 'draft'
+  const isRecorded = expense?.status === 'recorded'
+
+  // Read-only rows still earn a cursor: ↑↓ / Home / End walk the line items and
+  // the focus rail drags the horizontal scroller along with it.
+  const lineList = useListKeyboardNav({ count: expense?.items.length ?? 0 })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+E', label: 'Edit', run: () => navigate(`/expenses/${expenseId}/edit`), when: isDraft },
+      { chord: 'Ctrl+A', label: 'Record', run: handleRecord, when: isDraft && !busy },
+      { chord: 'Alt+V', label: 'Reverse', run: () => setConfirmReverse(true), when: isRecorded && !busy },
+      { chord: 'Alt+D', label: 'Delete', run: () => setConfirmDelete(true), when: isDraft && !busy },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    onFocusList: lineList.focusList,
+    onBack: () => navigate('/expenses'),
+  })
 
   if (loading || !expense) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
@@ -126,19 +159,22 @@ export default function ExpenseDetailPage() {
         <div className="flex items-center gap-2 flex-wrap">
           {expense.status === 'draft' && (
             <>
-              <Button variant="secondary" size="sm" onClick={() => navigate(`/expenses/${expense.id}/edit`)}>
+              <Button variant="secondary" size="sm" title="Edit (Alt+E)"
+                onClick={() => navigate(`/expenses/${expense.id}/edit`)}>
                 <Pencil size={14} /> Edit
               </Button>
-              <Button size="sm" onClick={handleRecord} disabled={busy}>
+              <Button ref={recordBtnRef} size="sm" onClick={handleRecord} disabled={busy} title="Record (Ctrl+A)">
                 {busy ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />} Record
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => setConfirmDelete(true)}>
+              <Button variant="secondary" size="sm" title="Delete (Alt+D)"
+                onClick={() => setConfirmDelete(true)}>
                 <Trash2 size={14} /> Delete
               </Button>
             </>
           )}
           {expense.status === 'recorded' && (
-            <Button variant="secondary" size="sm" onClick={handleReverse} disabled={busy}>
+            <Button ref={reverseBtnRef} variant="secondary" size="sm" title="Reverse (Alt+V)"
+              onClick={() => setConfirmReverse(true)} disabled={busy}>
               <Undo2 size={14} /> Reverse
             </Button>
           )}
@@ -183,9 +219,10 @@ export default function ExpenseDetailPage() {
                 <th className="text-right text-xs font-semibold text-slate-500 px-4 py-2 uppercase tracking-wide">Amount</th>
               </tr>
             </thead>
-            <tbody>
-              {expense.items.map((it) => (
-                <tr key={it.id} className="border-b border-slate-100 last:border-0">
+            <tbody {...lineList.containerProps}>
+              {expense.items.map((it, i) => (
+                <tr key={it.id} className="border-b border-slate-100 last:border-0"
+                  {...lineList.rowProps(i)}>
                   <td className="px-4 py-2.5">
                     <div className="font-medium text-slate-900">{it.account_name}</div>
                     <div className="text-xs text-slate-400 font-mono">{it.account_code}</div>
@@ -214,18 +251,32 @@ export default function ExpenseDetailPage() {
         </Card>
       )}
 
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Delete this draft expense?</DialogTitle></DialogHeader>
-          <p className="text-sm text-slate-600">This cannot be undone. Drafts have no JE to reverse.</p>
-          <div className="flex gap-2 justify-end pt-4">
-            <Button variant="secondary" onClick={() => setConfirmDelete(false)}>Keep</Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={busy}>
-              {busy && <Loader2 className="animate-spin" size={14} />} Delete
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* ConfirmDialog opens with focus on the safe choice, so a reflexive
+          Enter cannot delete or reverse — the shared Dialog put it on the
+          header's close X and made every confirm a two-Tab detour. */}
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Delete this draft expense?"
+        description="This cannot be undone. Drafts have no JE to reverse."
+        confirmLabel="Delete"
+        cancelLabel="Keep"
+        tone="danger"
+        loading={busy}
+        onConfirm={handleDelete}
+      />
+
+      <ConfirmDialog
+        open={confirmReverse}
+        onOpenChange={setConfirmReverse}
+        title="Reverse this expense?"
+        description="A reversal journal entry is posted and the expense returns to draft."
+        confirmLabel="Reverse"
+        cancelLabel="Keep recorded"
+        tone="danger"
+        loading={busy}
+        onConfirm={handleReverse}
+      />
     </div>
   )
 }
@@ -272,12 +323,25 @@ function AttachmentsCard({ expense, onChange }: { expense: Expense; onChange: ()
         <span className="text-xs text-slate-400">PDF, images, docs · max 10 MB each</span>
       </div>
       <div className="p-4">
-        <div onClick={() => inputRef.current?.click()}
+        {/* A role + a key handler, not just a tabIndex: the dropzone is the only
+            way into the file chooser, and the real <input> used to be
+            display:none, which removes it from the tab order altogether. */}
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label="Upload receipts — opens the file chooser"
+          onClick={() => inputRef.current?.click()}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return
+            e.preventDefault()
+            inputRef.current?.click()
+          }}
           onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => { e.preventDefault(); setDragging(false); if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files) }}
           className={cn(
             'border-2 border-dashed rounded-lg py-6 px-4 flex flex-col items-center justify-center text-center cursor-pointer transition-colors',
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 focus-visible:ring-offset-2',
             isDragging ? 'border-teal-400 bg-teal-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
           )}>
           {uploading ? (
@@ -290,9 +354,16 @@ function AttachmentsCard({ expense, onChange }: { expense: Expense; onChange: ()
               </p>
               <p className="text-xs text-slate-400 mt-0.5">Receipts, scanned bills, supporting docs</p></>
           )}
-          <input ref={inputRef} type="file" multiple accept={ALLOWED_TYPES.join(',')}
-            className="hidden" onChange={(e) => { if (e.target.files) handleFiles(e.target.files); e.target.value = '' }} />
         </div>
+        {/* Outside the dropzone, not inside it: a focusable control nested in a
+            role="button" is invalid ARIA — the button's subtree is presentational
+            to several screen readers, so the labelled input was not exposed at
+            all, and the pair read as two tab stops for one action.
+            sr-only, not `hidden`: clipped instead of display:none, so the real
+            control keeps its own tab stop as a fallback. */}
+        <input ref={inputRef} type="file" multiple accept={ALLOWED_TYPES.join(',')}
+          aria-label="Choose receipt files to upload"
+          className="sr-only" onChange={(e) => { if (e.target.files) handleFiles(e.target.files); e.target.value = '' }} />
         {attachments.length > 0 && (
           <ul className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-2">
             {attachments.map((a) => {
@@ -324,14 +395,16 @@ function AttachmentsCard({ expense, onChange }: { expense: Expense; onChange: ()
                       {a.uploaded_by_name && ` · ${a.uploaded_by_name}`}
                     </div>
                   </div>
+                  {/* group-hover never fires for a keyboard user, so the focused
+                      control rendered at opacity 0 from `sm` up. */}
                   <a href={a.file_url} download={a.original_name} target="_blank" rel="noreferrer"
-                     className="p-2.5 sm:p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 sm:opacity-0 sm:group-hover:opacity-100"
-                     title="Download">
+                     className="p-2.5 sm:p-1.5 text-slate-400 hover:text-teal-600 rounded hover:bg-slate-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                     aria-label={`Download ${a.original_name}`} title="Download">
                     <Download size={14} />
                   </a>
-                  <button onClick={() => handleDelete(a)}
-                    className="p-2.5 sm:p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 sm:opacity-0 sm:group-hover:opacity-100"
-                    title="Remove">
+                  <button type="button" onClick={() => handleDelete(a)}
+                    className="p-2.5 sm:p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-slate-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
+                    aria-label={`Remove ${a.original_name}`} title="Remove">
                     <Trash2 size={14} />
                   </button>
                 </li>

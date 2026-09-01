@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -6,6 +6,7 @@ import {
 } from '../../lib/api'
 import { formatCurrency, formatDate } from '../../lib/utils'
 import { Button } from '../../components/ui/button'
+import { useGridKeyboardNav } from '../../hooks/useGridKeyboardNav'
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetFooter, SheetClose,
 } from '../../components/ui/sheet'
@@ -28,6 +29,10 @@ interface Props {
 
 const num = (s: string) => parseFloat(s) || 0
 
+/** The grid has exactly one editable column — see hooks/useGridKeyboardNav. */
+const COLUMN_IDS = ['amount']
+const cellId = (row: number, col: string) => `inv-alloc-${row}-${col}`
+
 /**
  * Tally-style bill-wise settlement grid: lists EACH outstanding invoice for a
  * party with an editable "this payment" amount (capped at the invoice's
@@ -43,12 +48,16 @@ export function InvoiceAllocationGrid({
   const [loading, setLoading] = useState(false)
   // invoice_no -> entered amount (string)
   const [amounts, setAmounts] = useState<Record<string, string>>({})
+  // The rows do not exist yet when Radix picks an entry field, so the first
+  // amount cell claims focus once they load.
+  const pendingFocusRef = useRef(false)
 
   useEffect(() => {
     if (!open) return
     let cancelled = false
     setLoading(true)
     setAmounts({})
+    pendingFocusRef.current = true
     const fetcher = partyType === 'Supplier'
       ? getOpenSupplierInvoices({ party_id: String(partyId) })
       : getOpenCustomerInvoices({ party_id: String(partyId) })
@@ -85,6 +94,25 @@ export function InvoiceAllocationGrid({
     [invoices, amounts]
   )
 
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // One editable column, so Tab and Enter both walk DOWN the payment column —
+  // which is how a settlement is actually keyed. No append: the row set is the
+  // party's outstanding invoices, so Tab off the last cell leaves for the
+  // footer buttons rather than inventing a row.
+  const grid = useGridKeyboardNav({
+    rowCount: invoices.length,
+    columnIds: COLUMN_IDS,
+    buildCellId: cellId,
+  })
+
+  useEffect(() => {
+    if (!open || loading || invoices.length === 0) return
+    if (!pendingFocusRef.current) return
+    pendingFocusRef.current = false
+    grid.focusCell(0, 'amount')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, loading, invoices.length])
+
   function commit() {
     const items: InvoiceAllocation[] = invoices
       .filter((inv) => num(amounts[inv.invoice_no] || '') > 0)
@@ -103,7 +131,9 @@ export function InvoiceAllocationGrid({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent width="lg">
+      {/* Ctrl+S / Ctrl+Enter allocate from inside any amount cell, so a long
+          settlement never has to be tabbed out to the footer. */}
+      <SheetContent width="lg" onSubmit={commit}>
         <div className="flex flex-col h-full">
           <SheetHeader>
             <SheetTitle>Settle Invoices · {partyName}</SheetTitle>
@@ -139,7 +169,7 @@ export function InvoiceAllocationGrid({
                       </tr>
                     </thead>
                     <tbody>
-                      {invoices.map((inv) => {
+                      {invoices.map((inv, i) => {
                         const cap = outstandingOf(inv)
                         return (
                           <tr key={inv.invoice_no} className="border-b" style={{ borderColor: 'var(--line)' }}>
@@ -155,9 +185,16 @@ export function InvoiceAllocationGrid({
                             </td>
                             <td className="px-2 py-2 text-right">
                               <input
+                                id={cellId(i, 'amount')}
+                                aria-label={`Payment against ${inv.invoice_no}, outstanding ${formatCurrency(cap)}`}
                                 type="number" step="0.01" min="0" max={cap}
                                 value={amounts[inv.invoice_no] ?? ''}
                                 onChange={(e) => setAmount(inv.invoice_no, e.target.value, cap)}
+                                onKeyDown={(e) => grid.handleKeyDown(e, i, 'amount')}
+                                // Keying over a pre-filled amount is the normal
+                                // correction; landing with a caret at 0 means
+                                // clearing it by hand every time.
+                                onFocus={(e) => e.currentTarget.select()}
                                 placeholder="0.00"
                                 className="w-28 px-2 py-1 text-right font-mono text-sm border rounded-md outline-none focus:shadow-[0_0_0_3px_rgba(15,157,154,0.18)]"
                                 style={{ background: 'var(--surface-0)', borderColor: 'var(--line)', color: 'var(--ink)' }}
@@ -182,7 +219,7 @@ export function InvoiceAllocationGrid({
             <SheetClose asChild>
               <Button type="button" variant="secondary">Cancel</Button>
             </SheetClose>
-            <Button type="button" onClick={commit} disabled={total <= 0}>
+            <Button type="button" onClick={commit} disabled={total <= 0} chord="Ctrl+Enter">
               Allocate {total > 0 && formatCurrency(total)}
             </Button>
           </SheetFooter>

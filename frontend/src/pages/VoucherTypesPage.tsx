@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Plus, Pencil, Trash2, Loader2, FileSliders, X } from 'lucide-react'
 import { toast } from 'sonner'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -11,12 +12,29 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Badge } from '../components/ui/badge'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
+
+// Hover AND focus-visible get the same treatment: the recolour used to live in
+// onMouseEnter/onMouseLeave, which no keyboard event ever fires, so a user
+// tabbing between the two icon buttons could not tell which one they were on.
+const ICON_BTN =
+  'p-1.5 rounded transition-colors text-[var(--ink-3)] hover:text-[var(--brand)] hover:bg-[var(--color-hover-bg)] ' +
+  'focus-visible:text-[var(--brand)] focus-visible:bg-[var(--color-hover-bg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--brand)]'
+const ICON_BTN_DANGER =
+  'p-1.5 rounded transition-colors text-[var(--ink-3)] hover:text-[var(--danger)] hover:bg-[var(--color-hover-bg)] ' +
+  'focus-visible:text-[var(--danger)] focus-visible:bg-[var(--color-hover-bg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--danger)]'
 
 export default function VoucherTypesPage() {
+  const navigate = useNavigate()
   const [profiles, setProfiles] = useState<VoucherTypeProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<VoucherTypeProfile | null>(null)
   const [showForm, setShowForm] = useState(false)
+  // Ctrl+S is registered by the page rather than inside the dialog: one
+  // registration means one hint list, so closing the form cannot blank the
+  // screen's chips.
+  const formRef = useRef<HTMLFormElement>(null)
 
   async function load() {
     setLoading(true)
@@ -36,6 +54,33 @@ export default function VoucherTypesPage() {
     catch { toast.error('Failed') }
   }
 
+  function openNew() { setEditing(null); setShowForm(true) }
+  function openEdit(p: VoucherTypeProfile) { setEditing(p); setShowForm(true) }
+
+  // Roving tabindex: the rows were bare <tr>s with two tab stops each, so
+  // editing the tenth profile meant tabbing past eighteen icon buttons.
+  const list = useListKeyboardNav({
+    count: profiles.length,
+    onActivate: (i) => openEdit(profiles[i]),
+  })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'New voucher type', run: openNew },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+      {
+        chord: 'Ctrl+S',
+        label: 'Save',
+        run: () => formRef.current?.requestSubmit(),
+        when: showForm,
+      },
+    ],
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+    // The open dialog owns Escape while it is up.
+    backActive: !showForm,
+  })
+
   return (
     <div className="max-w-5xl mx-auto space-y-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -48,7 +93,7 @@ export default function VoucherTypesPage() {
             · Custom voucher classes layered on the 8 system types
           </span>
         </div>
-        <Button onClick={() => { setEditing(null); setShowForm(true) }}>
+        <Button onClick={openNew}>
           <Plus size={14} /> New Voucher Type
         </Button>
       </div>
@@ -63,7 +108,10 @@ export default function VoucherTypesPage() {
             No custom voucher types yet — the 8 default Tally voucher types remain available
           </div>
         ) : (
-          <div className="table-scroll">
+          // Focusable rail: at narrow widths the Active column and the row
+          // actions sit off-screen, and a div with no tab stop can never be
+          // scrolled by keyboard.
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Voucher types, scrollable">
             <table className="w-full text-sm min-w-[680px]">
               <thead className="border-b" style={{ background: 'var(--surface-1)', borderColor: 'var(--line)' }}>
                 <tr>
@@ -75,9 +123,21 @@ export default function VoucherTypesPage() {
                   <th className="w-24" />
                 </tr>
               </thead>
-              <tbody>
-                {profiles.map((p) => (
-                  <tr key={p.id} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
+              <tbody {...list.containerProps}>
+                {profiles.map((p, i) => {
+                  const rowKb = list.rowProps(i)
+                  return (
+                  <tr
+                    key={p.id}
+                    className="border-b last:border-0"
+                    style={{ borderColor: 'var(--line)' }}
+                    aria-label={`Voucher type ${p.name} — Enter to edit`}
+                    onClick={() => openEdit(p)}
+                    {...rowKb}
+                    // Enter on the row edits it; Enter on the row's own icon
+                    // buttons belongs to those buttons.
+                    onKeyDown={(e) => { if (e.target === e.currentTarget) rowKb.onKeyDown(e) }}
+                  >
                     <td className="px-4 py-2.5 font-medium" style={{ color: 'var(--ink)' }}>{p.name}</td>
                     <td className="px-4 py-2.5" style={{ color: 'var(--ink-2)' }}>
                       {p.base_type_display || p.base_type}
@@ -95,43 +155,44 @@ export default function VoucherTypesPage() {
                     <td className="px-2 py-2.5">
                       <div className="flex items-center justify-end gap-1">
                         <button
-                          className="p-1.5 rounded transition-colors"
-                          style={{ color: 'var(--ink-3)' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--brand)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
-                          onClick={() => { setEditing(p); setShowForm(true) }}
+                          type="button"
+                          aria-label={`Edit ${p.name}`}
+                          className={ICON_BTN}
+                          onClick={(e) => { e.stopPropagation(); openEdit(p) }}
                         >
                           <Pencil size={13} />
                         </button>
                         <button
-                          className="p-1.5 rounded transition-colors"
-                          style={{ color: 'var(--ink-3)' }}
-                          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--danger)'; e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
-                          onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.backgroundColor = 'transparent' }}
-                          onClick={() => remove(p)}
+                          type="button"
+                          aria-label={`Delete ${p.name}`}
+                          className={ICON_BTN_DANGER}
+                          onClick={(e) => { e.stopPropagation(); remove(p) }}
                         >
                           <Trash2 size={13} />
                         </button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>
         )}
       </Card>
 
-      <ProfileForm open={showForm} onOpenChange={setShowForm} editing={editing} onSaved={load} />
+      <ProfileForm open={showForm} onOpenChange={setShowForm} editing={editing} formRef={formRef} onSaved={load} />
     </div>
   )
 }
 
-function ProfileForm({ open, onOpenChange, editing, onSaved }: {
+function ProfileForm({ open, onOpenChange, editing, onSaved, formRef }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   editing: VoucherTypeProfile | null
   onSaved: () => void
+  /** Handed down so the page can bind Ctrl+S to this form. */
+  formRef?: React.Ref<HTMLFormElement>
 }) {
   const [name, setName] = useState('')
   const [baseType, setBaseType] = useState('SALE')
@@ -193,9 +254,9 @@ function ProfileForm({ open, onOpenChange, editing, onSaved }: {
               <X className="w-4 h-4" style={{ color: 'var(--ink-3)' }} />
             </Dialog.Close>
           </div>
-          <form onSubmit={submit} className="space-y-3">
+          <form ref={formRef} onSubmit={submit} className="space-y-3">
             <Field label="Name" required hint="Shown in voucher dropdowns">
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Cash Sales" autoFocus />
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Cash Sales" autoFocus data-autofocus />
             </Field>
             <Field label="Base Type" required>
               <select

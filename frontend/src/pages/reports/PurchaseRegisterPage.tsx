@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState, type HTMLAttributes, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, Download, Loader2, ShoppingCart } from 'lucide-react'
 import { toast } from 'sonner'
 import api, {
@@ -9,20 +10,73 @@ import { formatCurrency, formatDate, getCurrentFY } from '../../lib/utils'
 import { Input } from '../../components/ui/input'
 import { Button } from '../../components/ui/button'
 import { Card } from '../../components/ui/card'
-import { Table, Thead, Tbody, Tr, Th, Td } from '../../components/ui/table'
+import { Table, Thead, Tbody, Tr, Th, Td, type TrProps } from '../../components/ui/table'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
-function PurchaseRow({ row, isOpen, lines, loadingLines, onToggle }: {
+/**
+ * The nested line-item table lives in its own sideways rail. Like the shared
+ * <Table> primitive (components/ui/table.tsx), the rail earns a Tab stop only
+ * while it actually overflows — this one is rendered once per expanded
+ * invoice, so an ungated tabIndex would hand a wide screen one dead stop per
+ * open row.
+ */
+function LineItemRail({ label, children }: { label: string; children: ReactNode }) {
+  const railRef = useRef<HTMLDivElement>(null)
+  const [scrollable, setScrollable] = useState(false)
+
+  useEffect(() => {
+    const el = railRef.current
+    if (!el) return
+    const measure = () => setScrollable(el.scrollWidth > el.clientWidth + 1)
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    const table = el.querySelector('table')
+    if (table) ro.observe(table)
+    return () => ro.disconnect()
+  }, [])
+
+  const railProps: HTMLAttributes<HTMLDivElement> = scrollable
+    ? { tabIndex: 0, role: 'region', 'aria-label': `${label} — scrollable table` }
+    : {}
+
+  return (
+    <div
+      ref={railRef}
+      className="table-scroll px-4 py-3 sm:px-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--brand)]"
+      {...railProps}
+    >
+      {children}
+    </div>
+  )
+}
+
+function PurchaseRow({ row, isOpen, lines, loadingLines, onToggle, rowProps }: {
   row: PurchaseRegisterRow
   isOpen: boolean
   lines?: PurchaseLineRow[]
   loadingLines: boolean
   onToggle: () => void
+  /** Roving-tabindex props from useListKeyboardNav — Enter/Space expand. */
+  rowProps: TrProps
 }) {
   return (
     <>
-      <Tr onClick={onToggle} className="cursor-pointer">
+      <Tr
+        onClick={onToggle}
+        className="cursor-pointer"
+        aria-expanded={isOpen}
+        // Two suppliers can share the 200px prefix the cell shows, and the full
+        // name is otherwise only in a hover title. The row label carries it
+        // instead — widening the focused cell would reflow the whole
+        // auto-layout table on every ↑/↓.
+        aria-label={`${row.supplier_name}, invoice ${row.invoice_no} dated ${formatDate(row.invoice_date)}, ${formatCurrency(row.invoice_value)}`}
+        {...rowProps}
+      >
         <Td style={{ color: 'var(--ink-3)' }}>
           {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </Td>
@@ -50,7 +104,7 @@ function PurchaseRow({ row, isOpen, lines, loadingLines, onToggle }: {
             ) : lines.length === 0 ? (
               <div className="text-center py-4 text-xs" style={{ color: 'var(--ink-3)' }}>No line items</div>
             ) : (
-              <div className="table-scroll px-4 py-3 sm:px-10">
+              <LineItemRail label={`Line items for invoice ${row.invoice_no}`}>
                 <table className="w-full text-xs">
                   <thead>
                     <tr style={{ color: 'var(--ink-2)' }}>
@@ -95,7 +149,7 @@ function PurchaseRow({ row, isOpen, lines, loadingLines, onToggle }: {
                     ))}
                   </tbody>
                 </table>
-              </div>
+              </LineItemRail>
             )}
           </td>
         </tr>
@@ -105,6 +159,7 @@ function PurchaseRow({ row, isOpen, lines, loadingLines, onToggle }: {
 }
 
 export default function PurchaseRegisterPage() {
+  const navigate = useNavigate()
   const fy = getCurrentFY()
   const [rows, setRows] = useState<PurchaseRegisterRow[]>([])
   const [totals, setTotals] = useState<RegisterTotals | null>(null)
@@ -116,6 +171,7 @@ export default function PurchaseRegisterPage() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [lineCache, setLineCache] = useState<Record<number, PurchaseLineRow[]>>({})
   const [linesLoading, setLinesLoading] = useState<Set<number>>(new Set())
+  const fromRef = useRef<HTMLInputElement>(null)
 
   async function load() {
     setLoading(true)
@@ -179,6 +235,30 @@ export default function PurchaseRegisterPage() {
     }
   }
 
+  // ─── Keyboard ────────────────────────────────────────────────────────────
+  // An invoice row expands its line items, which on its own was a pointer-only
+  // affordance: a <tr> is not focusable and does not answer Enter. The roving
+  // tabindex gives the register one tab stop, ↑↓ to walk it and Enter to open
+  // the lines, and Tab still steps clean past the whole table.
+  const list = useListKeyboardNav({
+    count: rows.length,
+    onActivate: (i) => toggleRow(rows[i].po_id),
+  })
+
+  const isDefaultRange = dateFrom === fy.start && dateTo === fy.end
+  const resetRange = () => { setDateFrom(fy.start); setDateTo(fy.end) }
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Run report', run: load, when: !loading },
+      { chord: 'Alt+X', label: 'Export CSV', run: () => exportAs('csv'), when: rows.length > 0 },
+      { chord: 'Alt+C', label: 'Clear filters', run: resetRange, when: !isDefaultRange },
+    ],
+    searchRef: fromRef,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
@@ -189,7 +269,7 @@ export default function PurchaseRegisterPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" onClick={() => exportAs('csv')} disabled={rows.length === 0}>
+          <Button variant="secondary" onClick={() => exportAs('csv')} disabled={rows.length === 0} chord="Alt+X">
             <Download size={15} />CSV
           </Button>
           <Button variant="secondary" onClick={() => exportAs('xlsx')} disabled={rows.length === 0}>
@@ -198,17 +278,20 @@ export default function PurchaseRegisterPage() {
         </div>
       </div>
 
-      {/* Period filters */}
-      <div className="flex flex-wrap items-center gap-3">
+      {/* Period filters — a form, so Enter in either date runs the report */}
+      <form
+        className="flex flex-wrap items-center gap-3"
+        onSubmit={(e) => { e.preventDefault(); load() }}
+      >
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>From</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
+          <Input ref={fromRef} data-autofocus type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto" />
         </div>
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <label className="text-xs font-medium mono uppercase" style={{ color: 'var(--ink-2)', letterSpacing: '0.08em' }}>To</label>
           <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto" />
         </div>
-        <Button className="w-full sm:w-auto" onClick={load} disabled={loading}>
+        <Button type="submit" className="w-full sm:w-auto" disabled={loading} chord="Alt+R">
           {loading && <Loader2 size={14} className="animate-spin" />}
           Run Report
         </Button>
@@ -217,7 +300,7 @@ export default function PurchaseRegisterPage() {
             {counts.registered} registered · {counts.unregistered} unregistered supplier invoices
           </span>
         )}
-      </div>
+      </form>
 
       {loading ? (
         <SkeletonTable rows={8} cols={9} />
@@ -233,7 +316,7 @@ export default function PurchaseRegisterPage() {
         <EmptyState variant="no-data" title="No purchases in this range" description="Try widening your date range." />
       ) : (
         <Card className="overflow-hidden p-0">
-          <Table>
+          <Table label="Purchase register">
             <Thead>
               <Tr>
                 <Th className="w-8"></Th>
@@ -248,8 +331,8 @@ export default function PurchaseRegisterPage() {
                 <Th className="text-right">Invoice Value</Th>
               </Tr>
             </Thead>
-            <Tbody>
-              {rows.map((r) => {
+            <Tbody {...list.containerProps}>
+              {rows.map((r, i) => {
                 const isOpen = expanded.has(r.po_id)
                 const lines = lineCache[r.po_id]
                 return (
@@ -260,6 +343,7 @@ export default function PurchaseRegisterPage() {
                     lines={lines}
                     loadingLines={linesLoading.has(r.po_id)}
                     onToggle={() => toggleRow(r.po_id)}
+                    rowProps={list.rowProps(i)}
                   />
                 )
               })}

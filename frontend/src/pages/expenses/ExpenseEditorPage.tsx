@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Loader2, Plus, Trash2, Save, Send, Layers, Globe } from 'lucide-react'
 import { toast } from 'sonner'
@@ -14,7 +14,8 @@ import { Card } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { AccountPicker } from '../journals/AccountPicker'
-import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useGridKeyboardNav } from '../../hooks/useGridKeyboardNav'
 import { useLocation as useActiveLocation } from '../../contexts/LocationContext'
 import { voucherConfigs } from '../vouchers/voucherConfig'
 
@@ -31,6 +32,23 @@ const newItem = (): Item => ({
 })
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
+
+/** Tab order of the editable cells in an itemized line. */
+const LINE_COLS = ['description', 'amount']
+const lineCellId = (row: number, col: string) => `expense-line-${row}-${col}`
+
+/** '100' and '100.00' are the same money — compare the number, not the text. */
+const amountEq = (a: string, b: string) => (parseFloat(a) || 0) === (parseFloat(b) || 0)
+
+type LineShape = { account: number | null; description: string; amount: string }
+
+function linesEq(a: LineShape[], b: LineShape[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((x, i) =>
+    x.account === b[i].account &&
+    x.description === b[i].description &&
+    amountEq(x.amount, b[i].amount))
+}
 
 export default function ExpenseEditorPage() {
   const { id } = useParams<{ id?: string }>()
@@ -63,6 +81,13 @@ export default function ExpenseEditorPage() {
   const [original, setOriginal] = useState<Expense | null>(null)
   const [saving, setSaving] = useState(false)
   const [escConfirmOpen, setEscConfirmOpen] = useState(false)
+
+  const dateRef = useRef<HTMLInputElement>(null)
+  const singleAmountRef = useRef<HTMLInputElement>(null)
+  // Which itemized line the caret is in — Alt+D deletes THIS line. Kept in
+  // state, fed by the row's onFocusCapture, rather than parsed back out of an
+  // element id: rows are re-keyed on every insert and delete, ids are not.
+  const [focusedLine, setFocusedLine] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -153,6 +178,72 @@ export default function ExpenseEditorPage() {
     setItems((xs) => xs.length <= 1 ? xs : xs.filter((x) => x.uid !== uid))
   }
 
+  /**
+   * Hand focus to the next field after a ledger is chosen. AccountPicker closes
+   * its portal on selection, which drops focus to <body> — the next Tab would
+   * otherwise restart at the top of the page instead of continuing along the row.
+   */
+  const handOff = useCallback((focus: () => void) => { window.setTimeout(focus, 0) }, [])
+
+  /** Focus the ledger trigger of a rendered line row. */
+  const focusLineAccount = useCallback((rowIdx: number) => {
+    window.setTimeout(() => {
+      document.querySelector<HTMLElement>(`[data-line-row="${rowIdx}"] button`)?.focus()
+    }, 0)
+  }, [])
+
+  const appendLine = useCallback(() => {
+    const nextIdx = items.length
+    addItem()
+    setFocusedLine(nextIdx)
+    focusLineAccount(nextIdx)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.length, focusLineAccount])
+
+  const deleteFocusedLine = useCallback(() => {
+    if (items.length <= 1) return
+    const idx = Math.min(focusedLine, items.length - 1)
+    const uid = items[idx]?.uid
+    if (!uid) return
+    setItems((xs) => xs.filter((x) => x.uid !== uid))
+    const next = Math.max(0, Math.min(idx, items.length - 2))
+    setFocusedLine(next)
+    focusLineAccount(next)
+  }, [items, focusedLine, focusLineAccount])
+
+  const grid = useGridKeyboardNav({
+    rowCount: items.length,
+    columnIds: LINE_COLS,
+    buildCellId: lineCellId,
+  })
+
+  /**
+   * Tab keeps the row's natural DOM order (ledger → description → amount →
+   * delete); only the very last cell overrides it, appending a line the way a
+   * counter clerk expects. Enter / ↑ / ↓ walk down a column.
+   */
+  const lineKeyDown = useCallback(
+    (e: React.KeyboardEvent, rowIdx: number, colId: string) => {
+      if (e.key === 'Tab') {
+        if (e.shiftKey || colId !== 'amount' || rowIdx !== items.length - 1) return
+        e.preventDefault()
+        appendLine()
+        return
+      }
+      grid.handleKeyDown(e, rowIdx, colId)
+    },
+    [grid, items.length, appendLine],
+  )
+
+  /** F3 — drop into the expense lines from anywhere on the form. */
+  const focusLines = useCallback(() => {
+    if (itemize) {
+      focusLineAccount(Math.min(focusedLine, Math.max(0, items.length - 1)))
+      return
+    }
+    document.querySelector<HTMLElement>('[data-single-account] button')?.focus()
+  }, [itemize, focusedLine, items.length, focusLineAccount])
+
   function payload() {
     let outItems: { account: number; description: string; amount: string }[]
     if (itemize) {
@@ -233,24 +324,79 @@ export default function ExpenseEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingId, expenseDate, paidThrough, vendorId, vendorName, reference, itemize, items, singleAccount, singleAmount, singleDescription, taxCgst, taxSgst, taxIgst, notes, totals.subtotal, totals.total, navigate])
 
+  /**
+   * Dirty check for BOTH modes. The old guard was `dirty && !editingId`, so
+   * leaving a half-rewritten existing draft skipped the confirmation entirely
+   * and the edits went silently. An edit is compared against the record it was
+   * loaded from; a new expense against an empty form.
+   */
+  const dirty = useMemo(() => {
+    if (original) {
+      const now: LineShape[] = itemize
+        ? items.map((i) => ({ account: i.account, description: i.description, amount: i.amount }))
+        : singleAccount
+          ? [{ account: singleAccount, description: singleDescription, amount: singleAmount }]
+          : []
+      const before: LineShape[] = original.items.map((i) => ({
+        account: i.account, description: i.description, amount: i.amount,
+      }))
+      return (
+        expenseDate !== original.expense_date ||
+        paidThrough !== original.paid_through_account ||
+        vendorId !== original.vendor_id ||
+        vendorName !== original.vendor_name ||
+        reference !== original.reference ||
+        notes !== original.notes ||
+        !amountEq(taxCgst, original.tax_cgst) ||
+        !amountEq(taxSgst, original.tax_sgst) ||
+        !amountEq(taxIgst, original.tax_igst) ||
+        !linesEq(now, before)
+      )
+    }
+    return !!(
+      vendorName || reference || notes || vendorId !== null || paidThrough !== null ||
+      singleAmount || singleDescription || singleAccount !== null ||
+      items.some((it) => it.account !== null || it.description || it.amount) ||
+      (parseFloat(taxCgst) || 0) || (parseFloat(taxSgst) || 0) || (parseFloat(taxIgst) || 0)
+    )
+  }, [original, itemize, items, singleAccount, singleAmount, singleDescription, expenseDate,
+      paidThrough, vendorId, vendorName, reference, notes, taxCgst, taxSgst, taxIgst])
+
   const handleEsc = useCallback(() => {
-    const dirty = vendorName || singleAmount || singleAccount || items.some((it) => it.account || it.amount) || notes
-    if (dirty && !editingId) setEscConfirmOpen(true)
+    if (dirty) setEscConfirmOpen(true)
     else navigate('/expenses')
-  }, [vendorName, singleAmount, singleAccount, items, notes, editingId, navigate])
+  }, [dirty, navigate])
 
-  // Tally-style hotkeys: Ctrl+A save+record, Esc cancel.
-  const handlers = useMemo<HotkeyHandler[]>(() => [
-    { chord: 'Ctrl+A', preventDefault: true, handler: () => handleSave(true) },
-    { chord: 'Escape', preventDefault: false, handler: handleEsc },
-  ], [handleSave, handleEsc])
-  useHotkeys(handlers)
+  /**
+   * Tally-style contract for this screen. Escape now runs through
+   * usePageKeyboard → useEscapeBack, which leaves a focused field first and
+   * stands down while the discard dialog (or a ledger dropdown) owns the key —
+   * the old HotkeyContext 'Escape' chord fired through both and abandoned the
+   * editor from inside a picker.
+   */
+  usePageKeyboard({
+    actions: [
+      { chord: 'Ctrl+S', label: 'Save draft', run: () => handleSave(false), when: !saving && !allStores },
+      { chord: 'Ctrl+A', label: 'Save & Record', run: () => handleSave(true), when: !saving && !allStores },
+      { chord: 'Alt+A', label: 'Add line', run: appendLine, when: itemize },
+      { chord: 'Alt+D', label: 'Delete line', run: deleteFocusedLine, when: itemize && items.length > 1 },
+    ],
+    onFocusList: focusLines,
+    onBack: handleEsc,
+  })
 
-  const hints = useMemo<HotkeyHint[]>(() => [
-    { chord: 'Ctrl+A', label: 'Save & Record' },
-    { chord: 'Esc', label: 'Cancel' },
-  ], [])
-  useHintRegister(hints)
+  /**
+   * PageTransition's single [data-autofocus] pass runs while this lazy route is
+   * still a spinner, so it finds nothing to focus. Repeat it once the real form
+   * exists, so the editor opens ready to type a date into.
+   */
+  useEffect(() => {
+    if (loading) return
+    const el = dateRef.current
+    if (!el) return
+    const id = requestAnimationFrame(() => el.focus())
+    return () => cancelAnimationFrame(id)
+  }, [loading])
 
   if (loading) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline text-teal-600" size={24} /></div>
@@ -303,7 +449,8 @@ export default function ExpenseEditorPage() {
       <Card className="p-5 mb-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Date" required>
-            <Input type="date" required value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+            <Input ref={dateRef} data-autofocus type="date" required value={expenseDate}
+              onChange={(e) => setExpenseDate(e.target.value)} />
           </Field>
           <Field label="Paid Through" required hint="Bank, cash, or credit-card account that funded this">
             <select required value={paidThrough ?? ''}
@@ -343,6 +490,8 @@ export default function ExpenseEditorPage() {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3">
         <button
           type="button"
+          aria-pressed={itemize}
+          aria-label={itemize ? 'Itemized entry — switch to a single line' : 'Single-line entry — switch to itemized'}
           onClick={() => setItemize((x) => !x)}
           className={cn(
             'inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors',
@@ -365,11 +514,16 @@ export default function ExpenseEditorPage() {
         <Card className="p-5 mb-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Field label="Expense Account" required>
-              <AccountPicker accounts={expenseAccounts} value={singleAccount}
-                onChange={(id) => setSingleAccount(id)} />
+              <div data-single-account>
+                <AccountPicker accounts={expenseAccounts} value={singleAccount}
+                  onChange={(id) => {
+                    setSingleAccount(id)
+                    handOff(() => singleAmountRef.current?.focus())
+                  }} />
+              </div>
             </Field>
             <Field label="Amount" required>
-              <Input type="number" step="0.01" min="0" required value={singleAmount}
+              <Input ref={singleAmountRef} type="number" step="0.01" min="0" required value={singleAmount}
                 onChange={(e) => setSingleAmount(e.target.value)}
                 className="text-right font-mono" placeholder="0.00" />
             </Field>
@@ -395,24 +549,34 @@ export default function ExpenseEditorPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((it) => (
-                  <tr key={it.uid} className="border-b border-slate-100 last:border-0">
+                {items.map((it, i) => (
+                  <tr key={it.uid} data-line-row={i}
+                    onFocusCapture={() => setFocusedLine(i)}
+                    className="border-b border-slate-100 last:border-0">
                     <td className="px-4 py-2 align-top">
                       <AccountPicker accounts={expenseAccounts} value={it.account}
-                        onChange={(id) => updateItem(it.uid, { account: id })} />
+                        onChange={(id) => {
+                          updateItem(it.uid, { account: id })
+                          handOff(() => document.getElementById(lineCellId(i, 'description'))?.focus())
+                        }} />
                     </td>
                     <td className="px-4 py-2">
-                      <Input value={it.description} onChange={(e) => updateItem(it.uid, { description: e.target.value })}
+                      <Input id={lineCellId(i, 'description')} value={it.description}
+                        onChange={(e) => updateItem(it.uid, { description: e.target.value })}
+                        onKeyDown={(e) => lineKeyDown(e, i, 'description')}
                         placeholder="e.g. Pens & notebooks" />
                     </td>
                     <td className="px-4 py-2">
-                      <Input type="number" step="0.01" min="0" value={it.amount}
+                      <Input id={lineCellId(i, 'amount')} type="number" step="0.01" min="0" value={it.amount}
                         onChange={(e) => updateItem(it.uid, { amount: e.target.value })}
+                        onKeyDown={(e) => lineKeyDown(e, i, 'amount')}
                         className="text-right font-mono" placeholder="0.00" />
                     </td>
                     <td className="px-2 py-2 align-middle">
                       <button type="button" onClick={() => removeItem(it.uid)}
                         disabled={items.length <= 1}
+                        aria-label={`Delete line ${i + 1}`}
+                        title="Delete this line (Alt+D)"
                         className="text-slate-400 hover:text-rose-600 disabled:opacity-30 p-1.5 rounded hover:bg-slate-100">
                         <Trash2 size={14} />
                       </button>
@@ -423,9 +587,10 @@ export default function ExpenseEditorPage() {
               <tfoot className="bg-slate-50 border-t border-slate-200">
                 <tr>
                   <td className="px-4 py-2" colSpan={2}>
-                    <button type="button" onClick={addItem}
+                    <button type="button" onClick={appendLine}
                       className="inline-flex items-center gap-1.5 text-sm text-teal-700 hover:text-teal-800">
                       <Plus size={14} /> Add another line
+                      <kbd className="hidden md:inline mono text-[10px]" style={{ color: 'var(--ink-3)' }}>Alt+A</kbd>
                     </button>
                   </td>
                   <td className="px-4 py-2 text-right">
@@ -492,6 +657,7 @@ export default function ExpenseEditorPage() {
         <Button variant="secondary" onClick={() => handleSave(false)} disabled={saving || allStores}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
           Save Draft
+          <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Ctrl+S</kbd>
         </Button>
         <Button onClick={() => handleSave(true)} disabled={saving || allStores}>
           {saving ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />}

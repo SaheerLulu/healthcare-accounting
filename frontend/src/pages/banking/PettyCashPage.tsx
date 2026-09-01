@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { Plus, ArrowDown, ArrowUp, Eye, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -20,6 +20,30 @@ import { EmptyState } from '../../components/ui/EmptyState'
 import { SkeletonTable } from '../../components/ui/Skeletons'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { AccountPicker } from '../journals/AccountPicker'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
+
+/**
+ * Every dialog on this page is state-driven and opened from a button that
+ * lives outside the Dialog subtree, so Radix has no trigger to hand focus
+ * back to on close and drops it on <body> — after each spend the user was
+ * Tabbing from the top of the document to find their place again. Remember
+ * the opener before the dialog mounts, and restore to it (or to the row it
+ * belonged to, if the reload replaced it) on the way out.
+ */
+function useFocusReturn(fallback: () => void) {
+  const ref = useRef<HTMLElement | null>(null)
+  const remember = useCallback(() => {
+    ref.current = document.activeElement as HTMLElement | null
+  }, [])
+  const restore = useCallback((e: Event) => {
+    e.preventDefault()
+    const el = ref.current
+    if (el && el.isConnected) el.focus()
+    else fallback()
+  }, [fallback])
+  return { remember, restore }
+}
 
 function DialogFooter({ children }: { children: React.ReactNode }) {
   return <div className="flex gap-2 justify-end mt-4">{children}</div>
@@ -47,6 +71,7 @@ function Field({ label, required, hint, error, children }: {
 }
 
 export default function PettyCashPage() {
+  const navigate = useNavigate()
   const [floats, setFloats] = useState<PettyCashFloat[]>([])
   const [loading, setLoading] = useState(true)
   const [showDialog, setShowDialog] = useState(false)
@@ -56,7 +81,13 @@ export default function PettyCashPage() {
   const [glAccounts, setGlAccounts] = useState<Account[]>([])
 
   async function load() {
-    setLoading(true)
+    // Deliberately no setLoading(true): `loading` starts true, so the mount
+    // still shows the skeleton — but a reload (Alt+R, or a dialog that just
+    // posted) would otherwise swap the whole register for it, unmounting the
+    // row the keyboard user was standing on and dropping focus on <body>. It
+    // also keeps the element useFocusReturn remembered connected, so closing a
+    // dialog lands back on the button that opened it. Same reasoning as
+    // SetupChecklistPage's Alt+R.
     try {
       const r = await listPettyCashFloats()
       setFloats(Array.isArray(r) ? r : (r.results ?? []))
@@ -68,6 +99,32 @@ export default function PettyCashPage() {
     getChartOfAccounts().then(setGlAccounts).catch(() => {/* pickers degrade */})
   }, [])
 
+  // ─── Keyboard ─────────────────────────────────────────────────────────────
+  // Each row carried three buttons and no way in from the keyboard. A roving
+  // tabindex makes the table one tab stop: ↑↓ walk the floats, Enter opens the
+  // transaction ledger, and only the focused row's verbs stay tabbable.
+  // The fallback is read through a ref because the list and the focus-return
+  // helper each need the other: the list's Enter handler remembers focus, and
+  // the helper falls back into the list when the remembered row is gone.
+  const focusListRef = useRef<() => void>(() => {})
+  const { remember: rememberFocus, restore: restoreFocus } = useFocusReturn(
+    useCallback(() => focusListRef.current(), []),
+  )
+  const list = useListKeyboardNav({
+    count: floats.length,
+    onActivate: (i) => { const f = floats[i]; if (f) { rememberFocus(); setTxnsFor(f) } },
+  })
+  focusListRef.current = list.focusList
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'New float', run: () => { rememberFocus(); setShowDialog(true) } },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    onFocusList: list.focusList,
+    onBack: () => navigate('/banking'),
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 flex-wrap">
@@ -77,7 +134,9 @@ export default function PettyCashPage() {
             <span className="mono">{floats.length}</span> petty-cash floats across locations
           </p>
         </div>
-        <Button onClick={() => setShowDialog(true)}><Plus size={16} /> New Float</Button>
+        <Button onClick={() => { rememberFocus(); setShowDialog(true) }}>
+          <Plus size={16} /> New Float
+        </Button>
       </div>
 
       {loading ? <SkeletonTable /> : floats.length === 0 ? (
@@ -90,9 +149,9 @@ export default function PettyCashPage() {
                 <Th className="text-right px-3">Imprest</Th><Th className="text-right px-3">Threshold</Th>
                 <Th className="text-right px-3">Current</Th><Th>Status</Th><Th></Th></Tr>
             </Thead>
-            <Tbody>
-              {floats.map((f) => (
-                <Tr key={f.id}>
+            <Tbody {...list.containerProps}>
+              {floats.map((f, i) => (
+                <Tr key={f.id} {...list.rowProps(i)}>
                   <Td>{f.location_name || `#${f.location_id}`}</Td>
                   <Td>{f.custodian_name || '—'}</Td>
                   <Td className="mono">{f.chart_account_code}</Td>
@@ -103,14 +162,22 @@ export default function PettyCashPage() {
                     <Badge variant="error">Low — replenish</Badge> :
                     <Badge variant="success">OK</Badge>}</Td>
                   <Td>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="ghost" onClick={() => setSpendFor(f)}>
+                    {/* Only the focused row's verbs are tabbable, so Tab steps
+                        row → its three actions → out, instead of walking every
+                        action of every float in the register. */}
+                    <div className="flex gap-1"
+                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation() }}>
+                      <Button size="sm" variant="ghost" tabIndex={list.active === i ? 0 : -1}
+                        onClick={() => { rememberFocus(); setSpendFor(f) }}>
                         <ArrowDown size={14} /> Spend
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setReplenishFor(f)}>
+                      <Button size="sm" variant="ghost" tabIndex={list.active === i ? 0 : -1}
+                        onClick={() => { rememberFocus(); setReplenishFor(f) }}>
                         <ArrowUp size={14} /> Replenish
                       </Button>
-                      <Button size="sm" variant="ghost" title="View transactions" onClick={() => setTxnsFor(f)}>
+                      <Button size="sm" variant="ghost" tabIndex={list.active === i ? 0 : -1}
+                        title="View transactions" aria-label={`View transactions — ${f.location_name || `#${f.location_id}`}`}
+                        onClick={() => { rememberFocus(); setTxnsFor(f) }}>
                         <Eye size={14} />
                       </Button>
                     </div>
@@ -122,21 +189,23 @@ export default function PettyCashPage() {
         </Card>
       )}
 
-      <NewFloatDialog open={showDialog} glAccounts={glAccounts}
+      <NewFloatDialog open={showDialog} glAccounts={glAccounts} onCloseAutoFocus={restoreFocus}
         onClose={() => setShowDialog(false)} onSaved={load} />
-      <SpendDialog floatObj={spendFor} glAccounts={glAccounts}
+      <SpendDialog floatObj={spendFor} glAccounts={glAccounts} onCloseAutoFocus={restoreFocus}
         onClose={() => setSpendFor(null)} onDone={load} />
-      <ReplenishDialog floatObj={replenishFor} onClose={() => setReplenishFor(null)} onDone={load} />
-      <TxnsDialog floatObj={txnsFor} onClose={() => setTxnsFor(null)} />
+      <ReplenishDialog floatObj={replenishFor} onCloseAutoFocus={restoreFocus}
+        onClose={() => setReplenishFor(null)} onDone={load} />
+      <TxnsDialog floatObj={txnsFor} onCloseAutoFocus={restoreFocus} onClose={() => setTxnsFor(null)} />
     </div>
   )
 }
 
-function NewFloatDialog({ open, glAccounts, onClose, onSaved }: {
+function NewFloatDialog({ open, glAccounts, onClose, onSaved, onCloseAutoFocus }: {
   open: boolean
   glAccounts: Account[]
   onClose: () => void
   onSaved: () => void
+  onCloseAutoFocus: (e: Event) => void
 }) {
   const { activeLocationId, activeLocation } = useLocation()
   const blank = {
@@ -153,6 +222,10 @@ function NewFloatDialog({ open, glAccounts, onClose, onSaved }: {
   const cashAccounts = useMemo(
     () => glAccounts.filter((g) => g.account_subtype === 'Cash'),
     [glAccounts])
+
+  // The picker's trigger is a <button>, so DialogContent's own "first form
+  // control" rule would skip it and land on the Custodian text box instead.
+  const pickerRef = useRef<HTMLDivElement>(null)
 
   async function submit() {
     if (!activeLocationId) {
@@ -180,16 +253,28 @@ function NewFloatDialog({ open, glAccounts, onClose, onSaved }: {
 
   return (
     <Dialog open={open} onOpenChange={(o: boolean) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent
+        onCloseAutoFocus={onCloseAutoFocus}
+        onOpenAutoFocus={(e) => {
+          const btn = pickerRef.current?.querySelector('button')
+          if (btn) { e.preventDefault(); btn.focus() }
+        }}
+      >
         <DialogHeader><DialogTitle>New Petty Cash Float</DialogTitle></DialogHeader>
         <p className="text-xs mb-2" style={{ color: 'var(--ink-2)' }}>
           Float store: <strong>{activeLocation?.name || 'Select a store from the switcher first'}</strong>
         </p>
+        {/* A real <form>, so Enter commits from any field rather than making the
+            user Tab down to Save. Ctrl+S is not bound here: the dialog owns the
+            keyboard while it is open and Enter is the shorter answer. */}
+        <form onSubmit={(e) => { e.preventDefault(); submit() }}>
         <div className="space-y-3">
           <Field label="Cash GL Account" required error={fieldErrors.chart_account}
             hint="A Cash-subtype leaf — typically 1110 Cash in Hand or a sub-account">
-            <AccountPicker accounts={cashAccounts} value={data.chart_account}
-              onChange={(id) => setData({ ...data, chart_account: id })} />
+            <div ref={pickerRef}>
+              <AccountPicker accounts={cashAccounts} value={data.chart_account}
+                onChange={(id) => setData({ ...data, chart_account: id })} />
+            </div>
           </Field>
           <Field label="Custodian" error={fieldErrors.custodian_name}>
             <Input placeholder="Who holds the cash box" value={data.custodian_name}
@@ -209,21 +294,23 @@ function NewFloatDialog({ open, glAccounts, onClose, onSaved }: {
           </div>
         </div>
         <DialogFooter>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button disabled={saving} onClick={submit}>
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" disabled={saving}>
             {saving && <Loader2 size={14} className="animate-spin" />} Save
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )
 }
 
-function SpendDialog({ floatObj, glAccounts, onClose, onDone }: {
+function SpendDialog({ floatObj, glAccounts, onClose, onDone, onCloseAutoFocus }: {
   floatObj: PettyCashFloat | null
   glAccounts: Account[]
   onClose: () => void
   onDone: () => void
+  onCloseAutoFocus: (e: Event) => void
 }) {
   const blank = {
     date: new Date().toISOString().slice(0, 10),
@@ -260,12 +347,13 @@ function SpendDialog({ floatObj, glAccounts, onClose, onDone }: {
 
   return (
     <Dialog open={!!floatObj} onOpenChange={(o: boolean) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader><DialogTitle>Petty Cash Spend — {floatObj.location_name || `#${floatObj.location_id}`}</DialogTitle></DialogHeader>
+        <form onSubmit={(e) => { e.preventDefault(); submit() }}>
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Date" required>
-              <Input type="date" value={data.date} onChange={(e) => setData({ ...data, date: e.target.value })} />
+              <Input type="date" data-autofocus value={data.date} onChange={(e) => setData({ ...data, date: e.target.value })} />
             </Field>
             <Field label="Amount" required>
               <Input type="number" step="0.01" min="0.01" placeholder="0.00" value={data.amount}
@@ -287,20 +375,22 @@ function SpendDialog({ floatObj, glAccounts, onClose, onDone }: {
           </Field>
         </div>
         <DialogFooter>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button disabled={saving} onClick={submit}>
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" disabled={saving}>
             {saving && <Loader2 size={14} className="animate-spin" />} Record Spend
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )
 }
 
-function ReplenishDialog({ floatObj, onClose, onDone }: {
+function ReplenishDialog({ floatObj, onClose, onDone, onCloseAutoFocus }: {
   floatObj: PettyCashFloat | null
   onClose: () => void
   onDone: () => void
+  onCloseAutoFocus: (e: Event) => void
 }) {
   const blank = {
     date: new Date().toISOString().slice(0, 10),
@@ -325,12 +415,13 @@ function ReplenishDialog({ floatObj, onClose, onDone }: {
 
   return (
     <Dialog open={!!floatObj} onOpenChange={(o: boolean) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader><DialogTitle>Replenish Petty Cash — {floatObj.location_name || `#${floatObj.location_id}`}</DialogTitle></DialogHeader>
+        <form onSubmit={(e) => { e.preventDefault(); submit() }}>
         <div className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Date" required>
-              <Input type="date" value={data.date} onChange={(e) => setData({ ...data, date: e.target.value })} />
+              <Input type="date" data-autofocus value={data.date} onChange={(e) => setData({ ...data, date: e.target.value })} />
             </Field>
             <Field label="Amount" required>
               <Input type="number" step="0.01" min="0.01" placeholder="0.00" value={data.amount}
@@ -348,19 +439,21 @@ function ReplenishDialog({ floatObj, onClose, onDone }: {
           </Field>
         </div>
         <DialogFooter>
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button disabled={saving} onClick={submit}>
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" disabled={saving}>
             {saving && <Loader2 size={14} className="animate-spin" />} Replenish
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )
 }
 
-function TxnsDialog({ floatObj, onClose }: {
+function TxnsDialog({ floatObj, onClose, onCloseAutoFocus }: {
   floatObj: PettyCashFloat | null
   onClose: () => void
+  onCloseAutoFocus: (e: Event) => void
 }) {
   const [txns, setTxns] = useState<PettyCashTxn[]>([])
   const [balance, setBalance] = useState('0')
@@ -370,10 +463,15 @@ function TxnsDialog({ floatObj, onClose }: {
       .then((r) => { setTxns(r.rows); setBalance(r.current_balance) })
       .catch((e) => toast.error(apiErrorMessage(e, 'Failed to load transactions')))
   }, [floatObj])
+  // The ledger is capped at 60vh and scrolls, and a scroll rail nobody can
+  // focus is a rail nobody can scroll. Roving row focus moves the rail for us
+  // (useListKeyboardNav scrolls the focused row into view), so a long ledger
+  // is readable with ↑↓/PgDn/End instead of only a mouse wheel.
+  const rows = useListKeyboardNav({ count: txns.length })
   if (!floatObj) return null
   return (
     <Dialog open={!!floatObj} onOpenChange={(o: boolean) => !o && onClose()}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-3xl" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader>
           <DialogTitle>
             {floatObj.location_name || `#${floatObj.location_id}`} — current {formatCurrency(balance)}
@@ -385,9 +483,9 @@ function TxnsDialog({ floatObj, onClose }: {
         <Table wrapperClassName="max-h-[60vh] overflow-y-auto">
             <Thead><Tr><Th>Date</Th><Th>Kind</Th><Th>Description</Th>
               <Th className="text-right px-3">Amount</Th><Th>Voucher</Th><Th>Entry</Th></Tr></Thead>
-            <Tbody>
-              {txns.map((t) => (
-                <Tr key={t.id}>
+            <Tbody {...rows.containerProps}>
+              {txns.map((t, i) => (
+                <Tr key={t.id} {...(i === 0 ? { 'data-autofocus': '' } : {})} {...rows.rowProps(i)}>
                   <Td>{formatDate(t.date)}</Td>
                   <Td><Badge variant={t.kind === 'spend' ? 'error' : 'success'}>{t.kind}</Badge></Td>
                   <Td>{t.description}</Td>

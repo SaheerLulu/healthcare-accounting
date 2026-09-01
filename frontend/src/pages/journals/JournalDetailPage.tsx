@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft, Loader2, Pencil, Send, Undo2, Trash2, Copy, FileText, Printer,
@@ -12,11 +12,10 @@ import { formatCurrency, formatDate, cn } from '../../lib/utils'
 import { Card } from '../../components/ui/card'
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from '../../components/ui/dialog'
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog'
 import { PrintVoucherView } from '../../components/PrintVoucherView'
-import { useHotkeys, useHintRegister, type HotkeyHandler, type HotkeyHint } from '../../contexts/HotkeyContext'
+import { usePageKeyboard } from '../../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../../hooks/useListKeyboardNav'
 
 const VOUCHER_BG: Record<string, string> = {
   JOURNAL:     'bg-slate-100 text-slate-700',
@@ -38,6 +37,7 @@ export default function JournalDetailPage() {
   const [entry, setEntry] = useState<JournalEntry | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [confirmPost, setConfirmPost] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmReverse, setConfirmReverse] = useState(false)
   const [printOpen, setPrintOpen] = useState(false)
@@ -62,6 +62,7 @@ export default function JournalDetailPage() {
     try {
       const updated = await postEntry(entry.id)
       setEntry(updated)
+      setConfirmPost(false)
       toast.success(`${updated.entry_no} posted`)
     } catch (err) {
       const e = err as { response?: { data?: { detail?: string } } }
@@ -96,31 +97,33 @@ export default function JournalDetailPage() {
     }
   }
 
-  // Hotkeys: Alt+P print, Alt+E edit (drafts), Alt+R reverse (posted), Esc back.
-  const handleEdit = useCallback(() => {
-    if (entry && !entry.is_posted) navigate(`/journals/${entry.id}/edit`)
-  }, [entry, navigate])
-  const handleReverseChord = useCallback(() => {
-    if (entry?.is_posted) setConfirmReverse(true)
-  }, [entry])
-  const handleHotkeys = useMemo<HotkeyHandler[]>(() => [
-    { chord: 'Alt+P', preventDefault: true, handler: () => setPrintOpen(true) },
-    { chord: 'Alt+E', preventDefault: true, handler: handleEdit },
-    { chord: 'Alt+R', preventDefault: true, handler: handleReverseChord },
-    { chord: 'Escape', preventDefault: false, handler: () => navigate('/journals') },
-  ], [handleEdit, handleReverseChord, navigate])
-  useHotkeys(handleHotkeys)
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
+  // The lines table is read-only, but on a long entry it is also the only part
+  // of the screen worth scrolling, and a <tr> answers no key. Roving tabindex
+  // (no onActivate — nothing to open) makes F3 then ↑↓ walk the lines and
+  // leaves Tab to step clean past them to the footer.
+  const isDraft = !!entry && !entry.is_posted
+  const isPosted = !!entry?.is_posted
+  const lines = useListKeyboardNav({ count: entry?.lines.length ?? 0 })
 
-  const hints = useMemo<HotkeyHint[]>(() => {
-    const out: HotkeyHint[] = [
-      { chord: 'Alt+P', label: 'Print' },
-      { chord: 'Esc', label: 'Back' },
-    ]
-    if (entry?.is_posted) out.splice(1, 0, { chord: 'Alt+R', label: 'Reverse' })
-    if (entry && !entry.is_posted) out.splice(1, 0, { chord: 'Alt+E', label: 'Edit' })
-    return out
-  }, [entry])
-  useHintRegister(hints)
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+E', label: 'Edit', run: () => { if (isDraft) navigate(`/journals/${entryId}/edit`) }, when: isDraft },
+      // Ctrl+A confirms rather than posts. A posted entry is immutable — it can
+      // only be reversed — and Ctrl+A is the select-all reflex on a screen full
+      // of copyable figures, so the chord must not commit to the ledger on its
+      // own. The Post button beside it stays a direct, aimed press.
+      { chord: 'Ctrl+A', label: 'Post', run: () => { if (isDraft && !busy) setConfirmPost(true) }, when: isDraft },
+      // Reverse lives on Alt+V only. Alt+R is Refresh everywhere in this app,
+      // and a hidden second meaning for it here — absent from the hint bar and
+      // from F1 — would land the app-wide refresh habit on a reversal confirm.
+      { chord: 'Alt+V', label: 'Reverse', run: () => { if (isPosted) setConfirmReverse(true) }, when: isPosted },
+      { chord: 'Alt+D', label: 'Delete', run: () => { if (isDraft) setConfirmDelete(true) }, when: isDraft },
+      { chord: 'Alt+P', label: 'Print', run: () => setPrintOpen(true) },
+    ],
+    onFocusList: lines.focusList,
+    onBack: () => navigate('/journals'),
+  })
 
   if (loading || !entry) {
     return <div className="p-12 text-center"><Loader2 className="animate-spin inline" size={24} style={{ color: 'var(--brand)' }} /></div>
@@ -166,18 +169,22 @@ export default function JournalDetailPage() {
             <>
               <Button variant="secondary" size="sm" onClick={() => navigate(`/journals/${entry.id}/edit`)}>
                 <Pencil size={14} /> Edit
+                <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Alt+E</kbd>
               </Button>
               <Button size="sm" onClick={handlePost} disabled={busy}>
                 {busy ? <Loader2 className="animate-spin" size={14} /> : <Send size={14} />} Post
+                <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'rgba(255,255,255,0.75)' }}>Ctrl+A</kbd>
               </Button>
               <Button variant="secondary" size="sm" onClick={() => setConfirmDelete(true)}>
                 <Trash2 size={14} /> Delete
+                <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Alt+D</kbd>
               </Button>
             </>
           )}
           {entry.is_posted && (
             <Button variant="secondary" size="sm" onClick={() => setConfirmReverse(true)} disabled={busy}>
               <Undo2 size={14} /> Reverse
+              <kbd className="hidden md:inline mono text-[10px] ml-1" style={{ color: 'var(--ink-3)' }}>Alt+V</kbd>
             </Button>
           )}
           <Button variant="ghost" size="sm" onClick={() => duplicateLink(entry, navigate)}>
@@ -217,9 +224,15 @@ export default function JournalDetailPage() {
                 <th className="text-right text-xs font-semibold px-4 py-2 uppercase mono" style={{ color: 'var(--ink-2)', letterSpacing: '0.06em' }}>Credit</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody {...lines.containerProps}>
               {entry.lines.map((l, i) => (
-                <tr key={i} className="border-b last:border-0" style={{ borderColor: 'var(--line)' }}>
+                <tr
+                  key={i}
+                  className="border-b last:border-0"
+                  style={{ borderColor: 'var(--line)' }}
+                  aria-label={l.account_name || `Account ${l.account}`}
+                  {...lines.rowProps(i)}
+                >
                   <td className="px-4 py-2.5">
                     <div className="font-medium" style={{ color: 'var(--ink)' }}>{l.account_name || `Account ${l.account}`}</div>
                     {l.account_code && <div className="text-xs mono" style={{ color: 'var(--ink-3)' }}>{l.account_code}</div>}
@@ -258,37 +271,44 @@ export default function JournalDetailPage() {
         )}
       </div>
 
-      {/* Delete dialog */}
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Delete this draft?</DialogTitle></DialogHeader>
-          <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
-            Delete <span className="font-mono font-semibold">{entry.entry_no}</span>? This cannot be undone.
-          </p>
-          <div className="flex gap-2 justify-end pt-4">
-            <Button variant="secondary" onClick={() => setConfirmDelete(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={busy}>
-              {busy && <Loader2 className="animate-spin" size={14} />} Delete
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Post (Ctrl+A), Delete (Alt+D) and Reverse (Alt+V) are all reachable by
+          chord, so all three go through the shared ConfirmDialog: it lands focus
+          on the safe button for the tone, answers Ctrl+Enter as "yes, do it",
+          and restores focus to the trigger on close. */}
+      <ConfirmDialog
+        open={confirmPost}
+        onOpenChange={setConfirmPost}
+        tone="danger"
+        title="Post this entry?"
+        description={<>Post <span className="mono font-semibold">{entry.entry_no}</span> to the general ledger. A posted entry is immutable — it can only be reversed, never edited.</>}
+        confirmLabel="Post"
+        cancelLabel="Keep as draft"
+        loading={busy}
+        onConfirm={handlePost}
+      />
 
-      {/* Reverse dialog */}
-      <Dialog open={confirmReverse} onOpenChange={setConfirmReverse}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Reverse this entry?</DialogTitle></DialogHeader>
-          <p className="text-sm" style={{ color: 'var(--ink-2)' }}>
-            Create a reversal entry that flips all debits and credits. The original entry remains posted.
-          </p>
-          <div className="flex gap-2 justify-end pt-4">
-            <Button variant="secondary" onClick={() => setConfirmReverse(false)}>Cancel</Button>
-            <Button onClick={handleReverse} disabled={busy}>
-              {busy && <Loader2 className="animate-spin" size={14} />} Create Reversal
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        tone="danger"
+        title="Delete this draft?"
+        description={<>Delete <span className="mono font-semibold">{entry.entry_no}</span>? This cannot be undone.</>}
+        confirmLabel="Delete"
+        loading={busy}
+        onConfirm={handleDelete}
+      />
+
+      <ConfirmDialog
+        open={confirmReverse}
+        onOpenChange={setConfirmReverse}
+        tone="danger"
+        title="Reverse this entry?"
+        description="Create a reversal entry that flips all debits and credits. The original entry remains posted."
+        confirmLabel="Create Reversal"
+        cancelLabel="Keep posted"
+        loading={busy}
+        onConfirm={handleReverse}
+      />
 
       <PrintVoucherView open={printOpen} onOpenChange={setPrintOpen} entry={entry} />
     </div>

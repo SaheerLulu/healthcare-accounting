@@ -325,9 +325,20 @@ export default function LoginPage() {
             className="flex items-center gap-2 mt-4 cursor-pointer select-none"
             style={{ fontSize: 12.5, color: 'var(--ink-2)' }}
           >
+            {/* The real checkbox is sr-only so the visible box can be styled,
+                which leaves it focusable but invisible: without the peer link
+                below, Tabbing here showed nothing on screen and the user had
+                no idea what Space was about to toggle. The input is rendered
+                first so `peer-focus-visible:` can reach the proxy span. */}
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="sr-only peer"
+            />
             <span
               aria-hidden
-              className="w-4 h-4 rounded flex items-center justify-center text-white text-[9px]"
+              className="w-4 h-4 rounded flex items-center justify-center text-white text-[9px] peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--brand)] peer-focus-visible:ring-offset-2"
               style={{
                 border: '1.5px solid var(--ink)',
                 background: rememberMe ? 'var(--ink)' : 'white',
@@ -335,12 +346,6 @@ export default function LoginPage() {
             >
               {rememberMe ? '✓' : ''}
             </span>
-            <input
-              type="checkbox"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              className="sr-only"
-            />
             Keep me signed in on this desk
           </label>
 
@@ -379,14 +384,18 @@ export default function LoginPage() {
 
           {/* Footer links */}
           <div className="text-center mt-5" style={{ fontSize: 11, color: 'var(--ink-3)' }}>
+            {/* Plain text, not <a href="#">: these have no destination yet, and
+                as links they were two dead tab stops between Sign in and the
+                end of the form — a keyboard-only user pressed Tab twice for
+                nothing. Make them links again when the routes exist. */}
             No account?{' '}
-            <a href="#" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+            <span style={{ color: 'var(--ink)', fontWeight: 500 }}>
               Book a demo
-            </a>{' '}
+            </span>{' '}
             ·{' '}
-            <a href="#" style={{ color: 'var(--ink)', fontWeight: 500 }}>
+            <span style={{ color: 'var(--ink)', fontWeight: 500 }}>
               SSO
-            </a>
+            </span>
           </div>
 
           <p

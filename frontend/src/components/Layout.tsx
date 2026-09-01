@@ -1,10 +1,6 @@
 import { NavLink, Outlet, useNavigate, useLocation as useRouterLocation } from 'react-router-dom'
-import { Suspense, useState, useRef, useEffect, useMemo } from 'react'
+import { Suspense, useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import {
-  LayoutDashboard,
-  BookOpen,
-  Receipt,
-  FileBarChart,
   ChevronDown,
   MapPin,
   Check,
@@ -13,10 +9,6 @@ import {
   Sun,
   Moon,
   Globe,
-  Users,
-  Landmark,
-  Home,
-  ArrowLeftRight,
   Loader2,
   Menu,
   X,
@@ -29,202 +21,95 @@ import NotificationBell from '../pages/notifications/NotificationBell'
 import { HotkeyProvider, useHotkeys, type HotkeyHandler } from '../contexts/HotkeyContext'
 import { HotkeyBar } from './HotkeyBar'
 import { CommandPalette } from './CommandPalette'
+import { ShortcutHelp } from './ShortcutHelp'
 
-interface MenuItem {
-  id: string
-  label: string
-  to: string
-  keycap?: string
+import { menuGroups, allItems, type MenuGroup } from '../lib/navigation'
+import { ConfirmDialog } from './ui/ConfirmDialog'
+
+/**
+ * Shell chords that are bound in GlobalNavShortcuts but belong to a screen
+ * rather than to a voucher, so nothing in the nav tree advertises them.
+ *
+ * A multi-item group hangs the keycap on the menu item it activates, the same
+ * way the voucher F-keys are advertised. A single-destination group renders no
+ * dropdown at all — `hasSubs` is false, so the panel holding the keycaps never
+ * mounts — which left `/` → Ctrl+G as markup nothing could reach. Those groups
+ * announce their chord on the group button itself instead.
+ */
+const SHELL_KEYCAP: Record<string, string> = {
+  '/setup': 'F11',
+  '/': 'Ctrl+G',
 }
 
-interface MenuSection {
-  /** Section header inside a dropdown; omit for "ungrouped" sections. */
-  title?: string
-  items: MenuItem[]
+/** Ring shared by every bare <button> in the shell — none of them is <Button>. */
+const FOCUS_RING =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]'
+const FOCUS_RING_INSET =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--brand)]'
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+function menuItems(panel: HTMLElement | null): HTMLElement[] {
+  if (!panel) return []
+  return Array.from(panel.querySelectorAll<HTMLElement>('[role="menuitem"]'))
 }
 
-interface MenuGroup {
-  label: string
-  icon: React.ComponentType<{ className?: string }>
-  sections: MenuSection[]
+function focusMenuItem(panel: HTMLElement | null, index: number) {
+  const items = menuItems(panel)
+  if (items.length === 0) return
+  const i = ((index % items.length) + items.length) % items.length
+  items[i]?.focus()
 }
 
-// Reduced from 10 to 8 top-level entries (2 standalone + 6 grouped) by
-// merging Ledger/Bills/Vouchers into Books+Transactions, Banking+Assets,
-// GST+TDS+Payroll into Tax & Compliance, and dissolving the "More" bucket
-// into Reports & Admin. Each long dropdown is split into named sections
-// so a 14-item menu reads as 3 mini-groups instead of a wall of text.
-const menuGroups: MenuGroup[] = [
-  {
-    label: 'Gateway',
-    icon: Home,
-    sections: [{ items: [{ id: 'gateway', label: 'Gateway of Tally', to: '/' }] }],
-  },
-  {
-    label: 'Dashboard',
-    icon: LayoutDashboard,
-    sections: [{ items: [{ id: 'dashboard', label: 'Dashboard', to: '/dashboard' }] }],
-  },
-  {
-    label: 'Books',
-    icon: BookOpen,
-    sections: [
-      {
-        title: 'Master',
-        items: [
-          { id: 'accounts', label: 'Chart of Accounts', to: '/accounts' },
-          { id: 'cost-centres', label: 'Cost Centres', to: '/cost-centres' },
-          { id: 'voucher-types', label: 'Voucher Types', to: '/voucher-types' },
-        ],
-      },
-      {
-        title: 'Journals',
-        items: [
-          { id: 'journals', label: 'Journal Entries', to: '/journals' },
-          { id: 'recurring-journals', label: 'Recurring Journals', to: '/journals/recurring' },
-          { id: 'closing-entries', label: 'Closing Entries', to: '/journals/closing-entries' },
-        ],
-      },
-    ],
-  },
-  {
-    label: 'Transactions',
-    icon: ArrowLeftRight,
-    sections: [
-      {
-        title: 'Vouchers',
-        items: [
-          { id: 'v-payment', label: 'Payment', to: '/vouchers/payment', keycap: 'F5' },
-          { id: 'v-receipt', label: 'Receipt', to: '/vouchers/receipt', keycap: 'F6' },
-          { id: 'v-contra', label: 'Contra', to: '/vouchers/contra', keycap: 'F4' },
-          { id: 'v-journal', label: 'Journal', to: '/vouchers/journal', keycap: 'F7' },
-          { id: 'v-sales', label: 'Sales', to: '/vouchers/sales', keycap: 'F8' },
-          { id: 'v-purchase', label: 'Purchase', to: '/vouchers/purchase', keycap: 'F9' },
-          { id: 'v-credit-note', label: 'Credit Note', to: '/vouchers/credit-note', keycap: 'Ctrl+F8' },
-          { id: 'v-debit-note', label: 'Debit Note', to: '/vouchers/debit-note', keycap: 'Ctrl+F9' },
-        ],
-      },
-      {
-        title: 'Records',
-        items: [
-          { id: 'bills', label: 'Bills', to: '/bills' },
-          { id: 'recurring-bills', label: 'Recurring Bills', to: '/bills/recurring' },
-          { id: 'expenses', label: 'Expenses', to: '/expenses' },
-        ],
-      },
-      {
-        title: 'Outstanding',
-        items: [
-          { id: 'receivables', label: 'Receivables', to: '/receivables' },
-          { id: 'payables', label: 'Payables', to: '/payables' },
-        ],
-      },
-    ],
-  },
-  {
-    label: 'Parties',
-    icon: Users,
-    sections: [
-      {
-        items: [
-          { id: 'suppliers', label: 'Suppliers', to: '/parties/suppliers' },
-          { id: 'customers', label: 'Customers', to: '/parties/customers' },
-        ],
-      },
-    ],
-  },
-  {
-    label: 'Banking',
-    icon: Landmark,
-    sections: [
-      {
-        title: 'Banking',
-        items: [
-          { id: 'banking', label: 'Bank Accounts', to: '/banking' },
-          { id: 'cheques', label: 'Cheques', to: '/banking/cheques' },
-          { id: 'petty-cash', label: 'Petty Cash', to: '/banking/petty-cash' },
-        ],
-      },
-      {
-        title: 'Assets',
-        items: [
-          { id: 'fixed-assets', label: 'Fixed Assets', to: '/fixed-assets' },
-          { id: 'loans', label: 'Loans & EMI', to: '/loans' },
-        ],
-      },
-    ],
-  },
-  {
-    label: 'Tax',
-    icon: Receipt,
-    sections: [
-      {
-        title: 'GST',
-        items: [
-          { id: 'gstr1', label: 'GSTR-1', to: '/gst/gstr1' },
-          { id: 'gstr2b', label: 'GSTR-2B', to: '/gst/gstr2b' },
-          { id: 'gstr3b', label: 'GSTR-3B', to: '/gst/gstr3b' },
-          { id: 'gst-b2b', label: 'B2B Register', to: '/gst/b2b-register' },
-          { id: 'gst-b2c', label: 'B2C Summary', to: '/gst/b2c-summary' },
-          { id: 'gst-cn', label: 'Credit Note Register', to: '/gst/credit-notes' },
-          { id: 'gst-grand', label: 'GST Grand Summary', to: '/gst/grand-summary' },
-          { id: 'itc', label: 'ITC Reconciliation', to: '/gst/itc-reconciliation' },
-          { id: 'gst-comp', label: 'GST Computation', to: '/reports/gst-computation' },
-          { id: 'hsn', label: 'HSN Summary', to: '/reports/hsn-summary' },
-          { id: 'filing-health', label: 'Filing Health Check', to: '/gst/filing-health' },
-        ],
-      },
-      {
-        title: 'Other',
-        items: [
-          { id: 'tds', label: 'TDS', to: '/tds' },
-          { id: 'payroll', label: 'Payroll', to: '/payroll' },
-        ],
-      },
-    ],
-  },
-  {
-    label: 'Reports',
-    icon: FileBarChart,
-    sections: [
-      {
-        title: 'Financial',
-        items: [
-          { id: 'trial', label: 'Trial Balance', to: '/reports/trial-balance' },
-          { id: 'pl', label: 'Profit & Loss', to: '/reports/profit-loss' },
-          { id: 'bs', label: 'Balance Sheet', to: '/reports/balance-sheet' },
-        ],
-      },
-      {
-        title: 'Operational',
-        items: [
-          { id: 'party', label: 'Party Outstanding', to: '/reports/party-outstanding' },
-          { id: 'purchase-reg', label: 'Purchase Register', to: '/reports/purchase-register' },
-          { id: 'expense-reg', label: 'Expense Register', to: '/reports/expense-register' },
-          { id: 'asset-reg', label: 'Asset Register', to: '/reports/asset-register' },
-          { id: 'bank', label: 'Bank Book', to: '/reports/bank-book' },
-          { id: 'cash', label: 'Cash Book', to: '/reports/cash-book' },
-          { id: 'daybook', label: 'Daybook', to: '/reports/daybook' },
-          { id: 'stock', label: 'Stock Summary', to: '/reports/stock-summary' },
-        ],
-      },
-      {
-        title: 'Admin',
-        items: [
-          { id: 'setup', label: 'Setup Checklist', to: '/setup' },
-          { id: 'activity-map', label: 'Activity → Account Map', to: '/activity-map' },
-          { id: 'sync', label: 'Sync', to: '/sync' },
-          { id: 'audit', label: 'Audit Log', to: '/audit' },
-          { id: 'settings', label: 'Settings', to: '/settings' },
-        ],
-      },
-    ],
-  },
-]
-
-/** Flatten a group's sections into a single items array. */
-function allItems(g: MenuGroup): MenuItem[] {
-  return g.sections.flatMap((s) => s.items)
+/**
+ * The keyboard contract of an open dropdown: Arrow/Home/End move the
+ * highlight, Escape closes it and hands focus BACK to the button that opened
+ * it (otherwise the next Tab restarts from the top of the document), and Tab
+ * leaves — taking the panel with it rather than abandoning it open behind the
+ * page. Escape also stops propagating: on the same keystroke the page's own
+ * "Escape goes back" would otherwise fire behind the menu the user was
+ * actually dismissing.
+ *
+ * Tab closes and returns to the trigger rather than walking on: the item
+ * holding focus is about to unmount, and letting the browser move from a
+ * disappearing node drops focus to <body>.
+ */
+function handleMenuKeys(
+  e: React.KeyboardEvent,
+  panel: HTMLElement | null,
+  close: (restoreFocus: boolean) => void,
+) {
+  const items = menuItems(panel)
+  const current = items.indexOf(document.activeElement as HTMLElement)
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault()
+      focusMenuItem(panel, current + 1)
+      break
+    case 'ArrowUp':
+      e.preventDefault()
+      focusMenuItem(panel, current - 1)
+      break
+    case 'Home':
+      e.preventDefault()
+      focusMenuItem(panel, 0)
+      break
+    case 'End':
+      e.preventDefault()
+      focusMenuItem(panel, items.length - 1)
+      break
+    case 'Escape':
+      e.preventDefault()
+      e.stopPropagation()
+      close(true)
+      break
+    case 'Tab':
+      e.preventDefault()
+      close(true)
+      break
+    default:
+  }
 }
 
 function Wordmark() {
@@ -252,7 +137,15 @@ function LocationSelector() {
   const { locations, activeLocationId, activeLocation, canSeeAll, isLoading, setActiveLocation } =
     useAppLocation()
   const [open, setOpen] = useState(false)
+  const { pathname } = useRouterLocation()
   const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  const close = useCallback((restoreFocus: boolean) => {
+    setOpen(false)
+    if (restoreFocus) triggerRef.current?.focus()
+  }, [])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -261,6 +154,25 @@ function LocationSelector() {
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
+
+  // The voucher F-keys are in NAVIGATION_CHORDS, so they fire from inside this
+  // panel too — F5 with the store list open navigated and left the panel
+  // hanging over the new page with focus still on a store row. Focus is NOT
+  // pulled back to the trigger: the screen that just mounted owns it now.
+  useEffect(() => {
+    setOpen(false)
+  }, [pathname])
+
+  // In a multi-location app every request carries X-Location-Id, which makes
+  // this the most-used control in the shell — and until now it could only be
+  // dismissed with the mouse. Focus moves into the panel on open so the arrow
+  // keys have something to move, and Escape (handled in handleMenuKeys) puts
+  // focus back on the trigger.
+  useEffect(() => {
+    if (!open) return
+    const id = requestAnimationFrame(() => focusMenuItem(panelRef.current, 0))
+    return () => cancelAnimationFrame(id)
+  }, [open])
 
   if (isLoading) {
     return (
@@ -281,10 +193,27 @@ function LocationSelector() {
     // sits mid-bar behind the hamburger and wordmark.
     <div className="static lg:relative min-w-0" ref={ref}>
       <button
+        ref={triggerRef}
         onClick={() => setOpen(!open)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' && !open) {
+            e.preventDefault()
+            setOpen(true)
+          } else if (e.key === 'Escape' && open) {
+            e.preventDefault()
+            e.stopPropagation()
+            close(false)
+          }
+        }}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`Switch store — currently ${label}`}
         // py-1 is a touch-target bump; lg keeps the original 2px so the
         // desktop bar is unchanged.
-        className="flex items-center gap-1 max-w-full px-2 py-1 lg:py-0.5 rounded-md text-xs font-medium hover:bg-[var(--color-hover-bg)]"
+        className={cn(
+          'flex items-center gap-1 max-w-full px-2 py-1 lg:py-0.5 rounded-md text-xs font-medium hover:bg-[var(--color-hover-bg)]',
+          FOCUS_RING,
+        )}
         style={{
           color: 'var(--ink)',
           border: '1px solid var(--line)',
@@ -298,6 +227,10 @@ function LocationSelector() {
 
       {open && (
         <div
+          ref={panelRef}
+          role="menu"
+          aria-label="Switch store"
+          onKeyDown={(e) => handleMenuKeys(e, panelRef.current, close)}
           className="absolute top-full left-2 lg:left-0 mt-1 rounded-lg shadow-lg py-1 min-w-[220px] max-w-[calc(100vw-1rem)] lg:max-w-none z-50 dropdown-animate"
           style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
         >
@@ -309,11 +242,15 @@ function LocationSelector() {
           </div>
           {canSeeAll && (
             <button
+              role="menuitem"
               onClick={() => {
                 setActiveLocation(null)
-                setOpen(false)
+                close(true)
               }}
-              className="w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:translate-x-0.5 transition-transform"
+              className={cn(
+                'w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:translate-x-0.5 transition-transform',
+                FOCUS_RING_INSET,
+              )}
               style={
                 activeLocationId === null
                   ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)', fontWeight: 500 }
@@ -331,11 +268,15 @@ function LocationSelector() {
           {locations.map((loc) => (
             <button
               key={loc.id}
+              role="menuitem"
               onClick={() => {
                 setActiveLocation(loc.id)
-                setOpen(false)
+                close(true)
               }}
-              className="w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:translate-x-0.5 transition-transform"
+              className={cn(
+                'w-full text-left px-4 py-2 text-sm flex items-center justify-between hover:translate-x-0.5 transition-transform',
+                FOCUS_RING_INSET,
+              )}
               style={
                 activeLocationId === loc.id
                   ? { color: 'var(--brand)', backgroundColor: 'rgba(15, 157, 154, 0.08)', fontWeight: 500 }
@@ -363,48 +304,87 @@ function LocationSelector() {
 function MobileNavDrawer({
   open,
   onClose,
+  onRequestLogout,
   activeItemId,
 }: {
   open: boolean
   onClose: () => void
+  onRequestLogout: () => void
   activeItemId: string | null
 }) {
   const { theme, setTheme } = useTheme()
-  const navigate = useNavigate()
   const activeGroup = useMemo(
     () => menuGroups.find((g) => allItems(g).some((i) => i.id === activeItemId))?.label ?? null,
     [activeItemId]
   )
   const [expanded, setExpanded] = useState<string | null>(activeGroup)
+  const panelRef = useRef<HTMLDivElement>(null)
+  // `onClose` is passed inline by TopNav, so its identity changes every
+  // render. Held in a ref so the effect below keys on `open` alone — keyed on
+  // the callback it would re-capture the trigger and re-run the focus dance
+  // on every parent render.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   // Re-sync the open section whenever the drawer is reopened on a new page.
   useEffect(() => {
     if (open) setExpanded(activeGroup)
   }, [open, activeGroup])
 
-  // Hold the page still behind the drawer, and close on Escape.
+  /**
+   * Hold the page still behind the drawer, and make it a real modal for the
+   * keyboard: focus moves in, Tab cycles inside it, and closing hands focus
+   * back to the hamburger that opened it.
+   *
+   * Without the trap, Tab from the still-focused hamburger walked into the
+   * page *behind* the overlay — a keyboard user was reading one screen and
+   * operating another. Without the restore, closing left focus on an
+   * unmounted node, so the next Tab started again from the top of the page.
+   */
   useEffect(() => {
     if (!open) return
+    const trigger = document.activeElement as HTMLElement | null
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    function handleEscape(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
+
+    const raf = requestAnimationFrame(() => {
+      panelRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus()
+    })
+
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        // Stop here: the page underneath must not also treat this as "go back".
+        e.stopPropagation()
+        onCloseRef.current()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const panel = panelRef.current
+      if (!panel) return
+      const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
+      if (items.length === 0) return
+      const first = items[0]
+      const last = items[items.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      const inside = !!active && panel.contains(active)
+      if (e.shiftKey && (!inside || active === first)) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && (!inside || active === last)) {
+        e.preventDefault()
+        first.focus()
+      }
     }
-    document.addEventListener('keydown', handleEscape)
+    document.addEventListener('keydown', handleKey, true)
     return () => {
+      cancelAnimationFrame(raf)
       document.body.style.overflow = prevOverflow
-      document.removeEventListener('keydown', handleEscape)
+      document.removeEventListener('keydown', handleKey, true)
+      trigger?.focus?.()
     }
-  }, [open, onClose])
+  }, [open])
 
   if (!open) return null
-
-  function handleLogout() {
-    localStorage.removeItem('token')
-    localStorage.removeItem('refresh_token')
-    onClose()
-    navigate('/login')
-  }
 
   return (
     <div className="lg:hidden">
@@ -414,9 +394,14 @@ function MobileNavDrawer({
         aria-hidden="true"
       />
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="Main menu"
+        // Marks the drawer the way Radix marks its overlays, so the app-wide
+        // `[role="dialog"][data-state="open"]` guards (useEscapeBack,
+        // shouldIgnoreEvent) recognise it as the thing that owns Escape.
+        data-state="open"
         className="fixed inset-y-0 left-0 z-50 w-[min(20rem,85vw)] flex flex-col shadow-xl animate-slide-in-left"
         style={{ backgroundColor: 'var(--surface-0)', borderRight: '1px solid var(--line)' }}
       >
@@ -427,7 +412,10 @@ function MobileNavDrawer({
           <Wordmark />
           <button
             onClick={onClose}
-            className="w-9 h-9 -mr-2 rounded-md flex items-center justify-center hover:bg-[var(--color-hover-bg)]"
+            className={cn(
+              'w-9 h-9 -mr-2 rounded-md flex items-center justify-center hover:bg-[var(--color-hover-bg)]',
+              FOCUS_RING,
+            )}
             style={{ color: 'var(--ink-2)' }}
             aria-label="Close menu"
           >
@@ -468,7 +456,7 @@ function MobileNavDrawer({
                 <button
                   onClick={() => setExpanded(isExpanded ? null : group.label)}
                   aria-expanded={isExpanded}
-                  className="w-full flex items-center gap-3 px-4 h-11 text-sm font-medium"
+                  className={cn('w-full flex items-center gap-3 px-4 h-11 text-sm font-medium', FOCUS_RING_INSET)}
                   style={{ color: groupActive ? 'var(--brand)' : 'var(--ink)' }}
                 >
                   <Icon className="w-4 h-4 flex-shrink-0" />
@@ -530,15 +518,21 @@ function MobileNavDrawer({
         >
           <button
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-            className="w-full flex items-center gap-3 px-2 h-11 rounded-md text-sm hover:bg-[var(--color-hover-bg)]"
+            className={cn(
+              'w-full flex items-center gap-3 px-2 h-11 rounded-md text-sm hover:bg-[var(--color-hover-bg)]',
+              FOCUS_RING,
+            )}
             style={{ color: 'var(--ink-2)' }}
           >
             {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             {theme === 'dark' ? 'Light mode' : 'Dark mode'}
           </button>
           <button
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-2 h-11 rounded-md text-sm hover:bg-[var(--color-hover-bg)]"
+            onClick={onRequestLogout}
+            className={cn(
+              'w-full flex items-center gap-3 px-2 h-11 rounded-md text-sm hover:bg-[var(--color-hover-bg)]',
+              FOCUS_RING,
+            )}
             style={{ color: 'var(--danger)' }}
           >
             <LogOut className="w-4 h-4" />
@@ -574,8 +568,35 @@ function TopNav() {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [showProfile, setShowProfile] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [confirmLogout, setConfirmLogout] = useState(false)
   const navRef = useRef<HTMLElement>(null)
+  const groupBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  // Only one dropdown is ever open, so one ref is enough for whichever it is.
+  const menuPanelRef = useRef<HTMLDivElement | null>(null)
+  const profileBtnRef = useRef<HTMLButtonElement>(null)
+  const profilePanelRef = useRef<HTMLDivElement>(null)
+  const hamburgerRef = useRef<HTMLButtonElement>(null)
+  // The control that asked to sign out, so Cancel can hand focus back to it.
+  // Its panel is closed before the dialog opens, so the node Radix would
+  // restore to is already gone by then.
+  const logoutReturnRef = useRef<HTMLElement | null>(null)
   const activeItemId = useMemo(() => findActiveItemId(routerLoc.pathname), [routerLoc.pathname])
+
+  // Mirrors `openMenu` so closeMenu can read which button to hand focus back
+  // to without taking the state as a dependency.
+  const openMenuRef = useRef<string | null>(null)
+  openMenuRef.current = openMenu
+
+  const closeMenu = useCallback((restoreFocus: boolean) => {
+    const label = openMenuRef.current
+    setOpenMenu(null)
+    if (restoreFocus && label) groupBtnRefs.current[label]?.focus()
+  }, [])
+
+  const closeProfile = useCallback((restoreFocus: boolean) => {
+    setShowProfile(false)
+    if (restoreFocus) profileBtnRef.current?.focus()
+  }, [])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -584,25 +605,106 @@ function TopNav() {
         setShowProfile(false)
       }
     }
+    /**
+     * Capture phase, and it stops propagating: Escape over an open dropdown
+     * used to close the menu AND run the page's own "Escape goes back" on the
+     * same press, so dismissing a menu left the screen. Closing here also
+     * returns focus to the button that opened the panel — `setOpenMenu(null)`
+     * alone unmounts the focused NavLink and drops focus to <body>.
+     */
     function handleEscape(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        setOpenMenu(null)
-        setShowProfile(false)
+      if (e.key !== 'Escape') return
+      if (openMenu) {
+        e.stopPropagation()
+        closeMenu(true)
+      } else if (showProfile) {
+        e.stopPropagation()
+        closeProfile(true)
       }
     }
     document.addEventListener('mousedown', handleClick)
-    document.addEventListener('keydown', handleEscape)
+    document.addEventListener('keydown', handleEscape, true)
     return () => {
       document.removeEventListener('mousedown', handleClick)
-      document.removeEventListener('keydown', handleEscape)
+      document.removeEventListener('keydown', handleEscape, true)
     }
-  }, [])
+  }, [openMenu, showProfile, closeMenu, closeProfile])
+
+  // A dropdown that opens without focus is a dropdown the keyboard cannot
+  // reach — the arrow keys need something to move from.
+  useEffect(() => {
+    if (!openMenu) return
+    const id = requestAnimationFrame(() => focusMenuItem(menuPanelRef.current, 0))
+    return () => cancelAnimationFrame(id)
+  }, [openMenu])
+
+  useEffect(() => {
+    if (!showProfile) return
+    const id = requestAnimationFrame(() => focusMenuItem(profilePanelRef.current, 0))
+    return () => cancelAnimationFrame(id)
+  }, [showProfile])
+
+  // The global F-keys stay live while a menu or the drawer is open, so an
+  // F-key navigation would leave the panel hanging over the new page.
+  useEffect(() => {
+    setOpenMenu(null)
+    setShowProfile(false)
+    setDrawerOpen(false)
+  }, [routerLoc.pathname])
+
+  /**
+   * ArrowLeft/Right along the bar, ArrowDown into the open group's menu.
+   *
+   * No chord reaches the bar itself, on purpose. The one that used to — a
+   * global Alt+M bound here with a raw `document.addEventListener` — is gone.
+   * Alt+M is not in the app's chord map, and GatewayPage already binds Alt+M
+   * as a page chord ("Masters"). Both listeners sat on `document` in the
+   * bubble phase, so `preventDefault` suppressed neither: one press focused a
+   * nav group AND the Masters grid, with the winner decided by a registration
+   * order that flipped on every navigation. The bar is a normal tab stop and
+   * ←/→ walk it from there; putting a nav chord back means first adding it to
+   * the shared chord map and to GLOBAL_HINTS / the F1 catalogue, so it is
+   * both unambiguous and findable.
+   */
+  function handleGroupKeyDown(e: React.KeyboardEvent, index: number, group: MenuGroup) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault()
+      const step = e.key === 'ArrowRight' ? 1 : -1
+      const next = (index + step + menuGroups.length) % menuGroups.length
+      groupBtnRefs.current[menuGroups[next].label]?.focus()
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault()
+      const target = e.key === 'Home' ? 0 : menuGroups.length - 1
+      groupBtnRefs.current[menuGroups[target].label]?.focus()
+    } else if (e.key === 'ArrowDown' && allItems(group).length > 1) {
+      e.preventDefault()
+      setOpenMenu(group.label)
+    }
+  }
 
   function handleLogout() {
     localStorage.removeItem('token')
     localStorage.removeItem('refresh_token')
+    setConfirmLogout(false)
     navigate('/login')
   }
+
+  /**
+   * Sign Out is the only item in the account panel, and the panel focuses its
+   * first item on open — so ArrowDown from the account button landed straight
+   * on it and a reflexive Enter ended the session, with no click target and no
+   * question asked. It goes through the shared confirm now, which for a danger
+   * tone opens with Cancel focused: the key a slipped finger repeats is the
+   * safe one. The panel closes first so the dialog is the only overlay, and
+   * `logoutReturnRef` remembers where focus came from.
+   */
+  const requestLogout = useCallback((returnTo: HTMLElement | null) => {
+    logoutReturnRef.current = returnTo
+    setOpenMenu(null)
+    setShowProfile(false)
+    setDrawerOpen(false)
+    setConfirmLogout(true)
+  }, [])
 
   function isGroupActive(group: MenuGroup) {
     return activeItemId !== null && allItems(group).some((item) => item.id === activeItemId)
@@ -628,10 +730,15 @@ function TopNav() {
     >
       {/* Below lg the eight groups move into a drawer. */}
       <button
+        ref={hamburgerRef}
         onClick={() => setDrawerOpen(true)}
-        className="lg:hidden w-9 h-9 -ml-1 rounded-md flex items-center justify-center flex-shrink-0 hover:bg-[var(--color-hover-bg)]"
+        className={cn(
+          'lg:hidden w-9 h-9 -ml-1 rounded-md flex items-center justify-center flex-shrink-0 hover:bg-[var(--color-hover-bg)]',
+          FOCUS_RING,
+        )}
         style={{ color: 'var(--ink-2)' }}
         aria-label="Open menu"
+        aria-haspopup="dialog"
         aria-expanded={drawerOpen}
       >
         <Menu className="w-5 h-5" />
@@ -652,18 +759,34 @@ function TopNav() {
       {/* Menu Groups — flex-1 children with min-w-0 so they shrink and labels
           truncate instead of overflowing the bar on narrow / 100%-zoom screens. */}
       <div className="hidden lg:flex items-center flex-1 min-w-0 gap-0.5">
-        {menuGroups.map((group) => {
+        {menuGroups.map((group, groupIndex) => {
           const active = isGroupActive(group)
           const isOpen = openMenu === group.label
-          const hasSubs = allItems(group).length > 1
+          const groupItems = allItems(group)
+          const hasSubs = groupItems.length > 1
+          // Gateway is a single destination: clicking the button navigates and
+          // no dropdown ever mounts, so its Ctrl+G keycap has nowhere to be
+          // rendered. Announce it on the button instead of dropping it.
+          const soleKeycap = hasSubs
+            ? undefined
+            : groupItems[0].keycap ?? SHELL_KEYCAP[groupItems[0].to]
           const Icon = group.icon
 
           return (
             <div key={group.label} className="relative flex-1 min-w-0 flex justify-center">
               <button
+                ref={(el) => {
+                  groupBtnRefs.current[group.label] = el
+                }}
                 onClick={() => handleGroupClick(group)}
+                onKeyDown={(e) => handleGroupKeyDown(e, groupIndex, group)}
+                aria-haspopup={hasSubs ? 'menu' : undefined}
+                aria-expanded={hasSubs ? isOpen : undefined}
+                aria-keyshortcuts={soleKeycap}
+                title={soleKeycap ? `${group.label} (${soleKeycap})` : undefined}
                 className={cn(
                   'relative flex items-center justify-center gap-1 px-2 py-2 rounded-md text-sm font-medium w-full max-w-[150px] min-w-0',
+                  FOCUS_RING,
                   !active && 'hover:bg-[var(--color-hover-bg)]'
                 )}
                 style={
@@ -694,6 +817,10 @@ function TopNav() {
 
               {isOpen && hasSubs && (
                 <div
+                  ref={menuPanelRef}
+                  role="menu"
+                  aria-label={group.label}
+                  onKeyDown={(e) => handleMenuKeys(e, menuPanelRef.current, closeMenu)}
                   className="absolute top-full left-1/2 -translate-x-1/2 mt-1 rounded-lg shadow-lg py-2 min-w-[260px] z-50 dropdown-animate"
                   style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
                 >
@@ -720,14 +847,21 @@ function TopNav() {
                       )}
                       {section.items.map((item) => {
                         const itemActive = item.id === activeItemId
+                        // F11 (Setup) and Ctrl+G (Gateway) are bound in
+                        // GlobalNavShortcuts but carry no keycap in the nav
+                        // tree, so nothing advertised them anywhere.
+                        const keycap = item.keycap ?? SHELL_KEYCAP[item.to]
                         return (
                           <NavLink
                             key={item.id}
                             to={item.to}
                             end={item.to === '/'}
+                            role="menuitem"
+                            aria-keyshortcuts={keycap}
                             onClick={() => setOpenMenu(null)}
                             className={cn(
                               'flex items-center justify-between w-full text-left px-4 py-2 text-sm hover:translate-x-0.5 transition-transform',
+                              FOCUS_RING_INSET,
                               itemActive && 'font-medium'
                             )}
                             style={
@@ -737,7 +871,7 @@ function TopNav() {
                             }
                           >
                             <span className="truncate">{item.label}</span>
-                            {item.keycap && (
+                            {keycap && (
                               // Keycaps only appear at >=lg (1024px) to keep
                               // dropdown widths sane on narrower viewports.
                               // The shortcut still works — it's just not
@@ -750,7 +884,7 @@ function TopNav() {
                                   background: 'var(--surface-1)',
                                 }}
                               >
-                                {item.keycap}
+                                {keycap}
                               </kbd>
                             )}
                           </NavLink>
@@ -771,20 +905,32 @@ function TopNav() {
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           // On phones this lives in the drawer instead — the bar is full.
-          className="hidden sm:block p-2 rounded-md hover:bg-[var(--color-hover-bg)]"
+          className={cn('hidden sm:block p-2 rounded-md hover:bg-[var(--color-hover-bg)]', FOCUS_RING)}
           style={{ color: 'var(--ink-2)' }}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
         </button>
 
         <div className="relative">
           <button
+            ref={profileBtnRef}
             onClick={() => {
               setShowProfile(!showProfile)
               setOpenMenu(null)
             }}
-            className="flex items-center gap-2 p-1 rounded-md hover:bg-[var(--color-hover-bg)]"
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown' && !showProfile) {
+                e.preventDefault()
+                setShowProfile(true)
+                setOpenMenu(null)
+              }
+            }}
+            aria-haspopup="menu"
+            aria-expanded={showProfile}
+            aria-label="Account menu"
+            className={cn('flex items-center gap-2 p-1 rounded-md hover:bg-[var(--color-hover-bg)]', FOCUS_RING)}
           >
             <div
               className="w-7 h-7 rounded-full flex items-center justify-center"
@@ -800,6 +946,10 @@ function TopNav() {
 
           {showProfile && (
             <div
+              ref={profilePanelRef}
+              role="menu"
+              aria-label="Account"
+              onKeyDown={(e) => handleMenuKeys(e, profilePanelRef.current, closeProfile)}
               className="absolute right-0 mt-2 w-56 rounded-xl shadow-xl overflow-hidden z-50 dropdown-animate"
               style={{ backgroundColor: 'var(--surface-0)', border: '1px solid var(--line)' }}
             >
@@ -819,8 +969,12 @@ function TopNav() {
               </div>
               <div className="py-2">
                 <button
-                  onClick={handleLogout}
-                  className="w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 hover:translate-x-0.5 transition-transform"
+                  role="menuitem"
+                  onClick={() => requestLogout(profileBtnRef.current)}
+                  className={cn(
+                    'w-full px-4 py-2.5 text-left text-sm flex items-center gap-3 hover:translate-x-0.5 transition-transform',
+                    FOCUS_RING_INSET,
+                  )}
                   style={{ color: 'var(--danger)' }}
                 >
                   <LogOut className="w-4 h-4" />
@@ -839,15 +993,45 @@ function TopNav() {
     <MobileNavDrawer
       open={drawerOpen}
       onClose={() => setDrawerOpen(false)}
+      onRequestLogout={() => requestLogout(hamburgerRef.current)}
       activeItemId={activeItemId}
+    />
+
+    <ConfirmDialog
+      open={confirmLogout}
+      onOpenChange={(next) => {
+        setConfirmLogout(next)
+        if (!next) {
+          // Radix restores focus to whatever was focused when the dialog
+          // mounted — by then the panel holding Sign Out had already gone, so
+          // it restores to <body>. Put focus back on the trigger ourselves,
+          // after Radix has had its turn.
+          const back = logoutReturnRef.current
+          requestAnimationFrame(() => back?.focus())
+        }
+      }}
+      title="Sign out?"
+      description="You will be returned to the login screen. Anything unsaved on this page is lost."
+      confirmLabel="Sign out"
+      cancelLabel="Stay signed in"
+      tone="danger"
+      onConfirm={handleLogout}
     />
     </>
   )
 }
 
-function GlobalNavShortcuts() {
+function GlobalNavShortcuts({ onHelp }: { onHelp: () => void }) {
   const navigate = useNavigate()
   const handlers = useMemo<HotkeyHandler[]>(() => [
+    // F1 is the discovery route into everything else: in a keyboard-only app a
+    // shortcut nobody can find does not exist. Registered here, before the
+    // page-scoped handlers, so a screen can never shadow it.
+    // `always`: F1 is the one chord that must work at any overlay depth. It is
+    // registered at the shell (depth 0), and the help sheet it opens is itself
+    // an overlay — without this the second F1 was swallowed by the very sheet
+    // the first one opened, so the key advertised as a toggle only ever opened.
+    { chord: 'F1', preventDefault: true, always: true, handler: onHelp },
     { chord: 'F4', preventDefault: true, handler: () => navigate('/vouchers/contra') },
     { chord: 'F5', preventDefault: true, handler: () => navigate('/vouchers/payment') },
     { chord: 'F6', preventDefault: true, handler: () => navigate('/vouchers/receipt') },
@@ -857,7 +1041,10 @@ function GlobalNavShortcuts() {
     { chord: 'Ctrl+F8', preventDefault: true, handler: () => navigate('/vouchers/credit-note') },
     { chord: 'Ctrl+F9', preventDefault: true, handler: () => navigate('/vouchers/debit-note') },
     { chord: 'F11', preventDefault: true, handler: () => navigate('/setup') },
-  ], [navigate])
+    // Tally's own "back to the Gateway" key. Ctrl+G rather than plain G so it
+    // survives inside a text field, where the whole point is to leave.
+    { chord: 'Ctrl+G', preventDefault: true, handler: () => navigate('/') },
+  ], [navigate, onHelp])
   useHotkeys(handlers)
   return null
 }
@@ -874,11 +1061,18 @@ function RouteLoadingFallback() {
 
 export default function Layout() {
   const { activeLocationId } = useAppLocation()
+  const [helpOpen, setHelpOpen] = useState(false)
+  const openHelp = useCallback(() => setHelpOpen((v) => !v), [])
+  const { pathname } = useRouterLocation()
+  // The global F-keys stay live while the help sheet is open, so F5 would
+  // navigate to the Payment voucher and leave the overlay covering it, still
+  // holding focus. Navigating dismisses it.
+  useEffect(() => { setHelpOpen(false) }, [pathname])
   return (
     <HotkeyProvider>
       <div className="min-h-screen" style={{ backgroundColor: 'var(--surface-1)' }}>
         <TopNav />
-        <GlobalNavShortcuts />
+        <GlobalNavShortcuts onHelp={openHelp} />
         {/* Top padding clears the fixed nav (h-14 / lg:h-16); bottom padding
             clears the F-key bar, which only exists from md up. */}
         <main className="px-3 sm:px-4 lg:px-6 pt-[4.5rem] lg:pt-20 pb-8 md:pb-14">
@@ -891,8 +1085,9 @@ export default function Layout() {
             </Suspense>
           </PageTransition>
         </main>
-        <HotkeyBar />
+        <HotkeyBar onHelp={openHelp} />
         <CommandPalette />
+        <ShortcutHelp open={helpOpen} onOpenChange={setHelpOpen} />
       </div>
     </HotkeyProvider>
   )

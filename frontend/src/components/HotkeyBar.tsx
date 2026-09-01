@@ -8,7 +8,7 @@ import { useHotkeyContext, type HotkeyHint } from '../contexts/HotkeyContext'
  * device has no way to press, so on phones it would cost a row of screen
  * to say nothing. The shortcuts themselves stay bound.
  */
-export function HotkeyBar() {
+export function HotkeyBar({ onHelp }: { onHelp?: () => void }) {
   const { pageHints, globalHints } = useHotkeyContext()
   const hints = pageHints.length > 0 ? pageHints : globalHints
 
@@ -25,9 +25,29 @@ export function HotkeyBar() {
         <HintChip key={`${h.chord}-${i}`} hint={h} />
       ))}
       <div className="flex-1" />
-      <span className="mono text-[10px] uppercase tracking-wider" style={{ color: 'var(--ink-3)' }}>
-        Tally Mode
-      </span>
+      {/* The bar can only show a handful of chords; F1 is how the user reaches
+          the rest. A button rather than a bare hint so it is reachable by Tab
+          too — this bar is the app's only always-visible keyboard signpost. */}
+      <button
+        type="button"
+        onClick={onHelp}
+        className="inline-flex items-center gap-1 px-2 h-6 rounded text-xs whitespace-nowrap flex-shrink-0"
+        style={{ color: 'var(--ink-2)' }}
+        title="All keyboard shortcuts"
+      >
+        <kbd
+          className="mono text-[10px] px-1 rounded"
+          style={{
+            background: 'var(--surface-1)',
+            border: '1px solid var(--line)',
+            color: 'var(--brand)',
+            fontWeight: 600,
+          }}
+        >
+          F1
+        </kbd>
+        <span className="font-medium">All keys</span>
+      </button>
     </div>
   )
 }

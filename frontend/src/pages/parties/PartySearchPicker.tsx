@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown, Search, Check, History } from 'lucide-react'
 import type { Party } from '../../lib/api'
@@ -29,17 +29,27 @@ interface Props {
   storageKey: string
   placeholder?: string
   disabled?: boolean
+  /** Accessible name for the trigger when the surrounding <Field> label is not
+   *  programmatically associated with it. */
+  ariaLabel?: string
 }
 
-export function PartySearchPicker({ parties, value, onChange, storageKey, placeholder, disabled }: Props) {
+export function PartySearchPicker({ parties, value, onChange, storageKey, placeholder, disabled, ariaLabel }: Props) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [highlight, setHighlight] = useState(0)
   const [recentIds, setRecentIds] = useState<number[]>(() => readRecent(storageKey))
   const triggerRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null)
+  // Stable ids so the rows can be addressed by aria-activedescendant: the
+  // search box keeps focus while ↑↓ move the highlight, so that attribute is
+  // the only way a screen reader learns which party is currently selected.
+  const baseId = useId()
+  const listboxId = `${baseId}-listbox`
+  const optionId = (idx: number) => `${baseId}-opt-${idx}`
 
   const selected = useMemo(
     () => (value ? parties.find((p) => p.id === value) : null),
@@ -70,13 +80,40 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
     return out
   }, [parties, recentIds, query])
 
-  const navList = useMemo(() => {
+  /** The non-recent band, i.e. everything the "Recent" group does not already show. */
+  const rest = useMemo(() => {
     if (query) return filtered
     const recentSet = new Set(recentParties.map((p) => p.id))
-    return [...recentParties, ...filtered.filter((p) => !recentSet.has(p.id))]
-  }, [recentParties, filtered, query])
+    return filtered.filter((p) => !recentSet.has(p.id))
+  }, [filtered, recentParties, query])
 
-  useEffect(() => { setHighlight(0) }, [query, open])
+  const showNone = !!value || query === ''
+
+  /**
+   * One array in exact render order — including the "— None —" row, which was
+   * previously mouse-only: with no entry in the nav list there was no keyboard
+   * route to clearing a party once one had been picked.
+   */
+  const options = useMemo<(Party | null)[]>(
+    () => [...(showNone ? [null] : []), ...recentParties, ...rest],
+    [showNone, recentParties, rest]
+  )
+  // Where the parties start — "None" is skipped on open so a reflexive Enter
+  // still picks the first party rather than clearing the field.
+  const firstPartyIndex = showNone ? 1 : 0
+
+  useEffect(() => {
+    setHighlight(Math.min(firstPartyIndex, Math.max(0, options.length - 1)))
+  }, [query, open, firstPartyIndex, options.length])
+
+  // Keep the highlighted row inside the scroll pane — the list is capped at
+  // max-h-64, so without this the highlight walks out of sight.
+  useEffect(() => {
+    if (!open) return
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-idx="${highlight}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [open, highlight, options.length])
 
   useLayoutEffect(() => {
     if (!open) { setPos(null); return }
@@ -116,32 +153,46 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
     }
   }, [open])
 
+  /**
+   * Close and hand focus back to the trigger. Closing unmounts the portal that
+   * holds the focused search box, so without this focus lands on <body> and the
+   * next Tab restarts at the top of the document instead of continuing to the
+   * next field of the voucher.
+   */
+  function closePicker() {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }
+
   function commit(p: Party | null) {
     if (!p) {
       onChange('')
-      setOpen(false)
       setQuery('')
+      closePicker()
       return
     }
     onChange(p.id)
-    setOpen(false)
     setQuery('')
     setRecentIds((prev) => {
       const next = [p.id, ...prev.filter((id) => id !== p.id)].slice(0, RECENT_MAX)
       writeRecent(storageKey, next)
       return next
     })
+    closePicker()
   }
 
   function onInputKey(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Escape') {
       e.preventDefault()
-      setOpen(false)
+      // The panel is portalled to document.body, so without this the same
+      // keypress also reaches the page-level Escape handler behind it.
+      e.stopPropagation()
+      closePicker()
       return
     }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setHighlight((h) => Math.min(h + 1, navList.length - 1))
+      setHighlight((h) => Math.min(h + 1, options.length - 1))
       return
     }
     if (e.key === 'ArrowUp') {
@@ -149,9 +200,37 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
       setHighlight((h) => Math.max(h - 1, 0))
       return
     }
+    if (e.key === 'Home') {
+      e.preventDefault()
+      setHighlight(0)
+      return
+    }
+    if (e.key === 'End') {
+      e.preventDefault()
+      setHighlight(Math.max(0, options.length - 1))
+      return
+    }
     if (e.key === 'Enter') {
       e.preventDefault()
-      commit(navList[highlight] || null)
+      if (highlight < 0 || highlight >= options.length) return
+      commit(options[highlight])
+    }
+  }
+
+  /** ArrowDown / ArrowUp open the list; a printable key opens and filters. */
+  function onTriggerKey(e: React.KeyboardEvent<HTMLButtonElement>) {
+    if (open || disabled) return
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      setQuery('')
+      setOpen(true)
+      return
+    }
+    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== ' ') {
+      // Type-to-search: the first letter both opens the list and narrows it.
+      e.preventDefault()
+      setQuery(e.key)
+      setOpen(true)
     }
   }
 
@@ -162,6 +241,12 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
         type="button"
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
+        onKeyDown={onTriggerKey}
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-controls={open ? listboxId : undefined}
+        aria-label={ariaLabel}
         className={cn(
           'w-full flex items-center justify-between gap-2 px-3 py-2 text-sm border rounded-lg text-left transition-colors',
           disabled && 'opacity-50 cursor-not-allowed'
@@ -184,6 +269,12 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
       {open && pos && createPortal(
         <div
           ref={dropdownRef}
+          onKeyDown={(e) => {
+            if (e.key !== 'Escape') return
+            e.preventDefault()
+            e.stopPropagation()
+            closePicker()
+          }}
           className="fixed z-[60] max-w-[calc(100vw-1.5rem)] rounded-lg border shadow-lg overflow-hidden dropdown-animate"
           style={{
             top: pos.top, left: pos.left, width: pos.width,
@@ -200,20 +291,40 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onInputKey}
               placeholder="Type letters to narrow… (↑↓ Enter)"
+              aria-label={ariaLabel || placeholder || 'Search parties'}
+              role="combobox"
+              aria-expanded
+              aria-autocomplete="list"
+              aria-controls={listboxId}
+              aria-activedescendant={highlight < options.length ? optionId(highlight) : undefined}
               className="w-full pl-9 pr-3 py-2 text-sm bg-transparent focus:outline-none"
               style={{ color: 'var(--ink)' }}
             />
           </div>
-          <div className="max-h-64 overflow-y-auto">
+          <div ref={listRef} id={listboxId} role="listbox" aria-label="Parties" className="max-h-64 overflow-y-auto">
             {/* "None" option to clear */}
-            {(value || query === '') && (
+            {showNone && (
               <button
+                id={optionId(0)}
+                data-idx={0}
                 type="button"
-                onMouseDown={(e) => { e.preventDefault(); commit(null) }}
+                role="option"
+                aria-selected={!value}
+                tabIndex={-1}
+                // onClick, not onMouseDown: it answers Enter and Space too, so
+                // the row works for the keyboard as well as the pointer. The
+                // mousedown default is suppressed only to stop the search box
+                // blurring out from under the click.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => commit(null)}
                 className="w-full text-left px-3 py-2 sm:py-1.5 text-sm transition-colors"
-                style={{ color: 'var(--ink-3)', fontStyle: 'italic' }}
-                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent' }}
+                style={{
+                  color: 'var(--ink-3)',
+                  fontStyle: 'italic',
+                  backgroundColor: highlight === 0 ? 'rgba(15,157,154,0.10)' : 'transparent',
+                }}
+                onMouseEnter={(e) => { if (highlight !== 0) e.currentTarget.style.backgroundColor = 'var(--color-hover-bg)' }}
+                onMouseLeave={(e) => { if (highlight !== 0) e.currentTarget.style.backgroundColor = 'transparent' }}
               >
                 — None —
               </button>
@@ -221,23 +332,30 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
             {recentParties.length > 0 && (
               <>
                 <BandLabel>Recent</BandLabel>
-                {recentParties.map((p, i) => (
-                  <PartyRow
-                    key={`r-${p.id}`}
-                    party={p}
-                    selected={value === p.id}
-                    highlighted={i === highlight}
-                    onSelect={() => commit(p)}
-                  />
-                ))}
-                {filtered.length > 0 && <div className="border-t my-0.5" style={{ borderColor: 'var(--line)' }} />}
+                {recentParties.map((p, i) => {
+                  const idx = firstPartyIndex + i
+                  return (
+                    <PartyRow
+                      key={`r-${p.id}`}
+                      id={optionId(idx)}
+                      idx={idx}
+                      party={p}
+                      selected={value === p.id}
+                      highlighted={idx === highlight}
+                      onSelect={() => commit(p)}
+                    />
+                  )
+                })}
+                {rest.length > 0 && <div className="border-t my-0.5" style={{ borderColor: 'var(--line)' }} />}
               </>
             )}
-            {(query ? filtered : filtered.filter((p) => !recentIds.includes(p.id))).map((p, i) => {
-              const idx = (recentParties.length || 0) + i
+            {rest.map((p, i) => {
+              const idx = firstPartyIndex + recentParties.length + i
               return (
                 <PartyRow
                   key={p.id}
+                  id={optionId(idx)}
+                  idx={idx}
                   party={p}
                   selected={value === p.id}
                   highlighted={idx === highlight}
@@ -245,7 +363,7 @@ export function PartySearchPicker({ parties, value, onChange, storageKey, placeh
                 />
               )
             })}
-            {navList.length === 0 && (
+            {recentParties.length + rest.length === 0 && (
               <div className="text-center py-6 text-xs" style={{ color: 'var(--ink-3)' }}>No matching parties</div>
             )}
           </div>
@@ -268,7 +386,9 @@ function BandLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-function PartyRow({ party, selected, highlighted, onSelect }: {
+function PartyRow({ id, idx, party, selected, highlighted, onSelect }: {
+  id: string
+  idx: number
   party: Party
   selected: boolean
   highlighted: boolean
@@ -276,8 +396,17 @@ function PartyRow({ party, selected, highlighted, onSelect }: {
 }) {
   return (
     <button
+      id={id}
+      data-idx={idx}
       type="button"
-      onMouseDown={(e) => { e.preventDefault(); onSelect() }}
+      role="option"
+      aria-selected={selected}
+      // The search box stays the only tab stop in the panel — ↑↓ + Enter are
+      // the whole contract, and Tab should leave the panel rather than walk
+      // every party in the ledger.
+      tabIndex={-1}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onSelect}
       className="w-full flex items-center gap-2 px-3 py-2 sm:py-1.5 text-sm text-left transition-colors"
       style={{
         backgroundColor: highlighted ? 'rgba(15,157,154,0.10)' : 'transparent',

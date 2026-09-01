@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Loader2, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -13,6 +14,8 @@ import { Badge } from '../components/ui/badge'
 import { PeriodPicker } from '../components/ui/period-picker'
 import { Card } from '../components/ui/card'
 import { Table, Thead, Tbody, Tr, Th, Td } from '../components/ui/table'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 
 const TDS_SECTIONS = ['194C', '194H', '194I', '194J', '194O', '194Q']
 const TDS_STATUSES = ['pending', 'challan_paid', 'returned']
@@ -31,6 +34,8 @@ function TdsStatusBadge({ status }: { status: string }) {
 }
 
 function DeductionsTab() {
+  const navigate = useNavigate()
+  const sectionRef = useRef<HTMLSelectElement>(null)
   const [rows, setRows] = useState<TDSDeduction[]>([])
   const [loading, setLoading] = useState(true)
   const [section, setSection] = useState('')
@@ -51,15 +56,35 @@ function DeductionsTab() {
 
   useEffect(() => { load() }, [section, status, period])
 
+  const hasFilters = !!(section || status || period)
+  function clearFilters() { setSection(''); setStatus(''); setPeriod('') }
+
+  // The register has no detail view, so the rows carry no Enter action — the
+  // roving tabindex is here so a keyboard reader walking a fifty-row register
+  // has a "you are here" rail (index.css already styles [data-kbd-row]).
+  const list = useListKeyboardNav({ count: rows.length })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+C', label: 'Clear filters', run: clearFilters, when: hasFilters },
+      { chord: 'Alt+R', label: 'Refresh', run: load },
+    ],
+    // F2 lands on the filter row. `searchRef` is typed for inputs; a <select>
+    // has focus() and simply has no select() for the hook's optional call.
+    searchRef: sectionRef as unknown as React.RefObject<HTMLInputElement | null>,
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+  })
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <select value={section} onChange={(e) => setSection(e.target.value)}
+        <select ref={sectionRef} aria-label="Filter by TDS section" value={section} onChange={(e) => setSection(e.target.value)}
           className="w-full sm:w-auto px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
           <option value="">All Sections</option>
           {TDS_SECTIONS.map((s) => <option key={s} value={s}>Sec {s}</option>)}
         </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value)}
+        <select aria-label="Filter by status" value={status} onChange={(e) => setStatus(e.target.value)}
           className="w-full sm:w-auto px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500 capitalize">
           <option value="">All Statuses</option>
           {TDS_STATUSES.map((s) => <option key={s} value={s} className="capitalize">{s.replace(/_/g, ' ')}</option>)}
@@ -68,9 +93,9 @@ function DeductionsTab() {
           <label className="text-xs text-slate-500 font-medium">Period</label>
           <PeriodPicker value={period} onChange={setPeriod} />
         </div>
-        {(section || status || period) && (
-          <button onClick={() => { setSection(''); setStatus(''); setPeriod('') }}
-            className="text-xs text-slate-500 hover:text-slate-900 underline">Clear</button>
+        {hasFilters && (
+          <button type="button" onClick={clearFilters}
+            className="text-xs text-slate-500 hover:text-slate-900 underline">Clear (Alt+C)</button>
         )}
       </div>
 
@@ -88,13 +113,13 @@ function DeductionsTab() {
               <Th>Status</Th>
             </Tr>
           </Thead>
-          <Tbody>
+          <Tbody {...list.containerProps}>
             {loading ? (
               <tr><td colSpan={8} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
             ) : rows.length === 0 ? (
               <tr><td colSpan={8} className="text-center py-12 text-slate-400 text-sm">No TDS deductions found</td></tr>
-            ) : rows.map((row) => (
-              <Tr key={row.id}>
+            ) : rows.map((row, i) => (
+              <Tr key={row.id} aria-label={`${row.deductee_name}, section ${row.section}`} {...list.rowProps(i)}>
                 <Td className="font-medium text-slate-900">{row.deductee_name}</Td>
                 <Td className="font-mono text-xs text-slate-500">{row.deductee_pan || '-'}</Td>
                 <Td><Badge variant="default">{row.section}</Badge></Td>
@@ -113,6 +138,7 @@ function DeductionsTab() {
 }
 
 function ChallansTab() {
+  const navigate = useNavigate()
   const [rows, setRows] = useState<TDSChallan[]>([])
   const [loading, setLoading] = useState(true)
   const [autoOpen, setAutoOpen] = useState(false)
@@ -130,7 +156,9 @@ function ChallansTab() {
 
   useEffect(() => { loadChallans() }, [])
 
-  async function handleAutoGenerate() {
+  async function handleAutoGenerate(e?: React.FormEvent) {
+    e?.preventDefault()
+    if (generating) return
     setGenerating(true)
     try {
       await autoGenerateChallan(autoSection, autoPeriod)
@@ -139,6 +167,19 @@ function ChallansTab() {
       loadChallans()
     } catch { toast.error('No pending deductions found or generation failed') } finally { setGenerating(false) }
   }
+
+  const list = useListKeyboardNav({ count: rows.length })
+
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+N', label: 'Generate challan', run: () => setAutoOpen(true) },
+      { chord: 'Alt+R', label: 'Refresh', run: loadChallans },
+    ],
+    onFocusList: list.focusList,
+    onBack: () => navigate(-1),
+    // The generate dialog owns Escape while it is open.
+    backActive: !autoOpen,
+  })
 
   return (
     <div>
@@ -153,10 +194,14 @@ function ChallansTab() {
             <DialogHeader>
               <DialogTitle>Auto-Generate Challan</DialogTitle>
             </DialogHeader>
-            <div className="flex flex-col gap-4">
+            {/* A real <form> with a submit button, so Enter generates from
+                any field instead of doing nothing; DialogContent focuses
+                [data-autofocus], so it opens on Section rather than the
+                header's close X. */}
+            <form onSubmit={handleAutoGenerate} className="flex flex-col gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Section</label>
-                <select value={autoSection} onChange={(e) => setAutoSection(e.target.value)}
+                <select data-autofocus aria-label="TDS section" value={autoSection} onChange={(e) => setAutoSection(e.target.value)}
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500">
                   {TDS_SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
@@ -165,11 +210,11 @@ function ChallansTab() {
                 <label className="block text-xs font-medium text-slate-500 mb-1.5">Period</label>
                 <PeriodPicker value={autoPeriod} onChange={setAutoPeriod} />
               </div>
-              <Button onClick={handleAutoGenerate} disabled={generating}>
+              <Button type="submit" disabled={generating}>
                 {generating && <Loader2 size={14} className="animate-spin" />}
                 Generate
               </Button>
-            </div>
+            </form>
           </DialogContent>
         </Dialog>
       </div>
@@ -186,13 +231,13 @@ function ChallansTab() {
               <Th className="text-right">Total TDS</Th>
             </Tr>
           </Thead>
-          <Tbody>
+          <Tbody {...list.containerProps}>
             {loading ? (
               <tr><td colSpan={6} className="text-center py-12"><Loader2 size={24} className="animate-spin inline text-teal-600" /></td></tr>
             ) : rows.length === 0 ? (
               <tr><td colSpan={6} className="text-center py-12 text-slate-400 text-sm">No challans found</td></tr>
-            ) : rows.map((row) => (
-              <Tr key={row.id}>
+            ) : rows.map((row, i) => (
+              <Tr key={row.id} aria-label={`Challan ${row.challan_no}`} {...list.rowProps(i)}>
                 <Td className="font-mono text-xs text-teal-600">{row.challan_no}</Td>
                 <Td className="text-slate-500">{formatDate(row.deposit_date)}</Td>
                 <Td className="text-slate-500">{row.period}</Td>

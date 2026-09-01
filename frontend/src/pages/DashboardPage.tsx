@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   BarChart,
@@ -22,6 +22,7 @@ import {
   Scale,
   ArrowUpRight,
   AlertTriangle,
+  type LucideIcon,
 } from 'lucide-react'
 import { getDashboard, type DashboardData } from '../lib/api'
 import { formatCurrency, getCurrentFY, todayISO } from '../lib/utils'
@@ -30,6 +31,8 @@ import { KpiCard } from '../components/ui/KpiCard'
 import { EmptyState } from '../components/ui/EmptyState'
 import { SkeletonCard, SkeletonTable } from '../components/ui/Skeletons'
 import { useLocation as useAppLocation } from '../contexts/LocationContext'
+import { usePageKeyboard } from '../hooks/usePageKeyboard'
+import { useListKeyboardNav } from '../hooks/useListKeyboardNav'
 
 const EMPTY: DashboardData = {
   total_revenue: 0,
@@ -103,6 +106,12 @@ export default function DashboardPage() {
   const [fromDraft, setFromDraft] = useState(dateFrom)
   const [toDraft, setToDraft] = useState(dateTo)
   const isDefaultFY = dateFrom === fy.start && dateTo === fy.end
+  // The range fields are this screen's only filter, so F2 lands on "From".
+  const fromRef = useRef<HTMLInputElement>(null)
+  // Nothing else re-fires the fetch: without this a keyboard user who ran a
+  // sync had no way to re-pull the figures short of changing the range and
+  // changing it back. Alt+R bumps it.
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     if (!dateFrom || !dateTo) return
@@ -119,7 +128,7 @@ export default function DashboardPage() {
     // activeLocationId stays in the deps deliberately: it is inert only because
     // Layout remounts this page on a store switch, and depending on that makes
     // correctness here hostage to an unrelated component.
-  }, [activeLocationId, dateFrom, dateTo])
+  }, [activeLocationId, dateFrom, dateTo, reloadKey])
 
   function persistRange(from: string, to: string) {
     // Merge — replacing the whole param set would drop anything another feature
@@ -219,6 +228,150 @@ export default function DashboardPage() {
   const rangeLabel = `${data.range_start ?? dateFrom} → ${data.range_end ?? dateTo}`
   const balancesLabel = data.balances_as_of ?? data.range_end ?? dateTo
 
+  // ─── KPI cards as data ────────────────────────────────────────────────────
+  // Nine drill-downs ARE this screen's navigation, and KpiCard renders a bare
+  // <div onClick>: not focusable, deaf to Enter. Describing them as a list lets
+  // useListKeyboardNav give the grid one tab stop, arrows between cards and
+  // Enter to open — the same treatment every register in the app gets.
+  const kpis: Array<{
+    key: string
+    title: string
+    value: string
+    subtitle?: string
+    icon: LucideIcon
+    color: string
+    bgColor: string
+    trend?: { direction: 'up' | 'down' | 'flat'; value: number; isPositiveGood?: boolean }
+    sparklineData?: number[]
+    to: string
+  }> = [
+    {
+      key: 'revenue',
+      title: 'Revenue',
+      value: formatCurrency(data.total_revenue),
+      subtitle: isDefaultFY ? 'FY-to-date' : 'Selected period',
+      icon: TrendingUp,
+      color: 'var(--success)',
+      bgColor: 'rgba(31,138,76,0.10)',
+      trend: hasTrend
+        ? { direction: revTrend > 0 ? 'up' : revTrend < 0 ? 'down' : 'flat', value: revTrend, isPositiveGood: true }
+        : undefined,
+      sparklineData: hasTrend ? revenueSeries : undefined,
+      to: '/reports/profit-loss',
+    },
+    {
+      key: 'expenses',
+      title: 'Expenses',
+      value: formatCurrency(data.total_expenses),
+      subtitle: isDefaultFY ? 'FY-to-date' : 'Selected period',
+      icon: TrendingDown,
+      color: 'var(--danger)',
+      bgColor: 'rgba(192,57,43,0.10)',
+      trend: hasTrend
+        ? { direction: expTrend > 0 ? 'up' : expTrend < 0 ? 'down' : 'flat', value: expTrend, isPositiveGood: false }
+        : undefined,
+      sparklineData: hasTrend ? expenseSeries : undefined,
+      to: '/reports/profit-loss',
+    },
+    {
+      key: 'net-profit',
+      title: 'Net profit',
+      value: formatCurrency(data.net_profit),
+      subtitle: netProfit >= 0 ? 'Surplus' : 'Deficit',
+      icon: Wallet,
+      color: netProfit >= 0 ? 'var(--brand)' : 'var(--danger)',
+      bgColor: netProfit >= 0 ? 'rgba(15,157,154,0.10)' : 'rgba(192,57,43,0.10)',
+      trend: hasTrend
+        ? { direction: profitTrend > 0 ? 'up' : profitTrend < 0 ? 'down' : 'flat', value: profitTrend, isPositiveGood: true }
+        : undefined,
+      sparklineData: hasTrend ? profitSeries : undefined,
+      to: '/reports/profit-loss',
+    },
+    {
+      key: 'receivables',
+      title: 'Receivables',
+      value: formatCurrency(receivables),
+      subtitle: `Outstanding as of ${balancesLabel}`,
+      icon: Users,
+      color: 'var(--info)',
+      bgColor: 'rgba(37,99,235,0.10)',
+      to: '/receivables',
+    },
+    {
+      key: 'payables',
+      title: 'Payables',
+      value: formatCurrency(payables),
+      subtitle: `Owed as of ${balancesLabel}`,
+      icon: Building,
+      color: 'var(--warning)',
+      bgColor: 'rgba(199,122,17,0.10)',
+      to: '/payables',
+    },
+    {
+      key: 'gst',
+      title: 'GST payable',
+      value: formatCurrency(gstPayable),
+      subtitle: 'Net liability',
+      icon: Receipt,
+      color: '#7c3aed',
+      bgColor: 'rgba(124,58,237,0.10)',
+      to: '/gst/gstr3b',
+    },
+    // Cash, bank and total assets are as-of balances like Receivables/
+    // Payables, not period flows — they do not move with the From/To window
+    // except through its end date. A negative cash or bank figure is real (an
+    // overdraft, or a cash ledger posted below zero), so it turns red rather
+    // than being clamped away.
+    {
+      key: 'cash',
+      title: 'Cash balance',
+      value: formatCurrency(cash),
+      subtitle: `${cash < 0 ? 'Overdrawn' : 'In hand'} as of ${balancesLabel}`,
+      icon: Banknote,
+      color: cash < 0 ? 'var(--danger)' : 'var(--success)',
+      bgColor: cash < 0 ? 'rgba(192,57,43,0.10)' : 'rgba(31,138,76,0.10)',
+      to: '/reports/cash-book',
+    },
+    {
+      key: 'bank',
+      title: 'Bank balance',
+      value: formatCurrency(bank),
+      subtitle: `${bank < 0 ? 'Overdrawn' : 'Available'} as of ${balancesLabel}`,
+      icon: Landmark,
+      color: bank < 0 ? 'var(--danger)' : 'var(--info)',
+      bgColor: bank < 0 ? 'rgba(192,57,43,0.10)' : 'rgba(37,99,235,0.10)',
+      to: '/reports/bank-book',
+    },
+    {
+      key: 'total-assets',
+      title: 'Total assets',
+      value: formatCurrency(totalAssets),
+      subtitle: `Book value as of ${balancesLabel}`,
+      icon: Scale,
+      color: 'var(--brand)',
+      bgColor: 'rgba(15,157,154,0.10)',
+      to: '/reports/balance-sheet',
+    },
+  ]
+
+  const kpiNav = useListKeyboardNav({
+    count: kpis.length,
+    onActivate: (i) => navigate(kpis[i].to),
+  })
+
+  // Alt+C is "clear filters" everywhere else on a list; resetting a custom
+  // window back to the financial year is the same gesture, and it registers
+  // only while there IS a custom window — so the chip in the hint bar appears
+  // and disappears together with the "This FY" button it drives.
+  usePageKeyboard({
+    actions: [
+      { chord: 'Alt+R', label: 'Refresh', run: () => setReloadKey((k) => k + 1) },
+      { chord: 'Alt+C', label: 'This FY', run: resetToFY, when: !isDefaultFY },
+    ],
+    searchRef: fromRef,
+    onFocusList: kpiNav.focusList,
+  })
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -238,6 +391,11 @@ export default function DashboardPage() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <label className="text-xs font-medium" style={{ color: 'var(--ink-2)' }}>From</label>
             <Input
+              ref={fromRef}
+              // PageTransition focuses this on navigation, so arriving on the
+              // dashboard lands the keyboard on a real control rather than
+              // <body>; usePageKeyboard's F2 brings it back later.
+              data-autofocus
               type="date"
               value={fromDraft}
               min={MIN_DATE}
@@ -293,111 +451,27 @@ export default function DashboardPage() {
           ))}
         </div>
       ) : (
-      <div className={KPI_GRID}>
-        <KpiCard
-          title="Revenue"
-          value={formatCurrency(data.total_revenue)}
-          subtitle={isDefaultFY ? 'FY-to-date' : 'Selected period'}
-          icon={TrendingUp}
-          color="var(--success)"
-          bgColor="rgba(31,138,76,0.10)"
-          trend={
-            hasTrend
-              ? { direction: revTrend > 0 ? 'up' : revTrend < 0 ? 'down' : 'flat', value: revTrend, isPositiveGood: true }
-              : undefined
-          }
-          sparklineData={hasTrend ? revenueSeries : undefined}
-          onClick={() => navigate('/reports/profit-loss')}
-        />
-        <KpiCard
-          title="Expenses"
-          value={formatCurrency(data.total_expenses)}
-          subtitle={isDefaultFY ? 'FY-to-date' : 'Selected period'}
-          icon={TrendingDown}
-          color="var(--danger)"
-          bgColor="rgba(192,57,43,0.10)"
-          trend={
-            hasTrend
-              ? { direction: expTrend > 0 ? 'up' : expTrend < 0 ? 'down' : 'flat', value: expTrend, isPositiveGood: false }
-              : undefined
-          }
-          sparklineData={hasTrend ? expenseSeries : undefined}
-          onClick={() => navigate('/reports/profit-loss')}
-        />
-        <KpiCard
-          title="Net profit"
-          value={formatCurrency(data.net_profit)}
-          subtitle={netProfit >= 0 ? 'Surplus' : 'Deficit'}
-          icon={Wallet}
-          color={netProfit >= 0 ? 'var(--brand)' : 'var(--danger)'}
-          bgColor={netProfit >= 0 ? 'rgba(15,157,154,0.10)' : 'rgba(192,57,43,0.10)'}
-          trend={
-            hasTrend
-              ? { direction: profitTrend > 0 ? 'up' : profitTrend < 0 ? 'down' : 'flat', value: profitTrend, isPositiveGood: true }
-              : undefined
-          }
-          sparklineData={hasTrend ? profitSeries : undefined}
-          onClick={() => navigate('/reports/profit-loss')}
-        />
-        <KpiCard
-          title="Receivables"
-          value={formatCurrency(receivables)}
-          subtitle={`Outstanding as of ${balancesLabel}`}
-          icon={Users}
-          color="var(--info)"
-          bgColor="rgba(37,99,235,0.10)"
-          onClick={() => navigate('/receivables')}
-        />
-        <KpiCard
-          title="Payables"
-          value={formatCurrency(payables)}
-          subtitle={`Owed as of ${balancesLabel}`}
-          icon={Building}
-          color="var(--warning)"
-          bgColor="rgba(199,122,17,0.10)"
-          onClick={() => navigate('/payables')}
-        />
-        <KpiCard
-          title="GST payable"
-          value={formatCurrency(gstPayable)}
-          subtitle="Net liability"
-          icon={Receipt}
-          color="#7c3aed"
-          bgColor="rgba(124,58,237,0.10)"
-          onClick={() => navigate('/gst/gstr3b')}
-        />
-        {/* Cash, bank and total assets are as-of balances like Receivables/
-            Payables, not period flows — they do not move with the From/To
-            window except through its end date. A negative cash or bank figure
-            is real (an overdraft, or a cash ledger posted below zero), so it
-            turns red rather than being clamped away. */}
-        <KpiCard
-          title="Cash balance"
-          value={formatCurrency(cash)}
-          subtitle={`${cash < 0 ? 'Overdrawn' : 'In hand'} as of ${balancesLabel}`}
-          icon={Banknote}
-          color={cash < 0 ? 'var(--danger)' : 'var(--success)'}
-          bgColor={cash < 0 ? 'rgba(192,57,43,0.10)' : 'rgba(31,138,76,0.10)'}
-          onClick={() => navigate('/reports/cash-book')}
-        />
-        <KpiCard
-          title="Bank balance"
-          value={formatCurrency(bank)}
-          subtitle={`${bank < 0 ? 'Overdrawn' : 'Available'} as of ${balancesLabel}`}
-          icon={Landmark}
-          color={bank < 0 ? 'var(--danger)' : 'var(--info)'}
-          bgColor={bank < 0 ? 'rgba(192,57,43,0.10)' : 'rgba(37,99,235,0.10)'}
-          onClick={() => navigate('/reports/bank-book')}
-        />
-        <KpiCard
-          title="Total assets"
-          value={formatCurrency(totalAssets)}
-          subtitle={`Book value as of ${balancesLabel}`}
-          icon={Scale}
-          color="var(--brand)"
-          bgColor="rgba(15,157,154,0.10)"
-          onClick={() => navigate('/reports/balance-sheet')}
-        />
+      <div className={KPI_GRID} {...kpiNav.containerProps}>
+        {kpis.map((k, i) => (
+          // The wrapper is the tab stop, not the card: KpiCard lives in
+          // components/ui and renders a plain div. `grid` on the wrapper keeps
+          // the card stretching to the row height exactly as it did when it was
+          // the grid item itself, and rounded-xl keeps the focus rail's
+          // background inside the card's own corners.
+          <div key={k.key} className="grid rounded-xl" {...kpiNav.rowProps(i)}>
+            <KpiCard
+              title={k.title}
+              value={k.value}
+              subtitle={k.subtitle}
+              icon={k.icon}
+              color={k.color}
+              bgColor={k.bgColor}
+              trend={k.trend}
+              sparklineData={k.sparklineData}
+              onClick={() => navigate(k.to)}
+            />
+          </div>
+        ))}
       </div>
       )}
 
@@ -428,7 +502,10 @@ export default function DashboardPage() {
               {/* ResponsiveContainer only tracks width, so the chart height comes
                   from this wrapper — 300px crowds out everything else on a phone. */}
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={monthly} margin={{ top: 0, right: 0, left: 10, bottom: 0 }}>
+                {/* accessibilityLayer puts the plot in the tab order and moves
+                    the tooltip with ←/→, so the twelve bars stop being
+                    pointer-only data. */}
+                <BarChart data={monthly} accessibilityLayer margin={{ top: 0, right: 0, left: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
                   <XAxis
                     dataKey="month"
