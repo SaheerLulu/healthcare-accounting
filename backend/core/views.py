@@ -596,6 +596,11 @@ def _scope_party_qs(request, qs):
     and never paid. Same widening as parties.services._party_master_in_store.
     """
     from .middleware import _has_all_location_access
+    # Never offer the pharmacy's internal store counterparties (is_internal:
+    # 'STORE-{n}' customers / 'Store: <name>' suppliers). Transfers between
+    # stores post as stock relocations with no payable or receivable, so
+    # there is nothing to pay or receive against them.
+    qs = qs.filter(is_internal=False)
     location = get_active_location(request)
     if location:
         return qs.filter(Q(location_id=location.id) | Q(location_id__isnull=True))

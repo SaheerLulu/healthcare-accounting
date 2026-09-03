@@ -186,3 +186,38 @@ class PartyListApiTests(TestCase):
             data = self._get(SuppliersListView, '/api/parties/suppliers/')
         self.assertEqual([r['name'] for r in data['rows']],
                          ['Unregistered Supplier'])
+
+
+class InternalStoreRowsAreHiddenTests(TestCase):
+    """The pharmacy creates a Customer ('STORE-{n}') and a Supplier
+    ('Store: <name>') per store so an indent transfer can be a B2B sale on one
+    side and a GRN on the other. Those rows are flagged is_internal and are
+    NOT counterparties of the business: a transfer posts as a stock relocation
+    with no receivable or payable, so they showed a permanent 0.00 here that no
+    transfer could ever move. Reported as 'internal store records are displayed
+    in Customer/Supplier Parties'."""
+
+    def setUp(self):
+        seed_chart_and_mappings()
+        make_settings()
+
+    def test_internal_store_supplier_is_not_listed(self):
+        store_row = _fake_supplier(90, 'Store: Branch A', None)
+        store_row.is_internal = True
+        with _patch('SupplierRO', store_row,
+                    _fake_supplier(20, 'Store A Distributor', STORE_A)):
+            in_store = [r['name'] for r in
+                        services.list_parties('Supplier', location_id=STORE_A)]
+            everywhere = [r['name'] for r in services.list_parties('Supplier')]
+        self.assertEqual(in_store, ['Store A Distributor'])
+        self.assertEqual(everywhere, ['Store A Distributor'])
+
+    def test_internal_store_customer_is_not_listed(self):
+        store_row = _fake_customer(91, 'TEST STORE MEDIMART', None, 'B2B')
+        store_row.is_internal = True
+        with _patch('CustomerRO', store_row,
+                    _fake_customer(4, 'Delta Traders', STORE_A, 'B2B')):
+            names = [r['name'] for r in
+                     services.list_parties('Customer', location_id=STORE_A,
+                                           customer_type='B2B')]
+        self.assertEqual(names, ['Delta Traders'])

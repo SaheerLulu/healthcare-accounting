@@ -118,6 +118,9 @@ class _FakePartyQS:
             rows = [r for r in rows if _q_matches(q, r)]
         if 'location_id' in kw:
             rows = [r for r in rows if r.location_id == kw['location_id']]
+        if 'is_internal' in kw:
+            rows = [r for r in rows
+                    if getattr(r, 'is_internal', False) == kw['is_internal']]
         if 'customer_type__in' in kw:
             wanted = set(kw['customer_type__in'])
             rows = [r for r in rows if getattr(r, 'customer_type', None) in wanted]
@@ -126,10 +129,10 @@ class _FakePartyQS:
                 needle = kw[key].lower()
                 attr = key.split('__')[0]
                 rows = [r for r in rows if needle in getattr(r, attr).lower()]
-        return _FakePartyQS(rows)
+        return type(self)(rows)
 
     def order_by(self, *fields):
-        return _FakePartyQS(sorted(self.rows, key=lambda r: r.id))
+        return type(self)(sorted(self.rows, key=lambda r: r.id))
 
     def __iter__(self):
         return iter(self.rows)

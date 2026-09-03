@@ -323,15 +323,23 @@ def list_parties(party_type: str, *, location_id=None, search: str = '',
 
     as_of = _resolve_as_of(as_of)
 
+    # The pharmacy represents each store as a Customer ('STORE-{n}') and a
+    # Supplier ('Store: <name>') so an indent transfer can be a B2B sale on
+    # one side and a GRN on the other. Those rows are flagged is_internal and
+    # are not counterparties of the business: a transfer posts as a stock
+    # relocation (Closing Stock <-> Stock in Transit, see
+    # JournalAutoGenerationService.generate_stock_transfer), never as AR/AP,
+    # so listing them here showed a permanent 0.00 that no transfer could
+    # ever move. The pharmacy's own registers hide them the same way.
     if party_type == 'Supplier':
-        qs = SupplierRO.objects.all()
+        qs = SupplierRO.objects.filter(is_internal=False)
         if location_id:
             qs = qs.filter(_party_master_in_store(location_id))
         if search:
             qs = qs.filter(company_name__icontains=search)
         qs = qs.order_by('company_name')
     else:
-        qs = CustomerRO.objects.all()
+        qs = CustomerRO.objects.filter(is_internal=False)
         if location_id:
             qs = qs.filter(_party_master_in_store(location_id))
         if search:
